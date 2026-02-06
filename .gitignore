@@ -1,0 +1,9 @@
+# env
+.env
+
+# file types
+*__pycache__/
+*.ipynb
+
+# data (except .py files)
+/data/*
