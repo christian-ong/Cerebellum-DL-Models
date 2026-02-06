@@ -47,28 +47,3 @@ def linear_system(A):
         # returns the dot product Ax
         return A @ x 
     return f
-
-
-if __name__ == "__main__":
-
-    # Parameters
-    dt = 1e-3
-    T = 20.0
-    A = np.array([[-0.3, -6],
-                  [6, -0.3]])
-    x0 = np.array([1.0, 0.0])
-
-    # Simulate trajectories
-    n_points = int(T / dt) + 1
-    t, X = simulate(linear_system(A), x0=x0, dt=dt, T=T, method="rk4")
-
-    # Save trajectories
-    np.savez("data/trajectories/simulated_trajectories.npz", t=t, X=X)
-
-    # TODO: save labels (true system dynamics)
-
-    # How to use:
-    # data = np.load("data/trajectories/simulated_trajectories.npz")
-    # t = data["t"] # (20001, 2)
-    # X = data["X"] # (20001,)
-    # plt.plot(X[:, 0], X[:, 1])

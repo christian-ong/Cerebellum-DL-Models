@@ -10,7 +10,6 @@ plot_different_dts = False
 if __name__ == "__main__" and plot_4_systems:
 
     # Setup directories
-    os.makedirs("data", exist_ok=True)
     os.makedirs("data/phase_portraits", exist_ok=True)
 
     # Parameters
