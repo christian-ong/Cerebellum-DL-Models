@@ -35,7 +35,7 @@ def simulate(f, x0, dt, T, method="rk4"):
     return t, X
 
 # -----------------------
-# Systems
+# Linear Systems
 # -----------------------
 def linear_system(A):
     """
@@ -46,4 +46,44 @@ def linear_system(A):
         # x is the state vector [x1, x2]
         # returns the dot product Ax
         return A @ x 
+    return f
+
+
+# -----------------------
+# Nonlinear Systems
+# -----------------------
+def vanderpol_system(mu=1.5):
+    def f(t, x):
+        x1, x2 = x
+        dx1 = x2
+        dx2 = mu * (1 - x1**2) * x2 - x1
+        return np.array([dx1, dx2])
+    return f
+
+
+def lotka_volterra_system(alpha=1.1, beta=0.4, delta=0.1, gamma=0.4):
+    def f(t, x):
+        prey, pred = x
+        d_prey = alpha * prey - beta * prey * pred
+        d_pred = - gamma * pred + delta * prey * pred
+        return np.array([d_prey, d_pred])
+    return f
+
+
+def pendulum_system(g=9.81, L=1.0):
+    def f(t, x):
+        theta, omega = x # angle, angular velocity
+        d_theta = omega
+        d_omega = -(g/L) * np.sin(theta)
+        return np.array([d_theta, d_omega])
+    return f
+
+def lorenz_system(sigma=10.0, rho=28.0, beta=8/3):
+    def f(t, x):
+        # x is now [x, y, z]
+        xs, ys, zs = x
+        dx = sigma * (ys - xs)
+        dy = xs * (rho - zs) - ys
+        dz = xs * ys - beta * zs
+        return np.array([dx, dy, dz])
     return f
