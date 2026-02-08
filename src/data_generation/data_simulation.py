@@ -1,5 +1,4 @@
 import numpy as np
-import matplotlib.pyplot as plt
 
 # -----------------------
 # Integrators (batch-friendly)
@@ -42,48 +41,53 @@ def linear_system(A):
     Takes a 2x2 matrix A and returns a function f(t, x) 
     ready for your RK4 solver.
     """
+    A = np.asarray(A, dtype=float)
     def f(t, x):
         # x is the state vector [x1, x2]
         # returns the dot product Ax
-        return A @ x 
+        x = np.asarray(x, dtype=float)
+        return x @ A.T
     return f
-
 
 # -----------------------
 # Nonlinear Systems
 # -----------------------
 def vanderpol_system(mu=1.5):
     def f(t, x):
-        x1, x2 = x
+        x = np.asarray(x, dtype=float)
+        x1 = x[..., 0]
+        x2 = x[..., 1]
         dx1 = x2
         dx2 = mu * (1 - x1**2) * x2 - x1
-        return np.array([dx1, dx2])
+        return np.stack([dx1, dx2], axis=-1)
     return f
-
 
 def lotka_volterra_system(alpha=1.1, beta=0.4, delta=0.1, gamma=0.4):
     def f(t, x):
-        prey, pred = x
+        x = np.asarray(x, dtype=float)
+        prey = x[..., 0]
+        pred = x[..., 1]
         d_prey = alpha * prey - beta * prey * pred
-        d_pred = - gamma * pred + delta * prey * pred
-        return np.array([d_prey, d_pred])
+        d_pred = -gamma * pred + delta * prey * pred
+        return np.stack([d_prey, d_pred], axis=-1)
     return f
-
 
 def pendulum_system(g=9.81, L=1.0):
     def f(t, x):
-        theta, omega = x # angle, angular velocity
+        x = np.asarray(x, dtype=float)
+        theta = x[..., 0]
+        omega = x[..., 1]
         d_theta = omega
-        d_omega = -(g/L) * np.sin(theta)
-        return np.array([d_theta, d_omega])
+        d_omega = -(g / L) * np.sin(theta)
+        return np.stack([d_theta, d_omega], axis=-1)
     return f
 
 def lorenz_system(sigma=10.0, rho=28.0, beta=8/3):
     def f(t, x):
         # x is now [x, y, z]
-        xs, ys, zs = x
+        xs = x[..., 0]; ys = x[..., 1]; zs = x[..., 2]
         dx = sigma * (ys - xs)
         dy = xs * (rho - zs) - ys
         dz = xs * ys - beta * zs
-        return np.array([dx, dy, dz])
+        return np.stack([dx, dy, dz], axis=-1)
     return f
