@@ -2,8 +2,10 @@ import argparse
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import os
 
 from src.models.linear_baseline import rollout_linear_map
+from src.models.dmd_baseline import rollout_dmd, rollout_edmd
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
 from src.eval.rollout import rollout_ae_model
@@ -12,7 +14,7 @@ from src.eval.rollout import rollout_ae_model
 Usage examples:
 
 Global options (defaults):
-    --model {linear_baseline,ae_linear,ae_koopman}
+    --model {linear_baseline,dmd_baseline,edmd_baseline,ae_linear,ae_koopman}
     --data_path data/trajectories/{system}_trajectory.npz
     --model_path data/models/{model}_{system}.pt
     --steps 5000
@@ -20,6 +22,8 @@ Global options (defaults):
 
 Linear system (x' = A x):
     python -m scripts.eval --model linear_baseline --data_path data/trajectories/linear_trajectory.npz --model_path data/models/linear_baseline.npz
+    python -m scripts.eval --model dmd_baseline    --data_path data/trajectories/linear_trajectory.npz --model_path data/models/dmd_baseline_linear.npz
+    python -m scripts.eval --model edmd_baseline   --data_path data/trajectories/linear_trajectory.npz --model_path data/models/edmd_baseline_linear.npz
     python -m scripts.eval --model ae_linear       --data_path data/trajectories/linear_trajectory.npz --model_path data/models/ae_linear.pt
     Options: --steps --traj_index
 
@@ -44,13 +48,14 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate trained models")
 
     parser.add_argument("--model", type=str, required=True,
-                        choices=["linear_baseline", "ae_linear", "ae_koopman"])
+                        choices=["linear_baseline", "dmd_baseline", "edmd_baseline", "ae_linear", "ae_koopman"])
 
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--model_path", type=str, required=True)
     parser.add_argument("--steps", type=int, default=5000)
     parser.add_argument("--traj_index", type=int, default=0, help="Which validation trajectory to show")
-
+    parser.add_argument("--name", type=str, help="Optional suffix for saved figure")
+    
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -84,6 +89,18 @@ def main():
     if args.model == "linear_baseline":
         model_data = np.load(args.model_path)
         M = model_data["M"]
+        model = None
+
+    elif args.model == "dmd_baseline":
+        model_data = np.load(args.model_path)
+        A = model_data["A"]
+        model = None
+
+    elif args.model == "edmd_baseline":
+        model_data = np.load(args.model_path)
+        K = model_data["K"]
+        C = model_data["C"]
+        degree = int(model_data["degree"])
         model = None
 
     elif args.model == "ae_linear":
@@ -124,6 +141,12 @@ def main():
         if args.model == "linear_baseline":
             X_hat = rollout_linear_map(M, x0=x0, steps=steps)
 
+        elif args.model == "dmd_baseline":
+            X_hat = rollout_dmd(A, x0=x0, steps=steps)
+
+        elif args.model == "edmd_baseline":
+            X_hat = rollout_edmd(K, C, degree=degree, x0=x0, steps=steps)
+
         else:
             x0_torch = torch.tensor(x0, dtype=torch.float32)
             X_hat = rollout_ae_model(
@@ -162,6 +185,12 @@ def main():
 
     if args.model == "linear_baseline":
         X_hat = rollout_linear_map(M, x0=x0, steps=steps)
+
+    elif args.model == "dmd_baseline":
+        X_hat = rollout_dmd(A, x0=x0, steps=steps)
+
+    elif args.model == "edmd_baseline":
+        X_hat = rollout_edmd(K, C, degree=degree, x0=x0, steps=steps)
     else:
         x0_torch = torch.tensor(x0, dtype=torch.float32)
         X_hat = rollout_ae_model(
@@ -179,8 +208,11 @@ def main():
     plt.title(f"Phase space rollout ({args.model})")
     plt.legend()
     plt.tight_layout()
-    plt.show()
-
+    # plt.show()
+    os.makedirs("data/figures", exist_ok=True)
+    suffix = f"_{args.name}" if args.name else ""
+    plt.savefig(f"data/figures/rollout_{args.model}_{args.traj_index}{suffix}.png")
+    plt.close()
 
 if __name__ == "__main__":
     main()
