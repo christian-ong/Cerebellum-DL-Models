@@ -9,6 +9,7 @@ from src.data_generation.data_simulation import (
     lotka_volterra_system,
     pendulum_system,
     lorenz_system,
+    duffing_system
 )
 
 """
@@ -36,6 +37,13 @@ System-specific parameters:
     Lorenz:
         --sigma 10.0
         --rho 28.0
+        --beta 8/3
+    Duffing:
+        --alpha 1.0
+        --beta 5.0
+        --delta 0.02
+        --gamma 8.0
+        --omega 0.5
 
 --------------------------------------------------
 Linear system  x' = A x
@@ -69,7 +77,13 @@ python -m scripts.simulate_data --system pendulum --n_traj 100
 Lorenz system
 --------------------------------------------------
 
-python -m scripts.simulate_data --system lorenz --n_traj 100
+python -m scripts.simulate_data --system lorenz --n_traj 100 --beta 2.666666666667
+
+--------------------------------------------------
+Duffing oscillator
+--------------------------------------------------
+
+python -m scripts.simulate_data --system duffing --n_traj 100 --alpha 1.0 --beta 5.0 --delta 0.02 --gamma 8.0 --omega 0.5
 
 --------------------------------------------------
 Output
@@ -176,12 +190,33 @@ def build_lorenz(args, rng):
     }
     return f, x0, meta
 
+def build_duffing(args, rng):
+    f = duffing_system(
+        alpha=args.alpha,
+        beta=args.beta,
+        delta=args.delta,
+        gamma=args.gamma,
+        omega=args.omega
+    )
+    x0_base = np.array([1.0, 0.0], dtype=float)
+    x0 = sample_generic_ic(x0_base, args.n_traj, rng)
+
+    meta = {
+        "alpha": args.alpha,
+        "beta": args.beta,
+        "delta": args.delta,
+        "gamma": args.gamma,
+        "omega": args.omega
+    }
+    return f, x0, meta
+
 SYSTEMS = {
     "linear": build_linear,
     "vanderpol": build_vanderpol,
     "lotka_volterra": build_lotka_volterra,
     "pendulum": build_pendulum,
     "lorenz": build_lorenz,
+    "duffing": build_duffing
 }
 
 # --------------------------------------------------
@@ -214,6 +249,8 @@ def main():
 
     parser.add_argument("--sigma", type=float, default=10.0)
     parser.add_argument("--rho", type=float, default=28.0)
+
+    parser.add_argument("--omega", type=float, default=0.5)
 
     parser.add_argument("--outdir", type=str, default="data/trajectories")
 

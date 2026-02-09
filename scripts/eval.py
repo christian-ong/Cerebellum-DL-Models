@@ -81,6 +81,9 @@ def main():
 
     if len(val_idx) == 0:
         raise ValueError("No validation trajectories available.")
+    
+    system = args.data_path.split("/")[-1].split("_")[0]  # crude way to get system name from filename
+    print(f"Loaded {X.shape[1]} trajectories for system '{system}', with {len(val_idx)} validation trajectories.")
 
     # --------------------------------------------------
     # Load model ONCE
@@ -199,20 +202,61 @@ def main():
             steps=steps,
             device=device,
         ).cpu().numpy()
-
-    plt.figure(figsize=(6, 6))
-    plt.plot(X_true[:, 0], X_true[:, 1], label="True")
-    plt.plot(X_hat[:, 0], X_hat[:, 1], "--", label=args.model)
-    plt.xlabel("x1")
+    
+    # Plot x1 over time and x2 over time for X_hat
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.plot(X_true[:, 0], label=f"True x1 ({system})")
+    plt.plot(X_hat[:, 0], "--", label=f"{args.model}_{system} x1")
+    plt.xlabel("Time step")
+    plt.ylabel("x1")
+    plt.title(f"x1 over time ({args.model}_{system})")
+    plt.legend()
+    plt.subplot(1, 2, 2)
+    plt.plot(X_true[:, 1], label=f"True x2 ({system})")
+    plt.plot(X_hat[:, 1], "--", label=f"{args.model}_{system} x2")
+    plt.xlabel("Time step")
     plt.ylabel("x2")
-    plt.title(f"Phase space rollout ({args.model})")
+    plt.title(f"x2 over time ({args.model}_{system})")
     plt.legend()
     plt.tight_layout()
-    # plt.show()
     os.makedirs("data/figures", exist_ok=True)
     suffix = f"_{args.name}" if args.name else ""
-    plt.savefig(f"data/figures/rollout_{args.model}_{args.traj_index}{suffix}.png")
-    plt.close()
+    plt.savefig(f"data/figures/time_series_{args.model}_{system}_{args.traj_index}{suffix}.png")
+    plt.show()
+
+    # Plot phase space (x1 vs x2)
+    # If it is a Lorenz trajectory, plot x1 and x3 instead (since x2 is just noise around 0)
+    if system == "lorenz":
+        plt.figure(figsize=(6, 6))
+        plt.plot(X_true[:, 0], X_true[:, 2], label=f"True ({system})")
+        plt.plot(X_hat[:, 0], X_hat[:, 2], "--", label=f"{args.model}_{system}")
+        plt.xlabel("x1")
+        plt.ylabel("x3")
+        plt.title(f"Phase space rollout ({args.model}_{system})")
+        plt.legend()
+        plt.tight_layout()
+        os.makedirs("data/figures", exist_ok=True)
+        suffix = f"_{args.name}" if args.name else ""
+        plt.savefig(f"data/figures/rollout_{args.model}_{system}_{args.traj_index}{suffix}.png")
+        plt.show()
+        plt.close()
+    
+    else:
+        plt.figure(figsize=(6, 6))
+        plt.plot(X_true[:, 0], X_true[:, 1], label=f"True ({system})")
+        plt.plot(X_hat[:, 0], X_hat[:, 1], "--", label=f"{args.model}_{system}")
+        plt.xlabel("x1")
+        plt.ylabel("x2")
+        plt.title(f"Phase space rollout ({args.model}_{system})")
+        plt.legend()
+        plt.tight_layout()
+        os.makedirs("data/figures", exist_ok=True)
+        suffix = f"_{args.name}" if args.name else ""
+        plt.savefig(f"data/figures/rollout_{args.model}_{system}_{args.traj_index}{suffix}.png")
+        plt.show()
+        plt.close()
+        
 
 if __name__ == "__main__":
     main()

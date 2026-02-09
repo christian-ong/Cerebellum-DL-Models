@@ -51,6 +51,10 @@ Lorenz:
     python -m scripts.train --model ae_koopman --data_path data/trajectories/lorenz_trajectory.npz
     Options: --latent_dim --hidden_dim (+ training options)
 
+Duffing:
+    python -m scripts.train --model ae_koopman --data_path data/trajectories/duffing_trajectory.npz
+    Options: --latent_dim --hidden_dim (+ training options)
+
 Output:
     data/models/{model}.pt   (AE models)
     data/models/linear_baseline.npz
