@@ -128,8 +128,19 @@ def sample_generic_ic(x0, n_traj, rng, noise_scale=0.1):
 # --------------------------------------------------
 
 def build_linear(args, rng):
+    # Inward Spiral
     A = np.array([[-0.3, -6],
                   [ 6,  -0.3]], dtype=float)
+    # Harmonic Oscillator
+    # A = np.array([[0, 1],
+    #               [-1, 0]], dtype=float)
+    # Saddle Point
+    # A = np.array([[1, 0],
+    #               [0, -1]], dtype=float)
+    # Degenerate Node
+    # A = np.array([[-1, 1],
+    #               [ 0, -1]], dtype=float)
+    
     f = linear_system(A)
 
     if args.n_traj > 1:

@@ -265,12 +265,13 @@ def main():
     if args.model == "dmd_baseline":
         
         dt = data["dt"]
-        figdir = "data/figures/dmd"
+        figdir = f"data/figures/dmd/{args.name if args.name else system}"
+        os.makedirs(figdir, exist_ok=True)
 
         plot_dmd_eigenvalues(
             Lambda,
             savepath=f"{figdir}/eigs_complex.png",
-            title=f"DMD Eigenvalues ({system})",
+            title=f"DMD Eigenvalues ({args.name if args.name else system})",
         )
 
         plot_mode_amplitudes(
