@@ -136,8 +136,6 @@ def sample_uniform_ic(lows, highs, n_traj, rng):
 # System builders
 # --------------------------------------------------
 
-def build_linear(args, rng):
-    # Inward Spiral
 def build_inward_spiral(args, rng):
     A = np.array([[-0.3, -6],
                   [ 6,  -0.3]], dtype=float)
