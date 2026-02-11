@@ -11,6 +11,7 @@ from src.data_generation.data_simulation import (
     lorenz_system,
     duffing_system
 )
+from src.data_generation.plot_data import plot_init_conditions
 
 """
 Defaults parameters:
@@ -123,28 +124,89 @@ def sample_generic_ic(x0, n_traj, rng, noise_scale=0.1):
     return x0[None, :] + noise
 
 
+def sample_uniform_ic(lows, highs, n_traj, rng):
+    d = lows.shape[0]
+    x0s = np.zeros((n_traj, d), dtype=float)
+    for i in range(d):
+        x0s[:, i] = rng.uniform(lows[i], highs[i], size=n_traj)
+    return x0s
+
+
 # --------------------------------------------------
 # System builders
 # --------------------------------------------------
 
-def build_linear(args, rng):
+def build_inward_spiral(args, rng):
     A = np.array([[-0.3, -6],
                   [ 6,  -0.3]], dtype=float)
     f = linear_system(A)
-
     if args.n_traj > 1:
-        x0 = sample_linear_ic(args.n_traj, rng)
+        x0 = sample_uniform_ic(
+            lows=np.array([-1.5, -1.5]), 
+            highs=np.array([1.5, 1.5]), 
+            n_traj=args.n_traj, 
+            rng=rng)
     else:
         x0 = np.array([1.0, 0.0], dtype=float)
+    meta = {"A": A}
+    return f, x0, meta
 
+
+def build_harmonic_oscillator(args, rng):
+    A = np.array([[0, 1],
+                  [-1,  0]], dtype=float)
+    f = linear_system(A)
+    if args.n_traj > 1:
+        x0 = sample_uniform_ic(
+            lows=np.array([-1.5, -1.5]),
+            highs=np.array([1.5, 1.5]),
+            n_traj=args.n_traj,
+            rng=rng)
+    else:
+        x0 = np.array([1.0, 0.0], dtype=float)
+    meta = {"A": A}
+    return f, x0, meta
+
+
+def build_saddle_point(args, rng):
+    A = np.array([[0.1, 0],
+                  [0, -0.1]], dtype=float)
+    f = linear_system(A)
+    if args.n_traj > 1:
+        x0 = sample_uniform_ic(
+            lows=np.array([-2.5, -7.5]),
+            highs=np.array([2.5, 7.5]),
+            n_traj=args.n_traj,
+            rng=rng)
+    else:
+        x0 = np.array([1.0, 0.0], dtype=float)
+    meta = {"A": A}
+    return f, x0, meta
+
+
+def build_degenerate_node(args, rng):
+    A = np.array([[-1, 1],
+                  [0, -1]], dtype=float)
+    f = linear_system(A)
+    if args.n_traj > 1:
+        x0 = sample_uniform_ic(
+            lows=np.array([-1.5, -1.5]),
+            highs=np.array([1.5, 1.5]),
+            n_traj=args.n_traj,
+            rng=rng)
+    else:
+        x0 = np.array([1.0, 0.0], dtype=float)
     meta = {"A": A}
     return f, x0, meta
 
 
 def build_vanderpol(args, rng):
     f = vanderpol_system(mu=args.mu)
-    x0_base = np.array([0.5, 0.0], dtype=float)
-    x0 = sample_generic_ic(x0_base, args.n_traj, rng)
+    x0 = sample_uniform_ic(
+        lows=np.array([-4.0, -4.0]),
+        highs=np.array([4.0, 4.0]),
+        n_traj=args.n_traj,
+        rng=rng)
     meta = {"mu": args.mu}
     return f, x0, meta
 
@@ -156,8 +218,11 @@ def build_lotka_volterra(args, rng):
         delta=args.delta,
         gamma=args.gamma,
     )
-    x0_base = np.array([10.0, 5.0], dtype=float)
-    x0 = sample_generic_ic(x0_base, args.n_traj, rng)
+    x0 = sample_uniform_ic(
+        lows=np.array([0.0, 0.0]),
+        highs=np.array([20.0, 20.0]),
+        n_traj=args.n_traj,
+        rng=rng)
     meta = {
         "alpha": args.alpha,
         "beta": args.beta,
@@ -169,8 +234,11 @@ def build_lotka_volterra(args, rng):
 
 def build_pendulum(args, rng):
     f = pendulum_system(g=args.g, L=args.L)
-    x0_base = np.array([np.pi / 2, 0.0], dtype=float)
-    x0 = sample_generic_ic(x0_base, args.n_traj, rng)
+    x0 = sample_uniform_ic(
+        lows=np.array([-1, -2]),
+        highs=np.array([1, 2]),
+        n_traj=args.n_traj,
+        rng=rng)
     meta = {"g": args.g, "L": args.L}
     return f, x0, meta
 
@@ -181,8 +249,11 @@ def build_lorenz(args, rng):
         rho=args.rho,
         beta=args.beta,
     )
-    x0_base = np.array([1.0, 1.0, 1.0], dtype=float)
-    x0 = sample_generic_ic(x0_base, args.n_traj, rng)
+    x0 = sample_uniform_ic(
+        lows=np.array([-20.0, -20.0, 0.0]),
+        highs=np.array([20.0, 20.0, 50.0]),
+        n_traj=args.n_traj,
+        rng=rng)
     meta = {
         "sigma": args.sigma,
         "rho": args.rho,
@@ -211,7 +282,14 @@ def build_duffing(args, rng):
     return f, x0, meta
 
 SYSTEMS = {
-    "linear": build_linear,
+    # linear
+    "linear": build_inward_spiral, # inward spiral by default
+    "inward_spiral": build_inward_spiral,
+    "harmonic_oscillator": build_harmonic_oscillator,
+    "saddle_point": build_saddle_point,
+    "degenerate_node": build_degenerate_node,
+    
+    # nonlinear
     "vanderpol": build_vanderpol,
     "lotka_volterra": build_lotka_volterra,
     "pendulum": build_pendulum,
@@ -225,6 +303,7 @@ SYSTEMS = {
 
 def main():
     parser = argparse.ArgumentParser(description="Simulate dynamical systems")
+    parser.add_argument("--debug", type=str, choices=["init_conditions"])
 
     parser.add_argument("--system", type=str, required=True, choices=SYSTEMS.keys())
     parser.add_argument("--name", type=str, default=None, help="Optional suffix added to the dataset filename")
@@ -263,7 +342,31 @@ def main():
     # Build system
     f, x0, meta = SYSTEMS[args.system](args, rng)
 
-    # Simulate
+    # Plot initial conditions and simulate trajectories for 4 corners
+    if args.debug == "init_conditions":
+        # 2D systems
+        p1 = x0[np.argmax(+x0[:, 0] + x0[:, 1])]
+        p2 = x0[np.argmax(+x0[:, 0] - x0[:, 1])]
+        p3 = x0[np.argmax(-x0[:, 0] + x0[:, 1])]
+        p4 = x0[np.argmax(-x0[:, 0] - x0[:, 1])]
+        ps = np.array([p1, p2, p3, p4])
+
+        # 3D systems (e.g. Lorenz)
+        if x0.shape[1] == 3:
+            p1 = x0[np.argmax(+ x0[:, 0] + x0[:, 1] + x0[:, 2])]
+            p2 = x0[np.argmax(+ x0[:, 0] + x0[:, 1] - x0[:, 2])]
+            p3 = x0[np.argmax(+ x0[:, 0] - x0[:, 1] + x0[:, 2])]
+            p4 = x0[np.argmax(+ x0[:, 0] - x0[:, 1] - x0[:, 2])]
+            p5 = x0[np.argmax(- x0[:, 0] + x0[:, 1] + x0[:, 2])]
+            p6 = x0[np.argmax(- x0[:, 0] + x0[:, 1] - x0[:, 2])]
+            p7 = x0[np.argmax(- x0[:, 0] - x0[:, 1] + x0[:, 2])]
+            p8 = x0[np.argmax(- x0[:, 0] - x0[:, 1] - x0[:, 2])]
+            ps = np.array([p1, p2, p3, p4, p5, p6, p7, p8])
+        
+        t, X = simulate(f, x0=ps, dt=args.dt, T=args.T, method=args.method)
+        plot_init_conditions(x0s=x0, corner_points=ps, corner_trajs=X, system_name=args.system)
+        return
+    
     t, X = simulate(f, x0=x0, dt=args.dt, T=args.T, method=args.method)
 
     # Train / validation split by trajectory

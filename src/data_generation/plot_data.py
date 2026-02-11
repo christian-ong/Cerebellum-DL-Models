@@ -1,11 +1,52 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from data_simulation import simulate, linear_system
+# from data_simulation import simulate, linear_system
 import os
 
+# =========== PARAMETERS ==============
 plot_4_systems = True
 plot_euler_vs_rk = False
 plot_different_dts = False
+# ====================================
+
+def plot_init_conditions(x0s, corner_points, corner_trajs, system_name="system"):
+    colours = ['red', 'blue', 'green', 'orange',
+               'purple', 'cyan', 'magenta', 'yellow']
+
+    # Plot all 3 dimensions for Lorenz
+    if system_name == "lorenz":
+        for dim1, dim2 in [(0, 1), (0, 2), (1, 2)]:
+            plt.figure(figsize=(6, 6))
+            plt.scatter(x0s[:, dim1], x0s[:, dim2], color='gray', s=10, label='Initial Conditions')
+            for i in range(len(corner_points)):
+                plt.scatter(corner_points[i][dim1], corner_points[i][dim2], color=colours[i], s=20, label=f'Corner {i+1}')
+                plt.plot(corner_trajs[:, i, dim1], corner_trajs[:, i, dim2], color=colours[i], lw=1, alpha=0.7, label=f'Trajectory {i+1}')
+            plt.xlabel(f"x{dim1+1}"); plt.ylabel(f"x{dim2+1}")
+            plt.title("Initial Conditions and Corners")
+            plt.legend()
+            plt.grid()
+            plt.axis("equal")
+            plt.tight_layout()
+            os.makedirs("data/phase_portraits/initial_condition_trajs", exist_ok=True)
+            plt.savefig(f"data/phase_portraits/initial_condition_trajs/{system_name}({dim1}_{dim2}).png")
+
+        return
+
+    
+    plt.figure(figsize=(6, 6))
+    plt.scatter(x0s[:, 0], x0s[:, 1], color='gray', s=10, label='Initial Conditions')
+    for i in range(len(corner_points)):
+        plt.scatter(corner_points[i][0], corner_points[i][1], color=colours[i], s=20, label=f'Corner {i+1}')
+        plt.plot(corner_trajs[:, i, 0], corner_trajs[:, i, 1], color=colours[i], lw=1, alpha=0.7, label=f'Trajectory {i+1}')
+    plt.xlabel("x1"); plt.ylabel("x2")
+    plt.title("Initial Conditions and Corners")
+    plt.legend()
+    plt.grid()
+    plt.axis("equal")
+    plt.tight_layout()
+    os.makedirs("data/phase_portraits/initial_condition_trajs", exist_ok=True)
+    plt.savefig(f"data/phase_portraits/initial_condition_trajs/{system_name}.png")
+
 
 if __name__ == "__main__" and plot_4_systems:
 
