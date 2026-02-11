@@ -136,9 +136,21 @@ def sample_uniform_ic(lows, highs, n_traj, rng):
 # System builders
 # --------------------------------------------------
 
+def build_linear(args, rng):
+    # Inward Spiral
 def build_inward_spiral(args, rng):
     A = np.array([[-0.3, -6],
                   [ 6,  -0.3]], dtype=float)
+    # Harmonic Oscillator
+    # A = np.array([[0, 1],
+    #               [-1, 0]], dtype=float)
+    # Saddle Point
+    # A = np.array([[1, 0],
+    #               [0, -1]], dtype=float)
+    # Degenerate Node
+    # A = np.array([[-1, 1],
+    #               [ 0, -1]], dtype=float)
+    
     f = linear_system(A)
     if args.n_traj > 1:
         x0 = sample_uniform_ic(

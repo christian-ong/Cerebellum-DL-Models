@@ -5,37 +5,48 @@ from torch.utils.data import Dataset
 
 class OneStepTrajectoryDataset(Dataset):
     """
-    Loads X with shape:
-      - (T, state_dim)
-      - (T, n_traj, state_dim)
+    One-step prediction dataset from simulated trajectories.
 
-    Then selects a subset of trajectories (traj_indices),
-    and returns one-step pairs flattened across (time, traj).
+    Supports:
+      - split = "train" | "val" | "all"
+      - X shape (T, d) or (T, n_traj, d)
     """
-    def __init__(self, npz_path: str, traj_indices=None):
+
+    def __init__(self, npz_path: str, split: str = "train"):
         data = np.load(npz_path)
+
         X = data["X"]
 
-        # Ensure (T, n_traj, state_dim)
+        # Ensure (T, n_traj, d)
         if X.ndim == 2:
             X = X[:, None, :]
         elif X.ndim != 3:
-            raise ValueError(f"Expected X to have 2 or 3 dims, got shape {X.shape}")
+            raise ValueError(f"Expected X to have 2 or 3 dims, got {X.shape}")
 
-        # Select trajectories
-        if traj_indices is None:
-            X_sel = X
+        # Select trajectories by split
+        if split == "train":
+            traj_idx = data["train_idx"]
+        elif split == "val":
+            traj_idx = data["val_idx"]
+        elif split == "all":
+            traj_idx = np.arange(X.shape[1])
         else:
-            X_sel = X[:, traj_indices, :]
+            raise ValueError(f"Unknown split: {split}")
+
+        if traj_idx.size == 0:
+            self.x = torch.empty(0)
+            self.y = torch.empty(0)
+            return
+
+        X = X[:, traj_idx, :]
 
         # One-step pairs
-        x = X_sel[:-1]   # (T-1, n_traj_sel, state_dim)
-        y = X_sel[1:]    # (T-1, n_traj_sel, state_dim)
+        x = X[:-1]
+        y = X[1:]
 
-        # Flatten
-        Tm1, n_traj_sel, state_dim = x.shape
-        x = x.reshape(Tm1 * n_traj_sel, state_dim)
-        y = y.reshape(Tm1 * n_traj_sel, state_dim)
+        Tm1, n_traj, d = x.shape
+        x = x.reshape(Tm1 * n_traj, d)
+        y = y.reshape(Tm1 * n_traj, d)
 
         self.x = torch.tensor(x, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.float32)

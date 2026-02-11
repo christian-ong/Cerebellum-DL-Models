@@ -5,11 +5,12 @@ import matplotlib.pyplot as plt
 import os
 
 from src.models.linear_baseline import rollout_linear_map
-from src.models.dmd_baseline import rollout_dmd, rollout_edmd
+from src.models.dmd_baseline import rollout_dmd_eig
+from src.models.edmd_baseline import rollout_edmd
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
 from src.eval.rollout import rollout_ae_model
-
+from src.models.dmd_baseline import *
 """
 Usage examples:
 
@@ -96,7 +97,8 @@ def main():
 
     elif args.model == "dmd_baseline":
         model_data = np.load(args.model_path)
-        A = model_data["A"]
+        Lambda = model_data["Lambda"]
+        Phi = model_data["Phi"]
         model = None
 
     elif args.model == "edmd_baseline":
@@ -145,7 +147,7 @@ def main():
             X_hat = rollout_linear_map(M, x0=x0, steps=steps)
 
         elif args.model == "dmd_baseline":
-            X_hat = rollout_dmd(A, x0=x0, steps=steps)
+            X_hat = rollout_dmd_eig(Lambda, Phi, x0=x0, steps=steps)
 
         elif args.model == "edmd_baseline":
             X_hat = rollout_edmd(K, C, degree=degree, x0=x0, steps=steps)
@@ -190,7 +192,7 @@ def main():
         X_hat = rollout_linear_map(M, x0=x0, steps=steps)
 
     elif args.model == "dmd_baseline":
-        X_hat = rollout_dmd(A, x0=x0, steps=steps)
+        X_hat = rollout_dmd_eig(Lambda, Phi, x0=x0, steps=steps)
 
     elif args.model == "edmd_baseline":
         X_hat = rollout_edmd(K, C, degree=degree, x0=x0, steps=steps)
@@ -256,7 +258,50 @@ def main():
         plt.savefig(f"data/figures/rollout_{args.model}_{system}_{args.traj_index}{suffix}.png")
         plt.show()
         plt.close()
+    
+    
+
+    # DMD mode
+    if args.model == "dmd_baseline":
         
+        dt = data["dt"]
+        figdir = f"data/figures/dmd/{args.name if args.name else system}"
+        os.makedirs(figdir, exist_ok=True)
+
+        plot_dmd_eigenvalues(
+            Lambda,
+            savepath=f"{figdir}/eigs_complex.png",
+            title=f"DMD Eigenvalues ({args.name if args.name else system})",
+        )
+
+        plot_mode_amplitudes(
+            Lambda,
+            Phi,
+            x0,
+            savepath=f"{figdir}/mode_amplitudes.png",
+        )
+
+        if Phi.shape[0] == 2:
+            plot_dmd_modes_2d(
+                Phi,
+                Lambda,
+                savepath=f"{figdir}/modes_geometry.png",
+            )
+
+        plot_continuous_spectrum(
+            Lambda,
+            dt,
+            savepath=f"{figdir}/continuous_spectrum.png",
+        )
+
+        plot_conjugate_mode_reconstruction(
+            Lambda,
+            Phi,
+            x0,
+            steps,
+            X_true,
+            savepath=f"{figdir}/dominant_mode_reconstruction.png",
+        )
 
 if __name__ == "__main__":
     main()
