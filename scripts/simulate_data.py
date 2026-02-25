@@ -163,8 +163,8 @@ def build_inward_spiral(args, rng):
 
 
 def build_harmonic_oscillator(args, rng):
-    A = np.array([[0, 1],
-                  [-1,  0]], dtype=float)
+    A = np.array([[0, 1/2],
+                  [-1/2,  0]], dtype=float)
     f = linear_system(A)
     if args.n_traj > 1:
         x0 = sample_uniform_ic(
@@ -213,8 +213,8 @@ def build_degenerate_node(args, rng):
 def build_vanderpol(args, rng):
     f = vanderpol_system(mu=args.mu)
     x0 = sample_uniform_ic(
-        lows=np.array([-4.0, -4.0]),
-        highs=np.array([4.0, 4.0]),
+        lows=np.array([-3.0, -4.0]),
+        highs=np.array([3.0, 4.0]),
         n_traj=args.n_traj,
         rng=rng)
     meta = {"mu": args.mu}
@@ -230,7 +230,7 @@ def build_lotka_volterra(args, rng):
     )
     x0 = sample_uniform_ic(
         lows=np.array([0.0, 0.0]),
-        highs=np.array([20.0, 20.0]),
+        highs=np.array([30.0, 10.0]),
         n_traj=args.n_traj,
         rng=rng)
     meta = {
@@ -260,8 +260,8 @@ def build_lorenz(args, rng):
         beta=args.beta,
     )
     x0 = sample_uniform_ic(
-        lows=np.array([-20.0, -20.0, 0.0]),
-        highs=np.array([20.0, 20.0, 50.0]),
+        lows=np.array([-10.0, -10.0, 20.0]),
+        highs=np.array([10.0, 10.0, 38.0]),
         n_traj=args.n_traj,
         rng=rng)
     meta = {
@@ -279,9 +279,11 @@ def build_duffing(args, rng):
         gamma=args.gamma,
         omega=args.omega
     )
-    x0_base = np.array([1.0, 0.0], dtype=float)
-    x0 = sample_generic_ic(x0_base, args.n_traj, rng)
-
+    x0 = sample_uniform_ic(
+        lows=np.array([-1.0, -1.0]),
+        highs=np.array([1.0, 1.0]),
+        n_traj=args.n_traj,
+        rng=rng)
     meta = {
         "alpha": args.alpha,
         "beta": args.beta,

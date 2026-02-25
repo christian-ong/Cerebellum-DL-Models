@@ -40,7 +40,7 @@ def simulate(f, x0, dt, T, method="rk4"):
 def linear_system(A):
     """
     Takes a (d x d) matrix A and returns a function f(t, x) 
-    ready for the RK4 solver.
+    f is the vector field for the linear system x' = A x
     """
     A = np.asarray(A, dtype=float)
     def f(t, x):
