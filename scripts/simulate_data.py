@@ -15,7 +15,7 @@ from src.data_generation.plot_data import plot_init_conditions
 
 """
 Defaults parameters:
-    --system (linear | vanderpol | lotka_volterra | pendulum | lorenz)
+    --system (inward_spiral | harmonic_oscillator | saddle_point | degenerate_node | vanderpol | lotka_volterra | pendulum | lorenz)
     --name (optional suffix for filename)
     --dt 0.01
     --T 20.0
@@ -139,16 +139,6 @@ def sample_uniform_ic(lows, highs, n_traj, rng):
 def build_inward_spiral(args, rng):
     A = np.array([[-0.3, -6],
                   [ 6,  -0.3]], dtype=float)
-    # Harmonic Oscillator
-    # A = np.array([[0, 1],
-    #               [-1, 0]], dtype=float)
-    # Saddle Point
-    # A = np.array([[1, 0],
-    #               [0, -1]], dtype=float)
-    # Degenerate Node
-    # A = np.array([[-1, 1],
-    #               [ 0, -1]], dtype=float)
-    
     f = linear_system(A)
     if args.n_traj > 1:
         x0 = sample_uniform_ic(

@@ -7,6 +7,7 @@ import os
 from src.models.linear_baseline import rollout_linear_map
 from src.models.dmd_baseline import rollout_dmd_eig
 from src.models.edmd_baseline import rollout_edmd
+from src.models.ml_dmd import LinearDynamics
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
 from src.eval.rollout import rollout_ae_model
@@ -26,6 +27,7 @@ Linear system (x' = A x):
     python -m scripts.eval --model dmd_baseline    --data_path data/trajectories/linear_trajectory.npz --model_path data/models/dmd_baseline_linear.npz
     python -m scripts.eval --model edmd_baseline   --data_path data/trajectories/linear_trajectory.npz --model_path data/models/edmd_baseline_linear.npz
     python -m scripts.eval --model ae_linear       --data_path data/trajectories/linear_trajectory.npz --model_path data/models/ae_linear.pt
+    python -m scripts.eval --model ml_dmd           --data_path data/trajectories/linear_trajectory.npz --model_path data/models/ml_dmd_linear.pt
     Options: --steps --traj_index
 
 Van der Pol:
@@ -49,7 +51,7 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate trained models")
 
     parser.add_argument("--model", type=str, required=True,
-                        choices=["linear_baseline", "dmd_baseline", "edmd_baseline", "ae_linear", "ae_koopman"])
+                        choices=["linear_baseline", "dmd_baseline", "edmd_baseline", "ae_linear", "ae_koopman", "ml_dmd"],)
 
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--model_path", type=str, required=True)
@@ -124,6 +126,12 @@ def main():
             latent_dim=ckpt["latent_dim"],
             hidden_dim=ckpt["hidden_dim"],
         ).to(device)
+        model.load_state_dict(ckpt["model_state_dict"])
+        model.eval()
+    
+    elif args.model == "ml_dmd":
+        ckpt = torch.load(args.model_path, map_location=device)
+        model = LinearDynamics(state_dim=ckpt["state_dim"]).to(device)
         model.load_state_dict(ckpt["model_state_dict"])
         model.eval()
 
@@ -205,6 +213,10 @@ def main():
             device=device,
         ).cpu().numpy()
     
+    system = args.data_path.split("/")[-1].split("_")[0]  # crude way to get system name from filename
+    figdir = f"data/figures/{args.model}/{system}/{args.name if args.name else 'default'}"
+    os.makedirs(figdir, exist_ok=True)
+
     # Plot x1 over time and x2 over time for X_hat
     plt.figure(figsize=(12, 5))
     plt.subplot(1, 2, 1)
@@ -222,9 +234,7 @@ def main():
     plt.title(f"x2 over time ({args.model}_{system})")
     plt.legend()
     plt.tight_layout()
-    os.makedirs("data/figures", exist_ok=True)
-    suffix = f"_{args.name}" if args.name else ""
-    plt.savefig(f"data/figures/time_series_{args.model}_{system}_{args.traj_index}{suffix}.png")
+    plt.savefig(f"{figdir}/time_series_idx{args.traj_index}.png")
     plt.show()
 
     # Plot phase space (x1 vs x2)
@@ -238,9 +248,7 @@ def main():
         plt.title(f"Phase space rollout ({args.model}_{system})")
         plt.legend()
         plt.tight_layout()
-        os.makedirs("data/figures", exist_ok=True)
-        suffix = f"_{args.name}" if args.name else ""
-        plt.savefig(f"data/figures/rollout_{args.model}_{system}_{args.traj_index}{suffix}.png")
+        plt.savefig(f"{figdir}/rollout_idx{args.traj_index}.png")
         plt.show()
         plt.close()
     
@@ -253,9 +261,7 @@ def main():
         plt.title(f"Phase space rollout ({args.model}_{system})")
         plt.legend()
         plt.tight_layout()
-        os.makedirs("data/figures", exist_ok=True)
-        suffix = f"_{args.name}" if args.name else ""
-        plt.savefig(f"data/figures/rollout_{args.model}_{system}_{args.traj_index}{suffix}.png")
+        plt.savefig(f"{figdir}/rollout_idx{args.traj_index}.png")
         plt.show()
         plt.close()
     
@@ -265,9 +271,6 @@ def main():
     if args.model == "dmd_baseline":
         
         dt = data["dt"]
-        figdir = f"data/figures/dmd/{args.name if args.name else system}"
-        os.makedirs(figdir, exist_ok=True)
-
         plot_dmd_eigenvalues(
             Lambda,
             savepath=f"{figdir}/eigs_complex.png",

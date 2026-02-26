@@ -103,5 +103,11 @@ def train_ae_onestep(
                 f"lr {current_lr:.2e} | "
                 f"train {train_loss:.6e}"
             )
-
+        
+    if hasattr(model, "K"):    
+        K_matrix = model.K.weight.detach().T
+        print(f"K matrix:\n{K_matrix.cpu().numpy()}")
+        eigvals, eigvecs = torch.linalg.eig(K_matrix)
+        print(f"Eigenvalues:\n{eigvals.cpu().numpy()}")
+        print(f"Eigenvectors:\n{eigvecs.cpu().numpy()}")
     return model

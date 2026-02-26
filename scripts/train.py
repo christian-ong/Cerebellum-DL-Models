@@ -8,6 +8,7 @@ from src.data_generation.load_data import OneStepTrajectoryDataset
 from src.models.linear_baseline import fit_linear_map
 from src.models.dmd_baseline import fit_dmd
 from src.models.edmd_baseline import fit_edmd
+from src.models.ml_dmd import LinearDynamics
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
 from src.train.train_ae_onestep import train_ae_onestep
@@ -30,6 +31,7 @@ Linear system (x' = A x):
     python -m scripts.train --model dmd_baseline    --data_path data/trajectories/linear_trajectory.npz
     python -m scripts.train --model edmd_baseline   --data_path data/trajectories/linear_trajectory.npz
     python -m scripts.train --model ae_linear       --data_path data/trajectories/linear_trajectory.npz
+    python -m scripts.train --model ml_dmd          --data_path data/trajectories/linear_trajectory.npz
     Options: (ae_linear uses --epochs --batch_size --lr --weight_decay)
 
 Van der Pol:
@@ -97,6 +99,7 @@ def main():
             "edmd_baseline",
             "ae_linear",
             "ae_koopman",
+            "ml_dmd",
         ],
     )
 
@@ -107,7 +110,7 @@ def main():
     # Training hyperparameters
     # --------------------------------------------------
     parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-6)
 
@@ -262,11 +265,16 @@ def main():
         return
 
     # ==================================================
-    # Autoencoder-based models
+    # Network models
     # ==================================================
     print("Training autoencoder model with one-step loss...")
+    print(f"Model: {args.model}")
+    if args.model == "ml_dmd":
+        model = LinearDynamics(
+            state_dim=state_dim,
+        ).to(device)
 
-    if args.model == "ae_linear":
+    elif args.model == "ae_linear":
         model = AELinearDynamics(
             state_dim=state_dim,
             latent_dim=state_dim,  # intentional
