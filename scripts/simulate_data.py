@@ -11,7 +11,7 @@ from src.data_generation.data_simulation import (
     lorenz_system,
     duffing_system
 )
-from src.data_generation.plot_data import plot_init_conditions
+from src.data_generation.plot_data import plot_init_conditions, plot_trajectories_only, plot_flow_map_displacement
 
 """
 Defaults parameters:
@@ -110,26 +110,71 @@ Contents:
 # Initial condition samplers
 # --------------------------------------------------
 
-def sample_linear_ic(n_traj, rng):
-    theta = rng.uniform(0, 2 * np.pi, size=n_traj)
-    r = rng.uniform(0.5, 1.5, size=n_traj)
-    return np.stack([r * np.cos(theta), r * np.sin(theta)], axis=1)
+# def sample_linear_ic(n_traj, rng):
+#     theta = rng.uniform(0, 2 * np.pi, size=n_traj)
+#     r = rng.uniform(0.5, 1.5, size=n_traj)
+#     return np.stack([r * np.cos(theta), r * np.sin(theta)], axis=1)
 
 
-def sample_generic_ic(x0, n_traj, rng, noise_scale=0.1):
-    if n_traj == 1:
-        return x0
-    d = x0.shape[0]
-    noise = noise_scale * rng.standard_normal(size=(n_traj, d))
-    return x0[None, :] + noise
+# def sample_generic_ic(x0, n_traj, rng, noise_scale=0.1):
+#     if n_traj == 1:
+#         return x0
+#     d = x0.shape[0]
+#     noise = noise_scale * rng.standard_normal(size=(n_traj, d))
+#     return x0[None, :] + noise
 
 
-def sample_uniform_ic(n_traj, rng, lows=np.array([-1.5, -1.5]), highs=np.array([1.5, 1.5])):
+# def sample_uniform_ic(n_traj, rng, lows=np.array([-1.5, -1.5]), highs=np.array([1.5, 1.5])):
+#     d = lows.shape[0]
+#     x0s = np.zeros((n_traj, d), dtype=float)
+#     for i in range(d):
+#         x0s[:, i] = rng.uniform(lows[i], highs[i], size=n_traj)
+#     return x0s
+
+def sample_annulus_ic(n_traj, rng, r_min=0.2, r_max=1.5):
+    """
+    Uniform in annulus (area-uniform).
+    Good for centered 2D systems.
+    """
+    theta = rng.uniform(0.0, 2*np.pi, size=n_traj)
+    r2 = rng.uniform(r_min**2, r_max**2, size=n_traj)
+    r = np.sqrt(r2)
+    return np.stack([r*np.cos(theta), r*np.sin(theta)], axis=1)
+
+
+def sample_box_ic(n_traj, rng, lows, highs):
+    """
+    Uniform in axis-aligned box.
+    """
+    lows = np.asarray(lows, dtype=float)
+    highs = np.asarray(highs, dtype=float)
+
     d = lows.shape[0]
     x0s = np.zeros((n_traj, d), dtype=float)
     for i in range(d):
         x0s[:, i] = rng.uniform(lows[i], highs[i], size=n_traj)
     return x0s
+
+
+def sample_ic(args, rng, *, kind, x0_single,
+              lows=None, highs=None,
+              r_min=None, r_max=None):
+    """
+    Unified sampler interface.
+    """
+
+    if args.n_traj == 1:
+        return np.asarray(x0_single, dtype=float)
+
+    if kind == "annulus":
+        return sample_annulus_ic(args.n_traj, rng,
+                                 r_min=r_min, r_max=r_max)
+
+    if kind == "box":
+        return sample_box_ic(args.n_traj, rng,
+                             lows=lows, highs=highs)
+
+    raise ValueError(f"Unknown sampling kind: {kind}")
 
 
 # --------------------------------------------------
@@ -140,67 +185,63 @@ def build_inward_spiral(args, rng):
     A = np.array([[-0.3, -1],
                   [ 1,  -0.3]], dtype=float)
     f = linear_system(A)
-    if args.n_traj > 1:
-        x0 = sample_uniform_ic(
-            n_traj=args.n_traj, 
-            rng=rng)
-    else:
-        x0 = np.array([1.0, 0.0], dtype=float)
-    meta = {"A": A}
-    return f, x0, meta
+
+    x0 = sample_ic(args, rng,
+                   kind="annulus",
+                   r_min=0.2, r_max=1.5,
+                   x0_single=[1.0, 0.0])
+
+    return f, x0, {"A": A}
 
 
 def build_harmonic_oscillator(args, rng):
-    A = np.array([[0, 1],
-                  [-1,  0]], dtype=float)
+    A = np.array([[0, 1.3],
+                  [-1.3, 0]], dtype=float)
     f = linear_system(A)
-    if args.n_traj > 1:
-        x0 = sample_uniform_ic(
-            n_traj=args.n_traj,
-            rng=rng)
-    else:
-        x0 = np.array([1.0, 0.0], dtype=float)
-    meta = {"A": A}
-    return f, x0, meta
+
+    x0 = sample_ic(args, rng,
+                   kind="annulus",
+                   r_min=0.2, r_max=1.5,   # slightly larger inner radius looks cleaner
+                   x0_single=[1.0, 0.0])
+
+    return f, x0, {"A": A}
 
 
 def build_saddle_point(args, rng):
     A = np.array([[0.2, 0],
                   [0, -0.2]], dtype=float)
     f = linear_system(A)
-    if args.n_traj > 1:
-        x0 = sample_uniform_ic(
-            n_traj=args.n_traj,
-            rng=rng)
-    else:
-        x0 = np.array([1.0, 0.0], dtype=float)
-    meta = {"A": A}
-    return f, x0, meta
+
+    x0 = sample_ic(args, rng,
+                   kind="annulus",
+                   r_min=0.1, r_max=1.5,
+                   x0_single=[1.0, 0.0])
+
+    return f, x0, {"A": A}
 
 
 def build_degenerate_node(args, rng):
     A = np.array([[-1, 1],
                   [0, -1]], dtype=float)
     f = linear_system(A)
-    if args.n_traj > 1:
-        x0 = sample_uniform_ic(
-            n_traj=args.n_traj,
-            rng=rng)
-    else:
-        x0 = np.array([1.0, 0.0], dtype=float)
-    meta = {"A": A}
-    return f, x0, meta
+
+    x0 = sample_ic(args, rng,
+                   kind="annulus",
+                   r_min=0.2, r_max=1.5,
+                   x0_single=[1.0, 0.0])
+
+    return f, x0, {"A": A}
 
 
 def build_vanderpol(args, rng):
     f = vanderpol_system(mu=args.mu)
-    x0 = sample_uniform_ic(
-        lows=np.array([-3.0, -4.0]),
-        highs=np.array([3.0, 4.0]),
-        n_traj=args.n_traj,
-        rng=rng)
-    meta = {"mu": args.mu}
-    return f, x0, meta
+
+    x0 = sample_ic(args, rng,
+                   kind="annulus",
+                   r_min=0.2, r_max=3.5,
+                   x0_single=[1.0, 0.0])
+
+    return f, x0, {"mu": args.mu}
 
 
 def build_lotka_volterra(args, rng):
@@ -210,11 +251,15 @@ def build_lotka_volterra(args, rng):
         delta=args.delta,
         gamma=args.gamma,
     )
-    x0 = sample_uniform_ic(
-        lows=np.array([0.0, 0.0]),
-        highs=np.array([6.0, 2.0]),
-        n_traj=args.n_traj,
-        rng=rng)
+
+    eps = 0.2  # avoid exact zero populations
+
+    x0 = sample_ic(args, rng,
+                   kind="box",
+                   lows=[eps, eps],
+                   highs=[6.0, 2.0],
+                   x0_single=[3.0, 1.0])
+
     meta = {
         "alpha": args.alpha,
         "beta": args.beta,
@@ -226,13 +271,14 @@ def build_lotka_volterra(args, rng):
 
 def build_pendulum(args, rng):
     f = pendulum_system(g=args.g, L=args.L)
-    x0 = sample_uniform_ic(
-        lows=np.array([-1, -2]),
-        highs=np.array([1, 2]),
-        n_traj=args.n_traj,
-        rng=rng)
-    meta = {"g": args.g, "L": args.L}
-    return f, x0, meta
+
+    x0 = sample_ic(args, rng,
+                   kind="box",
+                   lows=[-1.0, -2.0],
+                   highs=[1.0, 2.0],
+                   x0_single=[0.5, 0.0])
+
+    return f, x0, {"g": args.g, "L": args.L}
 
 
 def build_lorenz(args, rng):
@@ -241,17 +287,20 @@ def build_lorenz(args, rng):
         rho=args.rho,
         beta=args.beta,
     )
-    x0 = sample_uniform_ic(
-        lows=np.array([-10.0, -10.0, 20.0]),
-        highs=np.array([10.0, 10.0, 38.0]),
-        n_traj=args.n_traj,
-        rng=rng)
+
+    x0 = sample_ic(args, rng,
+                   kind="box",
+                   lows=[-10.0, -10.0, 20.0],
+                   highs=[10.0, 10.0, 38.0],
+                   x0_single=[1.0, 1.0, 25.0])
+
     meta = {
         "sigma": args.sigma,
         "rho": args.rho,
         "beta": args.beta,
     }
     return f, x0, meta
+
 
 def build_duffing(args, rng):
     f = duffing_system(
@@ -261,11 +310,13 @@ def build_duffing(args, rng):
         gamma=args.gamma,
         omega=args.omega
     )
-    x0 = sample_uniform_ic(
-        lows=np.array([-1.0, -1.0]),
-        highs=np.array([1.0, 1.0]),
-        n_traj=args.n_traj,
-        rng=rng)
+
+    x0 = sample_ic(args, rng,
+                   kind="box",
+                   lows=[-1.0, -1.0],
+                   highs=[1.0, 1.0],
+                   x0_single=[0.5, 0.0])
+
     meta = {
         "alpha": args.alpha,
         "beta": args.beta,
@@ -297,7 +348,7 @@ SYSTEMS = {
 
 def main():
     parser = argparse.ArgumentParser(description="Simulate dynamical systems")
-    parser.add_argument("--debug", type=str, choices=["init_conditions"])
+    parser.add_argument("--debug", type=str, choices=["init_conditions", "phase_portrait"])
 
     parser.add_argument("--system", type=str, required=True, choices=SYSTEMS.keys())
     parser.add_argument("--name", type=str, default=None, help="Optional suffix added to the dataset filename")
@@ -359,6 +410,28 @@ def main():
         
         t, X = simulate(f, x0=ps, dt=args.dt, T=args.T, method=args.method)
         plot_init_conditions(x0s=x0, corner_points=ps, corner_trajs=X, system_name=args.system)
+        return
+    
+    if args.debug == "phase_portrait":
+
+        if x0.ndim == 1:
+            x0s = x0[None, :]
+        else:
+            x0s = x0
+        
+        plot_trajectories_only(
+            f=f,
+            x0s=x0s,
+            dt=args.dt,
+            T=args.T,
+            system_name=args.system
+        )
+
+        plot_flow_map_displacement(
+            f=f,
+            system_name=args.system
+        )
+
         return
     
     t, X = simulate(f, x0=x0, dt=args.dt, T=args.T, method=args.method)
