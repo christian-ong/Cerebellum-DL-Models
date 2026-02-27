@@ -124,7 +124,7 @@ def sample_generic_ic(x0, n_traj, rng, noise_scale=0.1):
     return x0[None, :] + noise
 
 
-def sample_uniform_ic(lows, highs, n_traj, rng):
+def sample_uniform_ic(n_traj, rng, lows=np.array([-1.5, -1.5]), highs=np.array([1.5, 1.5])):
     d = lows.shape[0]
     x0s = np.zeros((n_traj, d), dtype=float)
     for i in range(d):
@@ -137,13 +137,11 @@ def sample_uniform_ic(lows, highs, n_traj, rng):
 # --------------------------------------------------
 
 def build_inward_spiral(args, rng):
-    A = np.array([[-0.3, -6],
-                  [ 6,  -0.3]], dtype=float)
+    A = np.array([[-0.3, -1],
+                  [ 1,  -0.3]], dtype=float)
     f = linear_system(A)
     if args.n_traj > 1:
         x0 = sample_uniform_ic(
-            lows=np.array([-1.5, -1.5]), 
-            highs=np.array([1.5, 1.5]), 
             n_traj=args.n_traj, 
             rng=rng)
     else:
@@ -153,13 +151,11 @@ def build_inward_spiral(args, rng):
 
 
 def build_harmonic_oscillator(args, rng):
-    A = np.array([[0, 1/2],
-                  [-1/2,  0]], dtype=float)
+    A = np.array([[0, 1],
+                  [-1,  0]], dtype=float)
     f = linear_system(A)
     if args.n_traj > 1:
         x0 = sample_uniform_ic(
-            lows=np.array([-1.5, -1.5]),
-            highs=np.array([1.5, 1.5]),
             n_traj=args.n_traj,
             rng=rng)
     else:
@@ -169,13 +165,11 @@ def build_harmonic_oscillator(args, rng):
 
 
 def build_saddle_point(args, rng):
-    A = np.array([[0.1, 0],
-                  [0, -0.1]], dtype=float)
+    A = np.array([[0.2, 0],
+                  [0, -0.2]], dtype=float)
     f = linear_system(A)
     if args.n_traj > 1:
         x0 = sample_uniform_ic(
-            lows=np.array([-2.5, -7.5]),
-            highs=np.array([2.5, 7.5]),
             n_traj=args.n_traj,
             rng=rng)
     else:
@@ -190,8 +184,6 @@ def build_degenerate_node(args, rng):
     f = linear_system(A)
     if args.n_traj > 1:
         x0 = sample_uniform_ic(
-            lows=np.array([-1.5, -1.5]),
-            highs=np.array([1.5, 1.5]),
             n_traj=args.n_traj,
             rng=rng)
     else:
@@ -220,7 +212,7 @@ def build_lotka_volterra(args, rng):
     )
     x0 = sample_uniform_ic(
         lows=np.array([0.0, 0.0]),
-        highs=np.array([30.0, 10.0]),
+        highs=np.array([6.0, 2.0]),
         n_traj=args.n_traj,
         rng=rng)
     meta = {
