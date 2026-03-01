@@ -9,7 +9,7 @@ from src.models.linear_baseline import fit_linear_map
 from src.models.dmd_baseline import fit_dmd
 from src.models.edmd_baseline import fit_edmd
 from src.models.ml_dmd import LinearDynamics
-from src.models.manual_expansion_ml_dmd import LinearDynamicsExpanded
+from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
 from src.train.train_ae_onestep import train_ae_onestep
@@ -33,7 +33,7 @@ Linear system (x' = A x):
     python -m scripts.train --model edmd_baseline   --data_path data/trajectories/linear_trajectory.npz
     python -m scripts.train --model ae_linear       --data_path data/trajectories/linear_trajectory.npz
     python -m scripts.train --model ml_dmd          --data_path data/trajectories/linear_trajectory.npz
-    python -m scripts.train --model ml_dmd_manual_expansion --data_path data/trajectories/linear_trajectory.npz
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear_trajectory.npz
     Options: (ae_linear uses --epochs --batch_size --lr --weight_decay)
 
 Van der Pol:
@@ -102,7 +102,7 @@ def main():
             "ae_linear",
             "ae_koopman",
             "ml_dmd",
-            "ml_dmd_manual_expansion",
+            "manual_expansion_ml_dmd",
         ],
     )
 
@@ -277,8 +277,8 @@ def main():
             state_dim=state_dim,
         ).to(device)
 
-    elif args.model == "ml_dmd_manual_expansion":
-        model = LinearDynamicsExpanded(
+    elif args.model == "manual_expansion_ml_dmd":
+        model = ManualExpansion_MLDMD(
             state_dim=state_dim,
             expansion_degree=args.edmd_degree,
         ).to(device)

@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 
 
-class LinearDynamicsExpanded(nn.Module):
+class ManualExpansion_MLDMD(nn.Module):
     """
     OBS: Only works for 2D state space right now, but can be easily extended to higher dimensions.
     

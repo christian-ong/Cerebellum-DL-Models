@@ -8,7 +8,7 @@ from src.models.linear_baseline import rollout_linear_map
 from src.models.dmd_baseline import rollout_dmd_eig
 from src.models.edmd_baseline import rollout_edmd
 from src.models.ml_dmd import LinearDynamics
-from src.models.manual_expansion_ml_dmd import LinearDynamicsExpanded
+from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
 from src.eval.rollout import rollout_ae_model
@@ -52,7 +52,7 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate trained models")
 
     parser.add_argument("--model", type=str, required=True,
-                        choices=["linear_baseline", "dmd_baseline", "edmd_baseline", "ae_linear", "ae_koopman", "ml_dmd", "ml_dmd_manual_expansion"],)
+                        choices=["linear_baseline", "dmd_baseline", "edmd_baseline", "ae_linear", "ae_koopman", "ml_dmd", "manual_expansion_ml_dmd"],)
 
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--model_path", type=str, required=True)
@@ -136,9 +136,9 @@ def main():
         model.load_state_dict(ckpt["model_state_dict"])
         model.eval()
 
-    elif args.model == "ml_dmd_manual_expansion":
+    elif args.model == "manual_expansion_ml_dmd":
         ckpt = torch.load(args.model_path, map_location=device)
-        model = LinearDynamicsExpanded(state_dim=ckpt["state_dim"],).to(device)
+        model = ManualExpansion_MLDMD(state_dim=ckpt["state_dim"],).to(device)
         model.load_state_dict(ckpt["model_state_dict"])
         model.eval()
 
