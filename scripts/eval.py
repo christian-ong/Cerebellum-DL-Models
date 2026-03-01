@@ -8,7 +8,7 @@ from src.models.linear_baseline import rollout_linear_map
 from src.models.dmd_baseline import rollout_dmd_eig
 from src.models.edmd_baseline import rollout_edmd
 from src.models.ml_dmd import LinearDynamics
-from src.models.ml_dmd_manual_expansion import LinearDynamicsExpanded
+from src.models.manual_expansion_ml_dmd import LinearDynamicsExpanded
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
 from src.eval.rollout import rollout_ae_model
