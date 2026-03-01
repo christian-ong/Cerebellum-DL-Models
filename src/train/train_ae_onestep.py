@@ -1,4 +1,6 @@
 import torch
+import numpy as np
+from tqdm import tqdm
 
 
 def train_ae_onestep(
@@ -35,16 +37,20 @@ def train_ae_onestep(
     )
 
     loss_fn = torch.nn.MSELoss()
+    all_train_losses = []
+    epoch_val_losses = []
 
     for epoch in range(epochs):
         # -------------------
         # Training
         # -------------------
-        model.train()
         train_loss = 0.0
         n_train = 0
+        train_losses = []
+        batch_val_losses = []
 
-        for x, y in train_loader:
+        for x, y in tqdm(train_loader):
+            model.train()
             x = x.to(device)
             y = y.to(device)
 
@@ -56,12 +62,26 @@ def train_ae_onestep(
             loss = loss_fn(y_hat, y)
             loss.backward()
             optimizer.step()
+            train_losses.append(loss.item())
 
             batch_size = x.size(0)
             train_loss += loss.item() * batch_size
             n_train += batch_size
 
+            # Validation loss on single batch (during training)
+            if val_loader is not None:
+                model.eval()
+                with torch.no_grad():
+                    x_val, y_val = next(iter(val_loader))
+                    x_val = x_val.to(device)
+                    y_val = y_val.to(device)
+                    y_val_hat, _, _ = model(x_val)
+                    loss_val = loss_fn(y_val_hat, y_val)
+                    batch_val_losses.append(loss_val.item())
+                model.train()
+
         train_loss /= n_train
+        all_train_losses.extend(train_losses)
 
         # -------------------
         # Validation
@@ -87,6 +107,8 @@ def train_ae_onestep(
 
             val_loss /= n_val
 
+        epoch_val_losses.append(val_loss)
+
         scheduler.step()
 
         current_lr = optimizer.param_groups[0]["lr"]
@@ -110,4 +132,7 @@ def train_ae_onestep(
         eigvals, eigvecs = torch.linalg.eig(K_matrix)
         print(f"Eigenvalues:\n{eigvals.cpu().numpy()}")
         print(f"Eigenvectors:\n{eigvecs.cpu().numpy()}")
-    return model
+    
+    losses = all_train_losses, batch_val_losses, epoch_val_losses
+
+    return model, losses

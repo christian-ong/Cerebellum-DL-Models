@@ -9,6 +9,7 @@ from src.models.linear_baseline import fit_linear_map
 from src.models.dmd_baseline import fit_dmd
 from src.models.edmd_baseline import fit_edmd
 from src.models.ml_dmd import LinearDynamics
+from src.models.ml_dmd_manual_expansion import LinearDynamicsExpanded
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
 from src.train.train_ae_onestep import train_ae_onestep
@@ -32,6 +33,7 @@ Linear system (x' = A x):
     python -m scripts.train --model edmd_baseline   --data_path data/trajectories/linear_trajectory.npz
     python -m scripts.train --model ae_linear       --data_path data/trajectories/linear_trajectory.npz
     python -m scripts.train --model ml_dmd          --data_path data/trajectories/linear_trajectory.npz
+    python -m scripts.train --model ml_dmd_manual_expansion --data_path data/trajectories/linear_trajectory.npz
     Options: (ae_linear uses --epochs --batch_size --lr --weight_decay)
 
 Van der Pol:
@@ -100,6 +102,7 @@ def main():
             "ae_linear",
             "ae_koopman",
             "ml_dmd",
+            "ml_dmd_manual_expansion",
         ],
     )
 
@@ -125,7 +128,7 @@ def main():
     # --------------------------------------------------
     parser.add_argument("--rank", type=int, default=None)
     parser.add_argument("--ridge", type=float, default=0.0)
-    parser.add_argument("--edmd_degree", type=int, default=2)
+    parser.add_argument("--edmd_degree", type=int, default=3)
 
     # --------------------------------------------------
     # Misc
@@ -274,6 +277,12 @@ def main():
             state_dim=state_dim,
         ).to(device)
 
+    elif args.model == "ml_dmd_manual_expansion":
+        model = LinearDynamicsExpanded(
+            state_dim=state_dim,
+            expansion_degree=args.edmd_degree,
+        ).to(device)
+
     elif args.model == "ae_linear":
         model = AELinearDynamics(
             state_dim=state_dim,
@@ -290,7 +299,7 @@ def main():
     else:
         raise ValueError(f"Unknown model: {args.model}")
 
-    model = train_ae_onestep(
+    model, (train_losses, batch_val_losses, epoch_val_losses) = train_ae_onestep(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
@@ -324,7 +333,14 @@ def main():
         save_path,
     )
 
-    print("Saved model to:", save_path)
+    # Save training losses
+    loss_path = save_path.replace(".pt", "_losses.npz")
+    np.savez(
+        loss_path, 
+        train_losses=train_losses, 
+        batch_val_losses=batch_val_losses, 
+        epoch_val_losses=epoch_val_losses)
+    print("Saved model and losses to:", save_path, loss_path)
 
 
 if __name__ == "__main__":
