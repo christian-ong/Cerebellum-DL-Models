@@ -9,7 +9,7 @@ from src.models.linear_baseline import fit_linear_map
 from src.models.dmd_baseline import fit_dmd
 from src.models.edmd_baseline import fit_edmd
 from src.models.ml_dmd import LinearDynamics
-from src.models.ml_dmd_manual_expansion import LinearDynamicsExpanded
+from src.models.manual_expansion_ml_dmd import LinearDynamicsExpanded
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
 from src.models.manual_dmd_manual_expansion import ManualExpand_ManualDMD
