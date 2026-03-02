@@ -140,6 +140,24 @@ def main():
     parser.add_argument("--rank", type=int, default=None)
     parser.add_argument("--ridge", type=float, default=0.0)
     parser.add_argument("--edmd_degree", type=int, default=3)
+    parser.add_argument(
+        "--bias",
+        type=str.lower,
+        choices=["true", "false"],
+        default="true",
+        help="Include bias term in polynomial expansion",
+    )
+    parser.add_argument(
+        "--manual_decoder",
+        type=str,
+        choices=["regressed", "fixed"],
+        default="fixed",
+    )
+    parser.add_argument(
+        "--manual_regression_method",
+        type=str,
+        default="svd",
+    )
 
     # --------------------------------------------------
     # Misc
@@ -286,10 +304,14 @@ def main():
                 expansion_degree=args.edmd_degree,
                 rank=args.rank,
                 ridge=args.ridge,
+                include_bias=args.bias == "true",
+                decoder_mode=args.manual_decoder,
             ).to(device)
-            K = model.fit(X, Y)
-            print(K)
-        
+            K, C = model.fit(X, Y, method=args.manual_regression_method)
+            
+            print("K shape:", K.shape, K)
+            print("C shape:", C.shape, C)
+            print("Model expand names:", model.expand_names)
 
             save_path = os.path.join(
                 args.outdir,
@@ -299,8 +321,12 @@ def main():
             np.savez(
                 save_path,
                 K=K.detach().cpu().numpy(),
+                C=C.detach().cpu().numpy(),
                 state_dim=state_dim,
                 expansion_degree=args.edmd_degree,
+                include_bias=args.bias == "true",
+                decoder_mode=args.manual_decoder,
+                regression_method=args.manual_regression_method,
                 rank=args.rank,
                 ridge=args.ridge,
                 model="manual_expansion_manual_dmd",

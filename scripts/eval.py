@@ -118,14 +118,18 @@ def main():
     elif args.model == "manual_expansion_manual_dmd":
         model_data = np.load(args.model_path)
         K = model_data["K"]
-        degree = int(model_data["degree"]) if "degree" in model_data else 3
-        rank = int(model_data["rank"]) if "rank" in model_data and model_data["rank"] is not None else None
-        ridge = float(model_data["ridge"]) if "ridge" in model_data else 0.0
+        if "C" not in model_data:
+            raise ValueError(
+                "Checkpoint is missing decoder matrix C. "
+                "Please retrain manual_expansion_manual_dmd with the updated EDMD-style implementation."
+            )
+        C = model_data["C"]
+        degree = int(model_data["expansion_degree"]) if "expansion_degree" in model_data else 3
+        include_bias = bool(np.asarray(model_data["include_bias"]).item()) if "include_bias" in model_data else True
         model = ManualExpansion_ManualDMD(
             state_dim=state_dim,
             expansion_degree=degree,
-            rank=rank,
-            ridge=ridge,
+            include_bias=include_bias,
         ).to(device)
         model.eval()
 
@@ -186,7 +190,7 @@ def main():
             X_hat = rollout_edmd(K, C, degree=degree, x0=x0, steps=steps)
 
         elif args.model == "manual_expansion_manual_dmd":
-            X_hat = model.rollout(K=K, x0=x0, steps=steps).cpu().numpy()
+            X_hat = model.rollout(K=K, C=C, x0=x0, steps=steps).cpu().numpy()
 
         else:
             x0_torch = torch.tensor(x0, dtype=torch.float32)
@@ -233,7 +237,7 @@ def main():
     elif args.model == "edmd_baseline":
         X_hat = rollout_edmd(K, C, degree=degree, x0=x0, steps=steps)
     elif args.model == "manual_expansion_manual_dmd":
-        X_hat = model.rollout(K=K, x0=x0, steps=steps).cpu().numpy()
+        X_hat = model.rollout(K=K, C=C, x0=x0, steps=steps).cpu().numpy()
     else:
         x0_torch = torch.tensor(x0, dtype=torch.float32)
         X_hat = rollout_ae_model(
