@@ -12,6 +12,7 @@ from src.models.ml_dmd import LinearDynamics
 from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
+from src.models.manual_dmd_manual_expansion import ManualExpand_ManualDMD
 from src.train.train_ae_onestep import train_ae_onestep
 
 """
@@ -27,7 +28,7 @@ Global options (defaults):
     --seed 0
     --outdir data/models
 
-Linear system (x' = A x):
+Linear system (x' = A x): # OUTDATED NAMES (linear_trajectory xd)
     python -m scripts.train --model linear_baseline --data_path data/trajectories/linear_trajectory.npz
     python -m scripts.train --model dmd_baseline    --data_path data/trajectories/linear_trajectory.npz
     python -m scripts.train --model edmd_baseline   --data_path data/trajectories/linear_trajectory.npz
@@ -103,6 +104,7 @@ def main():
             "ae_koopman",
             "ml_dmd",
             "manual_expansion_ml_dmd",
+            "manual_dmd_manual_expansion",
         ],
     )
 
@@ -206,7 +208,7 @@ def main():
     # ==================================================
     # DMD / EDMD baselines
     # ==================================================
-    if args.model in {"dmd_baseline", "edmd_baseline"}:
+    if args.model in {"dmd_baseline", "edmd_baseline", "manual_dmd_manual_expansion"}:
         print(f"Fitting {args.model.upper()}...")
 
         X, Y = dataloader_to_numpy(train_loader)
@@ -239,33 +241,69 @@ def main():
             return
 
         # EDMD
-        K, C = fit_edmd(
-            X,
-            Y,
-            degree=args.edmd_degree,
-            rank=args.rank,
-            ridge=args.ridge,
-        )
+        elif args.model == "edmd_baseline":
+            K, C = fit_edmd(
+                X,
+                Y,
+                degree=args.edmd_degree,
+                rank=args.rank,
+                ridge=args.ridge,
+            )
 
-        save_path = os.path.join(
-            args.outdir,
-            f"edmd_baseline_{system_name}{suffix}.npz",
-        )
+            save_path = os.path.join(
+                args.outdir,
+                f"edmd_baseline_{system_name}{suffix}.npz",
+            )
 
-        np.savez(
-            save_path,
-            K=K,
-            C=C,
-            degree=args.edmd_degree,
-            rank=args.rank,
-            ridge=args.ridge,
-            model="edmd_baseline",
-            system=system_name,
-            data_path=args.data_path,
-        )
+            np.savez(
+                save_path,
+                K=K,
+                C=C,
+                degree=args.edmd_degree,
+                rank=args.rank,
+                ridge=args.ridge,
+                model="edmd_baseline",
+                system=system_name,
+                data_path=args.data_path,
+            )
 
-        print("Saved EDMD baseline to:", save_path)
-        return
+            print("Saved EDMD baseline to:", save_path)
+            return
+    
+        # manual expansion manual DMD
+        elif args.model == "manual_dmd_manual_expansion":
+            model = ManualExpand_ManualDMD(
+                state_dim=state_dim,
+                expansion_degree=args.edmd_degree,
+                rank=args.rank,
+                ridge=args.ridge,
+            ).to(device)
+            K = model.fit(X, Y)
+            print(K)
+        
+
+            save_path = os.path.join(
+                args.outdir,
+                f"manual_dmd_manual_expansion_{system_name}{suffix}.npz",
+            )
+
+            np.savez(
+                save_path,
+                K=K.detach().cpu().numpy(),
+                state_dim=state_dim,
+                expansion_degree=args.edmd_degree,
+                rank=args.rank,
+                ridge=args.ridge,
+                model="manual_dmd_manual_expansion",
+                system=system_name,
+                data_path=args.data_path,
+            )
+
+            print("Saved manual DMD manual expansion baseline to:", save_path)
+            return
+
+        else:
+            raise ValueError(f"Unknown manual model: {args.model}")
 
     # ==================================================
     # Network models
