@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 
 
-class ManualExpand_ManualDMD(nn.Module):
+class ManualExpansion_ManualDMD(nn.Module):
     """
     Simply expands the state
     """

@@ -12,12 +12,20 @@ from src.models.ml_dmd import LinearDynamics
 from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
-from src.models.manual_expansion_manual_dmd import ManualExpand_ManualDMD
+from src.models.manual_expansion_manual_dmd import ManualExpansion_ManualDMD
 from src.train.train_ae_onestep import train_ae_onestep
 
 """
 Global options (defaults):
-    --model {linear_baseline,dmd_baseline,edmd_baseline,ae_linear,ae_koopman}
+    --model {
+        linear_baseline,
+        dmd_baseline,
+        edmd_baseline,
+        ae_linear,
+        ae_koopman,
+        ml_dmd,
+        manual_expansion_ml_dmd,
+        manual_expansion_manual_dmd,}
     --data_path data/trajectories/{system}_trajectory.npz
     --epochs 50
     --batch_size 512
@@ -35,6 +43,7 @@ Linear system (x' = A x): # OUTDATED NAMES (linear_trajectory xd)
     python -m scripts.train --model ae_linear       --data_path data/trajectories/linear_trajectory.npz
     python -m scripts.train --model ml_dmd          --data_path data/trajectories/linear_trajectory.npz
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear_trajectory.npz
+    python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/linear_trajectory.npz
     Options: (ae_linear uses --epochs --batch_size --lr --weight_decay)
 
 Van der Pol:
@@ -104,7 +113,7 @@ def main():
             "ae_koopman",
             "ml_dmd",
             "manual_expansion_ml_dmd",
-            "manual_dmd_manual_expansion",
+            "manual_expansion_manual_dmd",
         ],
     )
 
@@ -208,7 +217,7 @@ def main():
     # ==================================================
     # DMD / EDMD baselines
     # ==================================================
-    if args.model in {"dmd_baseline", "edmd_baseline", "manual_dmd_manual_expansion"}:
+    if args.model in {"dmd_baseline", "edmd_baseline", "manual_expansion_manual_dmd"}:
         print(f"Fitting {args.model.upper()}...")
 
         X, Y = dataloader_to_numpy(train_loader)
@@ -271,8 +280,8 @@ def main():
             return
     
         # manual expansion manual DMD
-        elif args.model == "manual_dmd_manual_expansion":
-            model = ManualExpand_ManualDMD(
+        elif args.model == "manual_expansion_manual_dmd":
+            model = ManualExpansion_ManualDMD(
                 state_dim=state_dim,
                 expansion_degree=args.edmd_degree,
                 rank=args.rank,
@@ -284,7 +293,7 @@ def main():
 
             save_path = os.path.join(
                 args.outdir,
-                f"manual_dmd_manual_expansion_{system_name}{suffix}.npz",
+                f"manual_expansion_manual_dmd_{system_name}{suffix}.npz",
             )
 
             np.savez(
@@ -294,7 +303,7 @@ def main():
                 expansion_degree=args.edmd_degree,
                 rank=args.rank,
                 ridge=args.ridge,
-                model="manual_dmd_manual_expansion",
+                model="manual_expansion_manual_dmd",
                 system=system_name,
                 data_path=args.data_path,
             )

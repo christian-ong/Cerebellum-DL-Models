@@ -11,7 +11,7 @@ from src.models.ml_dmd import LinearDynamics
 from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
-from src.models.manual_expansion_manual_dmd import ManualExpand_ManualDMD
+from src.models.manual_expansion_manual_dmd import ManualExpansion_ManualDMD
 from src.eval.rollout import rollout_ae_model
 from src.models.dmd_baseline import *
 """
@@ -30,7 +30,7 @@ Linear system (x' = A x): # OUTDATED NAMES (linear_trajectory xd)
     python -m scripts.eval --model edmd_baseline   --data_path data/trajectories/linear_trajectory.npz --model_path data/models/edmd_baseline_linear.npz
     python -m scripts.eval --model ae_linear       --data_path data/trajectories/linear_trajectory.npz --model_path data/models/ae_linear.pt
     python -m scripts.eval --model ml_dmd           --data_path data/trajectories/linear_trajectory.npz --model_path data/models/ml_dmd_linear.pt
-    python -m scripts.eval --model ml_dmd_manual_expansion           --data_path data/trajectories/linear_trajectory.npz --model_path data/models/manual_dmd_manual_expansion_linear.npz
+    python -m scripts.eval --model manual_expansion_manual_dmd           --data_path data/trajectories/linear_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_linear.npz
     
     Options: --steps --traj_index
 
@@ -55,7 +55,7 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate trained models")
 
     parser.add_argument("--model", type=str, required=True,
-                        choices=["linear_baseline", "dmd_baseline", "edmd_baseline", "ae_linear", "ae_koopman", "ml_dmd", "manual_expansion_ml_dmd", "manual_dmd_manual_expansion"],)
+                        choices=["linear_baseline", "dmd_baseline", "edmd_baseline", "ae_linear", "ae_koopman", "ml_dmd", "manual_expansion_ml_dmd", "manual_expansion_manual_dmd"],)
 
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--model_path", type=str, required=True)
@@ -115,13 +115,13 @@ def main():
         degree = int(model_data["degree"])
         model = None
     
-    elif args.model == "manual_dmd_manual_expansion":
+    elif args.model == "manual_expansion_manual_dmd":
         model_data = np.load(args.model_path)
         K = model_data["K"]
         degree = int(model_data["degree"]) if "degree" in model_data else 3
         rank = int(model_data["rank"]) if "rank" in model_data and model_data["rank"] is not None else None
         ridge = float(model_data["ridge"]) if "ridge" in model_data else 0.0
-        model = ManualExpand_ManualDMD(
+        model = ManualExpansion_ManualDMD(
             state_dim=state_dim,
             expansion_degree=degree,
             rank=rank,
@@ -185,7 +185,7 @@ def main():
         elif args.model == "edmd_baseline":
             X_hat = rollout_edmd(K, C, degree=degree, x0=x0, steps=steps)
 
-        elif args.model == "manual_dmd_manual_expansion":
+        elif args.model == "manual_expansion_manual_dmd":
             X_hat = model.rollout(K=K, x0=x0, steps=steps).cpu().numpy()
 
         else:
@@ -232,7 +232,7 @@ def main():
 
     elif args.model == "edmd_baseline":
         X_hat = rollout_edmd(K, C, degree=degree, x0=x0, steps=steps)
-    elif args.model == "manual_dmd_manual_expansion":
+    elif args.model == "manual_expansion_manual_dmd":
         X_hat = model.rollout(K=K, x0=x0, steps=steps).cpu().numpy()
     else:
         x0_torch = torch.tensor(x0, dtype=torch.float32)
