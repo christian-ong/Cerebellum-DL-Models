@@ -11,7 +11,7 @@ from src.models.ml_dmd import LinearDynamics
 from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
-from src.models.manual_dmd_manual_expansion import ManualExpand_ManualDMD
+from src.models.manual_expansion_manual_dmd import ManualExpand_ManualDMD
 from src.eval.rollout import rollout_ae_model
 from src.models.dmd_baseline import *
 """
