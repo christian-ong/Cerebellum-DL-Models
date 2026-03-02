@@ -12,7 +12,10 @@ class OneStepTrajectoryDataset(Dataset):
       - X shape (T, d) or (T, n_traj, d)
     """
 
-    def __init__(self, npz_path: str, split: str = "train"):
+    def __init__(self, 
+                 npz_path: str, 
+                 split: str = "train",
+                 subset: float = 1.0):
         data = np.load(npz_path)
 
         X = data["X"]
@@ -38,6 +41,17 @@ class OneStepTrajectoryDataset(Dataset):
             self.y = torch.empty(0)
             return
 
+        # subset trajectories 
+        if subset < 1.0:
+            print(f"Using subset of data: {subset*100:.1f}% of trajectories")
+            print(f"Original shape: {X[:, traj_idx, :].shape}")
+
+            n_traj = len(traj_idx)
+            n_subset = int(np.ceil(n_traj * subset))
+            traj_idx = np.random.choice(traj_idx, size=n_subset, replace=False)
+
+            print(f"Subset shape: {X[:, traj_idx, :].shape}")
+
         X = X[:, traj_idx, :]
 
         # One-step pairs
@@ -47,6 +61,8 @@ class OneStepTrajectoryDataset(Dataset):
         Tm1, n_traj, d = x.shape
         x = x.reshape(Tm1 * n_traj, d)
         y = y.reshape(Tm1 * n_traj, d)
+
+        print(x.shape, y.shape)
 
         self.x = torch.tensor(x, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.float32)

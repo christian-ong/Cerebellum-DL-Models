@@ -28,6 +28,7 @@ Global options (defaults):
         manual_expansion_manual_dmd,}
     --data_path data/trajectories/{system}_trajectory.npz
     --epochs 50
+    --subset 1.0
     --batch_size 512
     --lr 1e-3
     --weight_decay 1e-6
@@ -123,6 +124,7 @@ def main():
     # --------------------------------------------------
     # Training hyperparameters
     # --------------------------------------------------
+    parser.add_argument("--subset", type=float, default=1.0, help="Fraction of data to use for training (for ML models only)")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -171,10 +173,12 @@ def main():
     train_ds = OneStepTrajectoryDataset(
         args.data_path,
         split="train",
+        subset=args.subset,
     )
     val_ds = OneStepTrajectoryDataset(
         args.data_path,
         split="val",
+        subset=args.subset,
     )
 
     train_loader = DataLoader(
@@ -183,11 +187,9 @@ def main():
         shuffle=True,
     )
 
-    val_loader = (
-        DataLoader(val_ds, batch_size=args.batch_size)
-        if len(val_ds) > 0
-        else None
-    )
+    val_loader = DataLoader(
+        val_ds, batch_size=args.batch_size) if len(val_ds) > 0 else None
+    
 
     # ==================================================
     # Linear least-squares baseline
