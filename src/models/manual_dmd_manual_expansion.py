@@ -12,14 +12,15 @@ class ManualExpand_ManualDMD(nn.Module):
         super().__init__()
 
         # Basis expansion of the state
-        self.expand_combinations = []
-        expand_names = []
+        self.polynomial_expansions = []
+        self.expand_names = []
         for d in range(1, expansion_degree + 1):
             for i in range(d + 1):
-                self.expand_combinations.append((i, d - i))
-                expand_names.append(f"x1^{i} * x2^{d - i}")
-        self.expanded_dim = len(self.expand_combinations)
-        self.expand_names = expand_names
+                e_x = d-i
+                e_y = i
+                self.polynomial_expansions.append((e_x, e_y))
+                self.expand_names.append(f"x^{e_x} * y^{e_y}")
+        self.expanded_dim = len(self.polynomial_expansions)
         self.rank = rank
         self.ridge = ridge
 
@@ -33,7 +34,7 @@ class ManualExpand_ManualDMD(nn.Module):
 
         expanded_features = []
 
-        for i, j in self.expand_combinations:
+        for i, j in self.polynomial_expansions:
             expanded_features.append((x[:, 0] ** i) * (x[:, 1] ** j))
 
         x_expanded = torch.stack(expanded_features, dim=1)

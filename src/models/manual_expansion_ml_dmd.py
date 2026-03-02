@@ -18,15 +18,14 @@ class ManualExpansion_MLDMD(nn.Module):
 
         # Add basis expansion of the state
         self.polynomial_expansions = []
-        expand_names = []
+        self.expand_names = []
         for d in range(1, expansion_degree + 1):
             for i in range(d + 1):
                 e_x = d-i
                 e_y = i
                 self.polynomial_expansions.append((e_x, e_y))
-                expand_names.append(f"x^{e_x} y^{e_y}")
+                self.expand_names.append(f"x^{e_x} y^{e_y}")
         self.expanded_dim = len(self.polynomial_expansions)
-        self.expand_names = expand_names
         
         self.K = nn.Linear(
             in_features=self.expanded_dim,
