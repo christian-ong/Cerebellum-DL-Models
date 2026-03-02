@@ -17,13 +17,15 @@ class ManualExpansion_MLDMD(nn.Module):
         super().__init__()
 
         # Add basis expansion of the state
-        self.expand_combinations = []
+        self.polynomial_expansions = []
         expand_names = []
         for d in range(1, expansion_degree + 1):
             for i in range(d + 1):
-                self.expand_combinations.append((i, d - i))
-                expand_names.append(f"x1^{i} * x2^{d - i}")
-        self.expanded_dim = len(self.expand_combinations)
+                e_x = d-i
+                e_y = i
+                self.polynomial_expansions.append((e_x, e_y))
+                expand_names.append(f"x^{e_x} y^{e_y}")
+        self.expanded_dim = len(self.polynomial_expansions)
         self.expand_names = expand_names
         
         self.K = nn.Linear(
@@ -36,7 +38,7 @@ class ManualExpansion_MLDMD(nn.Module):
     def expand(self, x):
         expanded_features = []
 
-        for i, j in self.expand_combinations:
+        for i, j in self.polynomial_expansions:
             expanded_features.append((x[:, 0] ** i) * (x[:, 1] ** j))
 
         x_expanded = torch.stack(expanded_features, dim=1)

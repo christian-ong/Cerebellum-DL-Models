@@ -329,6 +329,7 @@ def main():
             "hidden_dim": args.hidden_dim if args.model == "ae_koopman" else None,
             "train_args": vars(args),
             "data_path": args.data_path,
+            "expand_names": model.expand_names if "expansion" in args.model else None,
         },
         save_path,
     )
