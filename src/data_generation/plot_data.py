@@ -64,105 +64,257 @@ def plot_init_conditions(x0s, corner_points, corner_trajs, system_name="system")
     plt.close()
 
 
-def plot_trajectories_only(f, x0s, dt, T,
-                           system_name="system",
-                           max_trajs_to_plot=100,
-                           outdir="data/phase_portraits/clean"):
+def plot_trajectories_only(
+    f,
+    x0s,
+    dt,
+    T,
+    system_name="system",
+    max_trajs_to_plot=100,
+    outdir="data/figures/trajectories/",
+):
 
     os.makedirs(outdir, exist_ok=True)
 
     t, X = simulate(f, x0=x0s, dt=dt, T=T, method="rk4")
 
-    if X.shape[1] > max_trajs_to_plot:
-        idx = np.linspace(0, X.shape[1]-1,
-                          max_trajs_to_plot, dtype=int)
+    if X.ndim == 2:
+        X = X[:, None, :]
+        x0s = np.asarray(x0s)[None, :]
+    else:
+        x0s = np.asarray(x0s)
+
+    n_traj = X.shape[1]
+    if n_traj > max_trajs_to_plot:
+        idx = np.linspace(0, n_traj - 1, max_trajs_to_plot, dtype=int)
         X = X[:, idx, :]
         x0s = x0s[idx]
+        n_traj = max_trajs_to_plot
 
-    plt.figure(figsize=(7,7))
+    state_dim = X.shape[2]
+    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-    # Use matplotlib default color cycle
-    cmap = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    # ============================================================
+    # 2D SYSTEM
+    # ============================================================
+    if state_dim == 2:
 
-    for i in range(X.shape[1]):
-        color = cmap[i % len(cmap)]
+        plt.figure(figsize=(7, 7))
 
-        # trajectory
-        plt.plot(X[:, i, 0],
-                 X[:, i, 1],
-                 lw=1.5,
-                 color=color)
+        for i in range(n_traj):
+            color = colors[i % len(colors)]
+            plt.plot(X[:, i, 0], X[:, i, 1], lw=1.2, color=color)
+            plt.scatter(
+                x0s[i, 0], x0s[i, 1],
+                color=color,
+                s=35,
+                edgecolor="black",
+                linewidth=0.5,
+                zorder=3,
+            )
 
-        # matching initial condition
-        plt.scatter(x0s[i, 0],
-                    x0s[i, 1],
+        plt.xlabel("x")
+        plt.ylabel("y")
+        plt.title(f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories", fontsize=15)
+        # plt.axis("equal")
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(f"{outdir}/{system_name}_trajectories.png", dpi=300)
+        plt.close()
+
+    # ============================================================
+    # 3D SYSTEM → 3 PROJECTIONS
+    # ============================================================
+    elif state_dim == 3:
+
+        projections = [
+            (0, 1, "x", "y"),
+            (0, 2, "x", "z"),
+            (1, 2, "y", "z"),
+        ]
+
+        for dim1, dim2, label1, label2 in projections:
+
+            plt.figure(figsize=(7, 7))
+
+            for i in range(n_traj):
+                color = colors[i % len(colors)]
+
+                plt.plot(
+                    X[:, i, dim1],
+                    X[:, i, dim2],
+                    lw=1.0,
+                    color=color,
+                )
+
+                plt.scatter(
+                    x0s[i, dim1],
+                    x0s[i, dim2],
                     color=color,
                     s=35,
-                    edgecolor='black',
+                    edgecolor="black",
                     linewidth=0.5,
-                    zorder=3)
+                    zorder=3,
+                )
 
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.title(f"{system_name.replace('_',' ')} system — trajectories")
-    # plt.axis("equal")
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
+            plt.xlabel(label1)
+            plt.ylabel(label2)
+            plt.title(
+                f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories {label1}-{label2}", fontsize=15
+            )
 
-    plt.savefig(f"{outdir}/{system_name}_trajectories.png")
-    plt.close()
+            # plt.axis("equal")
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(
+                f"{outdir}/{system_name}_{label1}{label2}.png",
+                dpi=300,
+            )
+            plt.close()
 
-def plot_flow_map_displacement(f,
-                               grid_lim=1.6,
-                               grid_n=25,
-                               tau=0.12,
-                               system_name="system",
-                               outdir="data/phase_portraits/clean"):
+
+def plot_flow_map_displacement(
+    f,
+    state_dim,
+    grid_lim=20,
+    grid_n=25,
+    tau=0.01,
+    xlim=None,
+    ylim=None,
+    zlim=None,
+    system_name="system",
+    outdir="data/figures/flowmaps/",
+):
 
     os.makedirs(outdir, exist_ok=True)
 
-    x1 = np.linspace(-grid_lim, grid_lim, grid_n)
-    x2 = np.linspace(-grid_lim, grid_lim, grid_n)
+    # --- Grid limits ---
+    if xlim is None:
+        xlim = (-grid_lim, grid_lim)
+    if ylim is None:
+        ylim = (-grid_lim, grid_lim)
+
+    x1 = np.linspace(xlim[0], xlim[1], grid_n)
+    x2 = np.linspace(ylim[0], ylim[1], grid_n)
     X1, X2 = np.meshgrid(x1, x2)
 
-    pts = np.column_stack([X1.ravel(), X2.ravel()])
+    pts2d = np.column_stack([X1.ravel(), X2.ravel()])
 
-    Phi = np.array([rk4_step(f, p, tau) for p in pts])
-    D = Phi - pts
+    # ============================================================
+    # 2D SYSTEM
+    # ============================================================
+    if state_dim == 2:
 
-    DX = D[:, 0].reshape(X1.shape)
-    DY = D[:, 1].reshape(X2.shape)
+        Phi = np.array([rk4_step(f, p, tau) for p in pts2d])
+        D = Phi - pts2d
 
-    # ---- AUTO SCALE ----
-    magnitudes = np.sqrt(DX**2 + DY**2)
-    max_mag = np.max(magnitudes)
+        DX = D[:, 0].reshape(X1.shape)
+        DY = D[:, 1].reshape(X2.shape)
 
-    # Avoid divide by zero
-    if max_mag > 0:
-        scale_factor = max_mag
-    else:
-        scale_factor = 1.0
+        speed = np.sqrt(DX**2 + DY**2)
 
-    DX = DX / scale_factor
-    DY = DY / scale_factor
-    # --------------------
+        plt.figure(figsize=(8, 7))
+        plt.streamplot(X1, X2, DX, DY, density=1.1, color=speed, cmap="viridis")
+        plt.colorbar(label="$|\dot{x}|$")
+        plt.xlabel("x")
+        plt.ylabel("y")
+        # plt.axis("equal")
+        if xlim is not None:
+            plt.xlim(xlim)
+        if ylim is not None:
+            plt.ylim(ylim)
+        plt.grid(True, alpha=0.3)
+        plt.title(f"{system_name.replace('_',' ').title()} — Phase Portrait", fontsize=15)
+        plt.tight_layout()
+        plt.savefig(f"{outdir}/{system_name}_flowmap.png", dpi=300)
+        plt.close()
 
-    plt.figure(figsize=(7,7))
+    # ============================================================
+    # 3D SYSTEM → 3 PROJECTION SLICES
+    # ============================================================
+    elif state_dim == 3:
+            # Reference centers for Lorenz "Wings"
+            z_ref, y_ref, x_ref = 27.0, 0.0, 0.0
+            
+            projections = [
+                (0, 1, 2, "x", "y", xlim, ylim, z_ref),
+                (0, 2, 1, "x", "z", xlim, zlim, y_ref),
+                (1, 2, 0, "y", "z", ylim, zlim, x_ref),
+            ]
 
-    plt.quiver(X1, X2, DX, DY,
-               angles='xy',
-               scale_units='xy',
-               scale=2,
-               alpha=0.9,
-               color='tab:blue',
-               pivot='mid')
+            # --- Part A: The 2D Projections ---
+            for dim1, dim2, fixed_dim, label1, label2, lim1, lim2, ref_val in projections:
+                x1 = np.linspace(lim1[0], lim1[1], grid_n)
+                x2 = np.linspace(lim2[0], lim2[1], grid_n)
+                X1, X2 = np.meshgrid(x1, x2)
 
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.title(f"{system_name.replace('_',' ')} system — flow map displacement")
-    plt.axis("equal")
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
+                pts3d = np.zeros((X1.size, 3))
+                pts3d[:, dim1] = X1.ravel()
+                pts3d[:, dim2] = X2.ravel()
+                pts3d[:, fixed_dim] = ref_val 
 
-    plt.savefig(f"{outdir}/{system_name}_flowmap.png")
-    plt.close()
+                F = np.array([f(0, p) for p in pts3d])
+                DX = F[:, dim1].reshape(X1.shape)
+                DY = F[:, dim2].reshape(X2.shape)
+                speed = np.sqrt(DX**2 + DY**2)
+
+                plt.figure(figsize=(8, 7))
+                strm = plt.streamplot(X1, X2, DX, DY, density=1.0, color=speed, cmap="magma")
+                plt.colorbar(label="|F(x)|")
+                plt.title(f"{system_name.replace('_',' ').title()}: {label1}-{label2} slice at {ref_val}")
+                plt.xlabel(label1); plt.ylabel(label2)
+                plt.tight_layout()
+                plt.savefig(f"{outdir}/{system_name}_slice_{label1}{label2}.png", dpi=300)
+                plt.close()
+
+            # --- Part B: The Hero 3D Plot ---
+            grid_3d = 8 
+            x_3d = np.linspace(xlim[0], xlim[1], grid_3d)
+            y_3d = np.linspace(ylim[0], ylim[1], grid_3d)
+            z_3d = np.linspace(zlim[0], zlim[1], grid_3d)
+            X, Y, Z = np.meshgrid(x_3d, y_3d, z_3d)
+
+            u, v, w = np.zeros(X.shape), np.zeros(Y.shape), np.zeros(Z.shape)
+            for i in range(grid_3d):
+                for j in range(grid_3d):
+                    for k in range(grid_3d):
+                        vel = f(0, np.array([X[i,j,k], Y[i,j,k], Z[i,j,k]]))
+                        u[i,j,k], v[i,j,k], w[i,j,k] = vel
+
+            speed_3d = np.sqrt(u**2 + v**2 + w**2 + 1e-6)
+            un, vn, wn = u/speed_3d, v/speed_3d, w/speed_3d
+            
+            # Prepare color data
+            C = speed_3d.flatten()
+
+            # Adjust figsize to (8, 7) to match 2D plots more closely, 
+            # though 3D usually needs a bit more width for the colorbar
+            fig = plt.figure(figsize=(8, 7))
+            # Use a slightly smaller shrink and pad for the colorbar
+            ax = fig.add_subplot(111, projection='3d')
+
+            q = ax.quiver(X, Y, Z, un, vn, wn, 
+                            length=3.0, 
+                            cmap='viridis', 
+                            array=C, 
+                            alpha=0.4, 
+                            linewidth=1.5)
+
+            # Use 'fraction' and 'pad' to keep the colorbar tight to the plot
+            # shrink=0.5 helps it not look "longer" than the 3D box height
+            fig.colorbar(q, ax=ax, label="|F(x)|", shrink=0.5, pad=0.05, fraction=0.046)
+
+            # set labels
+            ax.set_xlabel("x")
+            ax.set_ylabel("y")
+            ax.set_zlabel("z")
+
+            # Manually adjust the subplots to remove the excess 3D padding
+            plt.subplots_adjust(left=0, right=0.85, top=0.9, bottom=0)
+
+            ax.set_title(f"{system_name.replace('_',' ').title()} — 3D Phase Portrait", fontsize=15)
+            ax.view_init(elev=20, azim=45)
+            ax.xaxis.pane.fill = ax.yaxis.pane.fill = ax.zaxis.pane.fill = False 
+            
+            plt.savefig(f"{outdir}/{system_name}_3D_Hero.png", dpi=300, bbox_inches='tight')
+            plt.close()
