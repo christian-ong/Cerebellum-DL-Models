@@ -39,6 +39,7 @@ def train_ae_onestep(
     loss_fn = torch.nn.MSELoss()
     all_train_losses = []
     epoch_val_losses = []
+    batch_val_losses = []
 
     for epoch in range(epochs):
         # -------------------
@@ -47,7 +48,6 @@ def train_ae_onestep(
         train_loss = 0.0
         n_train = 0
         train_losses = []
-        batch_val_losses = []
 
         for x, y in tqdm(train_loader):
             model.train()
