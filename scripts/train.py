@@ -37,15 +37,26 @@ Global options (defaults):
     --seed 0
     --outdir data/models
 
-Linear system (x' = A x): # OUTDATED NAMES (linear_trajectory xd)
-    python -m scripts.train --model linear_baseline --data_path data/trajectories/linear_trajectory.npz
-    python -m scripts.train --model dmd_baseline    --data_path data/trajectories/linear_trajectory.npz
-    python -m scripts.train --model edmd_baseline   --data_path data/trajectories/linear_trajectory.npz
-    python -m scripts.train --model ae_linear       --data_path data/trajectories/linear_trajectory.npz
-    python -m scripts.train --model ml_dmd          --data_path data/trajectories/linear_trajectory.npz
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear_trajectory.npz
-    python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/linear_trajectory.npz
+Linear system (x' = A x):
+    python -m scripts.train --model linear_baseline --data_path data/trajectories/saddle_point_trajectory.npz
+    python -m scripts.train --model dmd_baseline    --data_path data/trajectories/saddle_point_trajectory.npz
+    python -m scripts.train --model edmd_baseline   --data_path data/trajectories/saddle_point_trajectory.npz
+    python -m scripts.train --model ae_linear       --data_path data/trajectories/saddle_point_trajectory.npz
+    python -m scripts.train --model ml_dmd          --data_path data/trajectories/saddle_point_trajectory.npz
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/saddle_point_trajectory.npz
+    python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/saddle_point_trajectory.npz
     Options: (ae_linear uses --epochs --batch_size --lr --weight_decay)
+
+---------------------------------------------------------------------------------------------
+
+# Manual expansion + ML DMD
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/saddle_point_trajectory.npz --epochs 10
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --epochs 10
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --epochs 10
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --epochs 10
+
+---------------------------------------------------------------------------------------------
+
 
 Van der Pol:
     python -m scripts.train --model ae_koopman --data_path data/trajectories/vanderpol_trajectory.npz

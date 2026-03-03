@@ -56,33 +56,13 @@ python -m scripts.simulate_data --system saddle_point --n_traj 100 --T 5
 python -m scripts.simulate_data --system degenerate_node --n_traj 100 --T 5
 
 --------------------------------------------------
-Van der Pol oscillator
+Nonlinear systems
 --------------------------------------------------
 
 python -m scripts.simulate_data --system vanderpol --n_traj 100 --T 15
-
---------------------------------------------------
-Lotka--Volterra predator--prey
---------------------------------------------------
-
 python -m scripts.simulate_data --system lotka_volterra --n_traj 100 --T 15
-
---------------------------------------------------
-Pendulum
---------------------------------------------------
-
 python -m scripts.simulate_data --system pendulum --n_traj 100 --T 15
-
---------------------------------------------------
-Duffing oscillator
---------------------------------------------------
-
 python -m scripts.simulate_data --system duffing --n_traj 100 --T 15
-
---------------------------------------------------
-Lorenz system
---------------------------------------------------
-
 python -m scripts.simulate_data --system lorenz --n_traj 100 --T 15
 
 --------------------------------------------------
