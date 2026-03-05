@@ -59,7 +59,12 @@ def train_ae_onestep(
             # One-step prediction
             y_hat, _, _ = model(x)
 
-            loss = loss_fn(y_hat, y)
+            # compute loss
+            if hasattr(model, "compute_loss"): # custom 
+                loss = model.compute_loss(x, y)
+            else:
+                loss = loss_fn(y_hat, y)
+
             loss.backward()
             optimizer.step()
             train_losses.append(loss.item())
