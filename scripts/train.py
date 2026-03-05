@@ -8,8 +8,12 @@ from src.data_generation.load_data import OneStepTrajectoryDataset
 from src.models.linear_baseline import fit_linear_map
 from src.models.dmd_baseline import fit_dmd
 from src.models.edmd_baseline import fit_edmd
+
+from src.models.ml_eigen_dmd import MLEigenDMD
+
 from src.models.ml_dmd import LinearDynamics
 from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
+
 from src.models.ae_linear import AELinearDynamics
 from src.models.ae_koopman import AEKoopmanDynamics
 from src.models.manual_expansion_manual_dmd import ManualExpansion_ManualDMD
@@ -57,6 +61,13 @@ Linear system (x' = A x):
 
 ---------------------------------------------------------------------------------------------
 
+# ML Eigen DMD
+    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/saddle_point_trajectory.npz --epochs 10
+    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --epochs 10
+    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --epochs 10
+    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --epochs 10
+
+---------------------------------------------------------------------------------------------
 
 Van der Pol:
     python -m scripts.train --model ae_koopman --data_path data/trajectories/vanderpol_trajectory.npz
@@ -121,11 +132,15 @@ def main():
             "linear_baseline",
             "dmd_baseline",
             "edmd_baseline",
+
             "ae_linear",
             "ae_koopman",
+
             "ml_dmd",
             "manual_expansion_ml_dmd",
             "manual_expansion_manual_dmd",
+
+            "ml_eigen_dmd",
         ],
     )
 
@@ -358,7 +373,11 @@ def main():
     # ==================================================
     print("Training autoencoder model with one-step loss...")
     print(f"Model: {args.model}")
-    if args.model == "ml_dmd":
+    if args.model == "ml_eigen_dmd":
+        model = MLEigenDMD(
+            state_dim=state_dim,
+        ).to(device)
+    elif args.model == "ml_dmd":
         model = LinearDynamics(
             state_dim=state_dim,
         ).to(device)

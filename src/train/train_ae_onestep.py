@@ -56,13 +56,13 @@ def train_ae_onestep(
 
             optimizer.zero_grad()
 
-            # One-step prediction
-            y_hat, _, _ = model(x)
-
-            # compute loss
-            if hasattr(model, "compute_loss"): # custom 
+            # One-step prediction loss
+            if hasattr(model, "compute_loss"): # multiple loss components
                 loss = model.compute_loss(x, y)
+                loss_predict, loss_orthogonal, loss_phi_inv = loss # can plot these
+                loss = sum(loss)
             else:
+                y_hat, _, _ = model(x)
                 loss = loss_fn(y_hat, y)
 
             loss.backward()
@@ -80,9 +80,14 @@ def train_ae_onestep(
                     x_val, y_val = next(iter(val_loader))
                     x_val = x_val.to(device)
                     y_val = y_val.to(device)
-                    y_val_hat, _, _ = model(x_val)
-                    loss_val = loss_fn(y_val_hat, y_val)
-                    batch_val_losses.append(loss_val.item())
+                    if hasattr(model, "compute_loss"): # multiple loss components
+                        val_loss = model.compute_loss(x_val, y_val)
+                        val_loss = sum(val_loss)
+                        batch_val_losses.append(val_loss.item())
+                    else:
+                        y_val_hat, _, _ = model(x_val)
+                        loss_val = loss_fn(y_val_hat, y_val)
+                        batch_val_losses.append(loss_val.item())
                 model.train()
 
         train_loss /= n_train
@@ -103,8 +108,12 @@ def train_ae_onestep(
                     x = x.to(device)
                     y = y.to(device)
 
-                    y_hat, _, _ = model(x)
-                    loss = loss_fn(y_hat, y)
+                    if hasattr(model, "compute_loss"): # multiple loss components
+                        loss = model.compute_loss(x, y)
+                        loss = sum(loss)
+                    else:
+                        y_hat, _, _ = model(x)
+                        loss = loss_fn(y_hat, y)
 
                     batch_size = x.size(0)
                     val_loss += loss.item() * batch_size
@@ -116,6 +125,7 @@ def train_ae_onestep(
 
         scheduler.step()
 
+        # Print progress
         current_lr = optimizer.param_groups[0]["lr"]
         if val_loss is not None:
             print(

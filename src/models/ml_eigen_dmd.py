@@ -26,25 +26,17 @@ class MLEigenDMD(nn.Module):
         self.Phi_inv = nn.Parameter(
             torch.eye(state_dim),
         )
-        
 
     def forward(self, x):
         """
-        One-step prediction.
-
-        Args:
-            x: tensor of shape (batch_size, state_dim)
-
-        Returns:
-            x_next: predicted next state, shape (batch_size, state_dim)
+        Apply one linear step using batched row-vectors.
         """
 
-        # Apply linear latent dynamics
-        b_t = self.Phi_inv @ x
-        b_next = self.Lambda @ b_t
-        x_next = self.Phi @ b_next
-
-        return x_next, None, None
+        # x is represented as row-vectors, so parameters are applied on the right.
+        b_t = x @ self.Phi_inv.T
+        b_next = b_t @ self.Lambda.T
+        x_next = b_next @ self.Phi.T
+        return x_next
     
 
     def compute_loss(self, x, x_next_true):
@@ -52,27 +44,24 @@ class MLEigenDMD(nn.Module):
         Compute loss components
 
             Prediction loss: MSE
-            Eigenvector orthorgonal: ?
-            Phi and Phi_inv are inverses: check values
+            Eigenvector orthorgonal: dot product = zero
+            Phi and Phi_inv are inverses: dot product = identity
         """
 
-        # Apply linear latent dynamics
-        b_t = self.Phi_inv @ x
-        b_next = self.Lambda @ b_t
-        x_next = self.Phi @ b_next
+        x_next = self.forward(x)
 
-        # Compute prediction loss (MSE)
-        prediction_loss = nn.MSELoss()(x_next, x_next_true)
+        # Prediction loss
+        loss_predict = nn.MSELoss()(x_next, x_next_true)
 
-        # Check if eigenvectors are orthogonal
+        # Eigenvectors orthogonal
         v1 = self.Phi[:, 0]
         v2 = self.Phi[:, 1]
-        orthogonality_loss = torch.abs(torch.dot(v1, v2)).item()
+        loss_orthogonal = torch.abs(torch.dot(v1, v2))
 
-        # Check if Phi and Phi_inv are inverses (Phi @ Phi_inv = I)
-        phi_inverses_loss = torch.norm(self.Phi @ self.Phi_inv - torch.eye(self.state_dim)).item()
+        # Phi and Phi_inv are inverses
+        identity = torch.eye(self.state_dim, device=x.device, dtype=x.dtype)
+        loss_phi_inv = torch.norm(self.Phi @ self.Phi_inv - identity)
 
-        # Return loss components
-        loss = prediction_loss + orthogonality_loss + phi_inverses_loss
-        
-        return prediction_loss, orthogonality_loss, phi_inverses_loss
+        # Return a scalar training loss
+
+        return (loss_predict, loss_orthogonal, loss_phi_inv)
