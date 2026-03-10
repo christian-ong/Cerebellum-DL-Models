@@ -113,9 +113,11 @@ def plot_trajectories_only(
                 zorder=3,
             )
 
-        plt.xlabel("x")
-        plt.ylabel("y")
-        plt.title(f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories", fontsize=15)
+        plt.xlabel("x", fontsize=12)
+        plt.ylabel("y", fontsize=12)
+        plt.xticks(fontsize=12)
+        plt.yticks(fontsize=12)
+        plt.title(f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories", fontsize=16)
         # plt.axis("equal")
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
@@ -157,10 +159,12 @@ def plot_trajectories_only(
                     zorder=3,
                 )
 
-            plt.xlabel(label1)
-            plt.ylabel(label2)
+            plt.xlabel(label1, fontsize=12)
+            plt.ylabel(label2, fontsize=12)
+            plt.xticks(fontsize=12)
+            plt.yticks(fontsize=12)
             plt.title(
-                f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories {label1}-{label2}", fontsize=15
+                f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories {label1}-{label2}", fontsize=16
             )
 
             # plt.axis("equal")
@@ -216,15 +220,17 @@ def plot_flow_map_displacement(
         plt.figure(figsize=(8, 7))
         plt.streamplot(X1, X2, DX, DY, density=1.1, color=speed, cmap="viridis")
         plt.colorbar(label="$|\dot{x}|$")
-        plt.xlabel("x")
-        plt.ylabel("y")
+        plt.xlabel("x", fontsize=12)
+        plt.ylabel("y", fontsize=12)
+        plt.xticks(fontsize=12)
+        plt.yticks(fontsize=12)
         # plt.axis("equal")
         if xlim is not None:
             plt.xlim(xlim)
         if ylim is not None:
             plt.ylim(ylim)
         plt.grid(True, alpha=0.3)
-        plt.title(f"{system_name.replace('_',' ').title()} — Phase Portrait", fontsize=15)
+        plt.title(f"{system_name.replace('_',' ').title()} — Phase Portrait", fontsize=16)
         plt.tight_layout()
         plt.savefig(f"{outdir}/{system_name}_flowmap.png", dpi=300)
         plt.close()
@@ -260,7 +266,7 @@ def plot_flow_map_displacement(
 
                 plt.figure(figsize=(8, 7))
                 strm = plt.streamplot(X1, X2, DX, DY, density=1.0, color=speed, cmap="magma")
-                plt.colorbar(label="|F(x)|")
+                plt.colorbar(label="$|\dot{x}|$")
                 plt.title(f"{system_name.replace('_',' ').title()}: {label1}-{label2} slice at {ref_val}")
                 plt.xlabel(label1); plt.ylabel(label2)
                 plt.tight_layout()
@@ -302,19 +308,23 @@ def plot_flow_map_displacement(
 
             # Use 'fraction' and 'pad' to keep the colorbar tight to the plot
             # shrink=0.5 helps it not look "longer" than the 3D box height
-            fig.colorbar(q, ax=ax, label="|F(x)|", shrink=0.5, pad=0.05, fraction=0.046)
+            fig.colorbar(q, ax=ax, label="$|\dot{x}|$", shrink=0.5, pad=0.05, fraction=0.046)
 
             # set labels
-            ax.set_xlabel("x")
-            ax.set_ylabel("y")
-            ax.set_zlabel("z")
+            ax.set_xlabel("x", fontsize=12)
+            ax.set_ylabel("y", fontsize=12)
+            ax.set_zlabel("z", fontsize=12)
+            
+            ax.tick_params(axis='x', labelsize=10)
+            ax.tick_params(axis='y', labelsize=10)
+            ax.tick_params(axis='z', labelsize=10)
 
             # Manually adjust the subplots to remove the excess 3D padding
             plt.subplots_adjust(left=0, right=0.85, top=0.9, bottom=0)
 
-            ax.set_title(f"{system_name.replace('_',' ').title()} — 3D Phase Portrait", fontsize=15)
+            ax.set_title(f"{system_name.replace('_',' ').title()} — 3D Phase Portrait", fontsize=16)
             ax.view_init(elev=20, azim=45)
             ax.xaxis.pane.fill = ax.yaxis.pane.fill = ax.zaxis.pane.fill = False 
             
-            plt.savefig(f"{outdir}/{system_name}_3D_Hero.png", dpi=300, bbox_inches='tight')
+            plt.savefig(f"{outdir}/{system_name}_flow_3D.png", dpi=300, bbox_inches='tight')
             plt.close()
