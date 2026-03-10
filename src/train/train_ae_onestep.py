@@ -40,6 +40,7 @@ def train_ae_onestep(
     all_train_losses = []
     epoch_val_losses = []
     batch_val_losses = []
+    loss_components_val = {"predict": [], "orthogonal": [], "phi_inv": [], "unit_length": []}
 
     for epoch in range(epochs):
         # -------------------
@@ -59,8 +60,9 @@ def train_ae_onestep(
             # One-step prediction loss
             if hasattr(model, "compute_loss"): # multiple loss components
                 loss = model.compute_loss(x, y)
-                loss_predict, loss_orthogonal, loss_phi_inv = loss # can plot these
+                loss_predict, loss_orthogonal, loss_phi_inv, loss_unit_length = loss # can plot/weight these
                 loss = sum(loss)
+
             else:
                 y_hat, _, _ = model(x)
                 loss = loss_fn(y_hat, y)
@@ -82,8 +84,16 @@ def train_ae_onestep(
                     y_val = y_val.to(device)
                     if hasattr(model, "compute_loss"): # multiple loss components
                         val_loss = model.compute_loss(x_val, y_val)
+                        loss_predict, loss_orthogonal, loss_phi_inv, loss_unit_length = val_loss # can plot/weight these
                         val_loss = sum(val_loss)
                         batch_val_losses.append(val_loss.item())
+
+                        # Individual loss components
+                        loss_components_val["predict"].append(loss_predict.item())
+                        loss_components_val["orthogonal"].append(loss_orthogonal.item())
+                        loss_components_val["phi_inv"].append(loss_phi_inv.item())
+                        loss_components_val["unit_length"].append(loss_unit_length.item())
+
                     else:
                         y_val_hat, _, _ = model(x_val)
                         loss_val = loss_fn(y_val_hat, y_val)
@@ -148,6 +158,7 @@ def train_ae_onestep(
         print(f"Eigenvalues:\n{eigvals.cpu().numpy()}")
         print(f"Eigenvectors:\n{eigvecs.cpu().numpy()}")
     
-    losses = all_train_losses, batch_val_losses, epoch_val_losses
+    losses = all_train_losses, batch_val_losses, epoch_val_losses, loss_components_val
 
     return model, losses
+                                                                                                                 

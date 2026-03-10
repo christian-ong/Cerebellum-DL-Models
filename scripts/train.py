@@ -404,7 +404,7 @@ def main():
     else:
         raise ValueError(f"Unknown model: {args.model}")
 
-    model, (train_losses, batch_val_losses, epoch_val_losses) = train_ae_onestep(
+    model, (train_losses, batch_val_losses, epoch_val_losses, loss_components_val) = train_ae_onestep(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
