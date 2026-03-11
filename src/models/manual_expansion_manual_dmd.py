@@ -84,7 +84,7 @@ class ManualExpansion_ManualDMD(nn.Module):
 
     def expand(self, x):
         if isinstance(x, np.ndarray):
-            x = torch.tensor(x, dtype=torch.float32)
+            x = torch.tensor(x, dtype=torch.float64)
 
         if x.ndim == 1:
             x = x.unsqueeze(0)
@@ -130,9 +130,9 @@ class ManualExpansion_ManualDMD(nn.Module):
         """
         # Convert to torch if needed
         if isinstance(x_in, np.ndarray):
-            x_in = torch.tensor(x_in, dtype=torch.float32)
+            x_in = torch.tensor(x_in, dtype=torch.float64)
         if isinstance(y_out, np.ndarray):
-            y_out = torch.tensor(y_out, dtype=torch.float32)
+            y_out = torch.tensor(y_out, dtype=torch.float64)
 
         # SVD-based approach matching traditional DMD
         # x_in is (N, k), transpose to (k, N) for SVD
@@ -212,13 +212,13 @@ class ManualExpansion_ManualDMD(nn.Module):
         K maps lifted -> lifted, C maps lifted -> original.
         """
         if isinstance(K, np.ndarray):
-            K = torch.tensor(K, dtype=torch.float32)
+            K = torch.tensor(K, dtype=torch.float64)
 
         if isinstance(C, np.ndarray):
-            C = torch.tensor(C, dtype=torch.float32)
+            C = torch.tensor(C, dtype=torch.float64)
 
         if isinstance(x0, np.ndarray):
-            x0 = torch.tensor(x0, dtype=torch.float32)
+            x0 = torch.tensor(x0, dtype=torch.float64)
 
         if x0.ndim == 1:
             x0 = x0.unsqueeze(0)
