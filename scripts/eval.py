@@ -209,7 +209,7 @@ def main():
             X_hat = model.rollout(x0=x0, n_steps=steps).cpu().numpy()
 
         else:
-            x0_torch = torch.tensor(x0, dtype=torch.float32)
+            x0_torch = torch.tensor(x0, dtype=torch.float64)
             X_hat = rollout_ae_model(
                 model,
                 x0=x0_torch,
@@ -257,7 +257,7 @@ def main():
     elif args.model == "ml_eigen_dmd":
         X_hat = model.rollout(x0=x0, n_steps=steps).cpu().numpy()
     else:
-        x0_torch = torch.tensor(x0, dtype=torch.float32)
+        x0_torch = torch.tensor(x0, dtype=torch.float64)
         X_hat = rollout_ae_model(
             model,
             x0=x0_torch,

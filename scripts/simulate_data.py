@@ -437,8 +437,8 @@ def main():
     parser.add_argument("--alpha_DUF", type=float, default=-1.0)
     parser.add_argument("--beta_DUF", type=float, default=1.0)
     parser.add_argument("--delta_DUF", type=float, default=0.2)
-    parser.add_argument("--gamma_DUF", type=float, default=0.3)
-    parser.add_argument("--omega_DUF", type=float, default=1.2)
+    parser.add_argument("--gamma_DUF", type=float, default=0.0)
+    parser.add_argument("--omega_DUF", type=float, default=0.0)
 
     parser.add_argument("--outdir", type=str, default="data/trajectories")
 
