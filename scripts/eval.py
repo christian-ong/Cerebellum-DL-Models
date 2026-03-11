@@ -14,6 +14,8 @@ from src.models.ae_koopman import AEKoopmanDynamics
 from src.models.manual_expansion_manual_dmd import ManualExpansion_ManualDMD
 from src.eval.rollout import rollout_ae_model
 from src.models.dmd_baseline import *
+from src.models.ml_eigen_dmd import MLEigenDMD
+
 """
 Usage examples:
 
@@ -32,30 +34,35 @@ Linear system (x' = A x): # OUTDATED NAMES (linear_trajectory xd)
     python -m scripts.eval --model ml_dmd           --data_path data/trajectories/linear_trajectory.npz --model_path data/models/ml_dmd_linear.pt
     python -m scripts.eval --model manual_expansion_manual_dmd           --data_path data/trajectories/linear_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_linear.npz
     
-    Options: --steps --traj_index
 
-Van der Pol:
+
+ae_koopman
     python -m scripts.eval --model ae_koopman --data_path data/trajectories/vanderpol_trajectory.npz --model_path data/models/ae_koopman_vanderpol.pt
-    Options: --steps --traj_index
-
-Lotka-Volterra:
     python -m scripts.eval --model ae_koopman --data_path data/trajectories/lotka_volterra_trajectory.npz --model_path data/models/ae_koopman_lotka_volterra.pt
-    Options: --steps --traj_index
-
-Pendulum:
     python -m scripts.eval --model ae_koopman --data_path data/trajectories/pendulum_trajectory.npz --model_path data/models/ae_koopman_pendulum.pt
-    Options: --steps --traj_index
-
-Lorenz:
     python -m scripts.eval --model ae_koopman --data_path data/trajectories/lorenz_trajectory.npz --model_path data/models/ae_koopman_lorenz.pt
-    Options: --steps --traj_index
+
+ml eigen dmd
+    python -m scripts.eval --model ml_eigen_dmd --data_path data/trajectories/saddle_point_trajectory.npz --model_path data/models/ml_eigen_dmd_saddle_point.pt
+
+
 """
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate trained models")
 
-    parser.add_argument("--model", type=str, required=True,
-                        choices=["linear_baseline", "dmd_baseline", "edmd_baseline", "ae_linear", "ae_koopman", "ml_dmd", "manual_expansion_ml_dmd", "manual_expansion_manual_dmd"],)
+    parser.add_argument("--model", type=str, required=True, 
+        choices=[
+            "linear_baseline", 
+            "dmd_baseline", 
+            "edmd_baseline", 
+            "ae_linear", 
+            "ae_koopman", 
+            "ml_dmd", 
+            "manual_expansion_ml_dmd", 
+            "manual_expansion_manual_dmd",
+            "ml_eigen_dmd"
+            ],)
 
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--model_path", type=str, required=True)
@@ -164,6 +171,12 @@ def main():
         model.load_state_dict(ckpt["model_state_dict"])
         model.eval()
 
+    elif args.model == "ml_eigen_dmd":
+        ckpt = torch.load(args.model_path, map_location=device)
+        model = MLEigenDMD(state_dim=ckpt["state_dim"],).to(device)
+        model.load_state_dict(ckpt["model_state_dict"])
+        model.eval()
+
     else:
         raise ValueError(f"Unknown model: {args.model}")
 
@@ -191,6 +204,9 @@ def main():
 
         elif args.model == "manual_expansion_manual_dmd":
             X_hat = model.rollout(K=K, C=C, x0=x0, steps=steps).cpu().numpy()
+
+        elif "eigen" in args.model:
+            X_hat = model.rollout(x0=x0, n_steps=steps).cpu().numpy()
 
         else:
             x0_torch = torch.tensor(x0, dtype=torch.float32)
@@ -238,6 +254,8 @@ def main():
         X_hat = rollout_edmd(K, C, degree=degree, x0=x0, steps=steps)
     elif args.model == "manual_expansion_manual_dmd":
         X_hat = model.rollout(K=K, C=C, x0=x0, steps=steps).cpu().numpy()
+    elif args.model == "ml_eigen_dmd":
+        X_hat = model.rollout(x0=x0, n_steps=steps).cpu().numpy()
     else:
         x0_torch = torch.tensor(x0, dtype=torch.float32)
         X_hat = rollout_ae_model(
