@@ -1,42 +1,37 @@
 import torch
 import torch.nn as nn
 
+from src.models.expander import ManualExpansion
 
-class MLEigenDMD(nn.Module):
-    """
-    Linear dynamics model.
 
-    This model is EXACTLY linear end-to-end.
-    """
 
-    def __init__(self, state_dim=2):
+class ExpandedEigenDMD(ManualExpansion):
+
+
+    def __init__(self, state_dim=2, expansion_degree=3, **kwargs):
         """
 
-        Parameters:
-
-            state_dim: 
-
-            block_lambda: If True, Lambda is rotation matrix [[a, -b], [b, a]] representing conjugate eigenvalues a +/- i b.
-
         """
-        super().__init__()
-
+        super().__init__(state_dim, **kwargs)
         self.state_dim = state_dim
 
-        self.Phi = nn.Parameter(torch.eye(state_dim))
-        self.Phi_inv = nn.Parameter(torch.eye(state_dim))
-        self.Lambda = nn.Parameter(
-            torch.tensor([[1.0, 0.0], 
-                          [0.0, 1.0]]))
+        self.latent_dim = self.expanded_dim
+        self.expand_names = self.expand_names
+
+        self.Phi = nn.Parameter(torch.eye(self.latent_dim))
+        self.Phi_inv = nn.Parameter(torch.eye(self.latent_dim))
+        self.Lambda = nn.Parameter(torch.eye(self.latent_dim))
 
 
     def forward(self, x):
         """
         Apply one linear step using batched row-vectors.
         """
-        b_t = x @ self.Phi_inv.mT # to latent space
+        x_expanded = self.expand(x)
+        b_t = x_expanded @ self.Phi_inv.mT # to latent space
         b_next = b_t @ self.Lambda.mT # step in latent space
-        x_next = b_next @ self.Phi.mT # back to original space
+        x_expanded_next = b_next @ self.Phi.mT # back to expanded space
+        x_next = self.de_expand(x_expanded_next) # de-expand to original space
         return x_next
     
 
@@ -61,7 +56,7 @@ class MLEigenDMD(nn.Module):
         loss_eigvec = torch.norm(A @ self.Phi - self.Phi @ self.Lambda)
 
         # Phi and Phi_inv are inverses
-        identity = torch.eye(self.state_dim, device=x.device, dtype=x.dtype)
+        identity = torch.eye(self.latent_dim, device=x.device, dtype=x.dtype)
         loss_phi_inv = torch.norm(self.Phi @ self.Phi_inv - identity)
 
         # Unit eigenvectors
@@ -71,24 +66,13 @@ class MLEigenDMD(nn.Module):
         return (loss_predict, loss_eigvec, loss_phi_inv, loss_unit_length)
     
 
-    def rollout(self, x0, steps):
-
-        if not torch.is_tensor(x0):
-            x0 = torch.tensor(
-                x0,
-                dtype=next(self.parameters()).dtype,
-                device=next(self.parameters()).device
-            )
-
-        if x0.ndim == 1:
-            x = x0.unsqueeze(0)
-        else:
-            x = x0
-
-        traj = [x.squeeze(0)]
-
-        for _ in range(steps):
+    def rollout(self, x0, n_steps):
+        """
+        Rollout trajectory from initial state x0 for n_steps.
+        """
+        traj = [x0]
+        x = x0
+        for _ in range(n_steps):
             x = self.forward(x)
-            traj.append(x.squeeze(0))
-
-        return torch.stack(traj)
+            traj.append(x)
+        return torch.stack(traj, dim=0)

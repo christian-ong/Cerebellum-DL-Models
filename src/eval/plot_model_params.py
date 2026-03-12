@@ -88,12 +88,45 @@ def plot_transition_matrix(
 
 
 if __name__ == "__main__":
-    expansion = "manual_expansion"
-    model = "ml_dmd"
+    expansion = ""
+    model = "ml_eigen_dmd"
     system = ["saddle_point", "degenerate_node", "inward_spiral", "harmonic_oscillator"][0]
 
     # model_name = "manual_expansion_ml_dmd_saddle_point"
-    model_name = f"{expansion}_{model}_{system}"
+    model_name = f"{expansion}{model}_{system}"
 
-    plot_training_losses(model_name, ignore_first_epochs=0)
-    plot_transition_matrix(model_name, print_K_xy=True)
+    # plot_training_losses(model_name, ignore_first_epochs=0)
+    # plot_transition_matrix(model_name, print_K_xy=True)
+
+    data = np.load(f"data/models/loss_components/{model_name}_losses.npz", allow_pickle=True)
+
+    # Print data summary
+    for key in data.keys():
+        if key == "loss_components_val":
+            print(key)
+            for key2 in data[key].item().keys():
+                print(f"\t{key2}:" + ('\t' * (3 - (len(key2)+1)//8)) + f"shape {np.array(data[key].item()[key2]).shape}, dtype {np.array(data[key].item()[key2]).dtype}")
+        else:
+            print(f"{key}:    \tshape {data[key].shape}, dtype {data[key].dtype}")
+
+    # Plot loss components
+    loss_components = data["loss_components_val"].item()
+    n_components = len(loss_components)
+    n_rows = (n_components + 1) // 2
+    fig, ax = plt.subplots(n_rows, 2, figsize=(12, 3*n_rows))
+    plt.suptitle(f"Validation Loss Components, model: {model_name.replace('_', ' ')}")
+    
+    for i, key2 in enumerate(loss_components.keys()):
+        loss_data = np.array(loss_components[key2])
+        j, k = i//2, i%2
+        ax[j,k].plot(loss_data, label=key2)
+        ax[j,k].set_title(f"{key2}")
+        ax[j,k].set_ylabel("Loss")
+        ax[j,k].legend()
+        ax[j,k].grid()
+        if j == n_rows - 1:
+            ax[j,k].set_xlabel("Epoch")
+    
+    plt.tight_layout()
+    plt.subplots_adjust(hspace=0.4, top=0.9, bottom=0.1)
+    plt.show()
