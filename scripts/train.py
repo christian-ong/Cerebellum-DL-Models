@@ -10,6 +10,7 @@ from src.models.dmd_baseline import fit_dmd
 from src.models.edmd_baseline import fit_edmd
 
 from src.models.ml_eigen_dmd import MLEigenDMD
+from src.models.expanded_eigen_dmd import ExpandedEigenDMD
 
 from src.models.ml_dmd import LinearDynamics
 from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
@@ -66,6 +67,14 @@ Linear system (x' = A x):
     python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --epochs 10
     python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --epochs 10
     python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --epochs 10
+
+---------------------------------------------------------------------------------------------
+
+# Expanded Eigen DMD
+    python -m scripts.train --model expanded_eigen_dmd --data_path data/trajectories/saddle_point_trajectory.npz --epochs 10
+    python -m scripts.train --model expanded_eigen_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --epochs 10
+    python -m scripts.train --model expanded_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --epochs 10
+    python -m scripts.train --model expanded_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --epochs 10
 
 ---------------------------------------------------------------------------------------------
 
@@ -141,6 +150,7 @@ def main():
             "manual_expansion_manual_dmd",
 
             "ml_eigen_dmd",
+            "expanded_eigen_dmd"
         ],
     )
 
@@ -377,6 +387,10 @@ def main():
         model = MLEigenDMD(
             state_dim=state_dim,
         ).to(device)
+    elif args.model == "expanded_eigen_dmd":
+        model = ExpandedEigenDMD(
+            state_dim=state_dim,
+        ).to(device)
     elif args.model == "ml_dmd":
         model = LinearDynamics(
             state_dim=state_dim,
@@ -434,7 +448,8 @@ def main():
             "hidden_dim": args.hidden_dim if args.model == "ae_koopman" else None,
             "train_args": vars(args),
             "data_path": args.data_path,
-            "expand_names": model.expand_names if "expansion" in args.model else None,
+            "expand_names": model.expand_names if hasattr(model, "expand_names") else None,
+            "latent_dim": model.latent_dim if hasattr(model, "latent_dim") else None,
         },
         save_path,
     )
