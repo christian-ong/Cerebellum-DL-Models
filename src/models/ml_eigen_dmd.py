@@ -34,7 +34,6 @@ class MLEigenDMD(nn.Module):
         """
         Apply one linear step using batched row-vectors.
         """
-
         b_t = x @ self.Phi_inv.mT # to latent space
         b_next = b_t @ self.Lambda.mT # step in latent space
         x_next = b_next @ self.Phi.mT # back to original space
@@ -50,7 +49,6 @@ class MLEigenDMD(nn.Module):
             Phi and Phi_inv are inverses: dot product = identity
             Unit eigenvectors
         """
-
         x_next = self.forward(x)
 
         # Prediction loss, normalize to make loss scale-invariant
@@ -71,3 +69,15 @@ class MLEigenDMD(nn.Module):
         loss_unit_length = torch.mean((col_norms - 1.0)**2)
 
         return (loss_predict, loss_eigvec, loss_phi_inv, loss_unit_length)
+    
+
+    def rollout(self, x0, n_steps):
+        """
+        Rollout trajectory from initial state x0 for n_steps.
+        """
+        traj = [x0]
+        x = x0
+        for _ in range(n_steps):
+            x = self.forward(x)
+            traj.append(x)
+        return torch.stack(traj, dim=0)

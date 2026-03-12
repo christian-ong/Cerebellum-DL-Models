@@ -12,6 +12,8 @@ from src.models.manual_expansion_manual_dmd import ManualExpansion_ManualDMD
 from src.models.manual_expansion_eigen_dmd import ManualExpansion_EigenDMD
 from src.eval.rollout import rollout_ae_model
 from src.models.dmd_baseline import *
+from src.models.ml_eigen_dmd import MLEigenDMD
+
 
 """
 Global options (defaults):
@@ -85,6 +87,7 @@ def main():
                             "linear_baseline",
                             "dmd_baseline",
                             "ml_dmd",
+                            "ml_eigen_dmd",
                             "manual_expansion_ml_dmd",
                             "manual_expansion_manual_dmd",
                             "manual_expansion_eigen_dmd",
@@ -169,12 +172,10 @@ def main():
         model = ManualExpansion_MLDMD(state_dim=ckpt["state_dim"],).to(device)
         model.load_state_dict(ckpt["model_state_dict"])
         model.eval()
-    
-    elif args.model == "manual_expansion_eigen_dmd":
+
+    elif args.model == "ml_eigen_dmd":
         ckpt = torch.load(args.model_path, map_location=device)
-        model = ManualExpansion_EigenDMD(
-            state_dim=ckpt["state_dim"],
-        ).to(device)
+        model = MLEigenDMD(state_dim=ckpt["state_dim"],).to(device)
         model.load_state_dict(ckpt["model_state_dict"])
         model.eval()
 
@@ -208,6 +209,9 @@ def main():
         
         elif args.model == "manual_expansion_ml_dmd":
             X_hat = model.rollout(x0=x0, steps=steps).cpu().numpy()
+
+        elif "eigen" in args.model:
+            X_hat = model.rollout(x0=x0, n_steps=steps).cpu().numpy()
 
         else:
             x0_torch = torch.tensor(x0, dtype=torch.float64)
@@ -253,6 +257,8 @@ def main():
 
     elif args.model == "manual_expansion_manual_dmd":
         X_hat = model.rollout(K=K, C=C, x0=x0, steps=steps).cpu().numpy()
+    elif args.model == "ml_eigen_dmd":
+        X_hat = model.rollout(x0=x0, n_steps=steps).cpu().numpy()
     else:
         x0_torch = torch.tensor(x0, dtype=torch.float64)
         X_hat = rollout_ae_model(
