@@ -350,13 +350,13 @@ def main():
     # --------------------------------------------------
     # Training loss plots
     # --------------------------------------------------
+    if ".pt" in args.model_path:
+        loss_file = args.model_path.replace(".pt", "_losses.npz")
 
-    loss_file = args.model_path.replace(".pt", "_losses.npz")
-
-    if os.path.exists(loss_file):
-        plot_training_losses(loss_file, figdir)
-    else:
-        print(f"No loss file found at {loss_file}, skipping loss plots.")
+        if os.path.exists(loss_file):
+            plot_training_losses(loss_file, figdir)
+        else:
+            print(f"No loss file found at {loss_file}, skipping loss plots.")
 
     # --------------------------------------------------
     # Transition matrix visualization
@@ -365,8 +365,9 @@ def main():
     model_name = os.path.basename(args.model_path).replace(".pt","")
 
     expand_names = None
-    if "expand_names" in ckpt:
-        expand_names = ckpt["expand_names"]
+    if ".pt" in args.model_path:
+        if "expand_names" in ckpt:
+            expand_names = ckpt["expand_names"]
 
     plot_transition_matrix(
         model=model,
