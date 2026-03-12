@@ -157,11 +157,19 @@ class ManualExpansion(nn.Module):
 
             if sine_cosine_expansion:
                 for i in range(state_dim):
-                    self.expanded_basis.append(("sin", i))
-                    self.expand_names.append(f"sin(x{i+1})")
+                    for k in range(1, expansion_degree + 1):
 
-                    self.expanded_basis.append(("cos", i))
-                    self.expand_names.append(f"cos(x{i+1})")
+                        self.expanded_basis.append(("sin", i, k))
+                        if k == 1:
+                            self.expand_names.append(f"sin(x{i+1})")
+                        else:
+                            self.expand_names.append(f"sin({k}*x{i+1})")
+
+                        self.expanded_basis.append(("cos", i, k))
+                        if k == 1:
+                            self.expand_names.append(f"cos(x{i+1})")
+                        else:
+                            self.expand_names.append(f"cos({k}*x{i+1})")
 
         else:
             raise ValueError("expansion_type must be 'general' or 'specific'")
@@ -224,12 +232,12 @@ class ManualExpansion(nn.Module):
                     expanded_features.append(term)
 
                 else:
-                    func, dim = basis
+                    func, dim, k = basis
 
                     if func == "sin":
-                        expanded_features.append(torch.sin(x[:, dim]))
+                        expanded_features.append(torch.sin(k * x[:, dim]))
                     elif func == "cos":
-                        expanded_features.append(torch.cos(x[:, dim]))
+                        expanded_features.append(torch.cos(k * x[:, dim]))
 
         return torch.stack(expanded_features, dim=1)
 
