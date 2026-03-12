@@ -1,74 +1,222 @@
+import re
 import torch
 import torch.nn as nn
-import numpy as np
+from itertools import product
+
+
+VANDERPOL_BASIS = [
+    "x",
+    "y",
+    "x^2*y",
+    "x*y^2",
+    "x^3",
+    "x^4*y",
+    "y^3",
+    "x^2",
+    "y^2",
+    "x^3*y^2",
+]
+
+LOTKA_BASIS = [
+    "x",
+    "y",
+    "x*y",
+    "x^2*y",
+    "x*y^2",
+    "x^2",
+    "y^2",
+    "x^3*y",
+    "x*y^3",
+    "x^2*y^2",
+]
+
+PENDULUM_BASIS = [
+    "x",
+    "y",
+    "sin(x)",
+    "cos(x)",
+    "y*sin(x)",
+    "y*cos(x)",
+    "y^2*sin(x)",
+    "y^2*cos(x)",
+    "sin(2*x)",
+    "cos(2*x)",
+]
+
+DUFFING_BASIS = [
+    "x",
+    "y",
+    "x^3",
+    "x^2*y",
+    "x*y^2",
+    "x^4",
+    "x^5",
+    "y^2",
+    "x^2",
+    "x^3*y",
+]
+
+LORENZ_BASIS = [
+    "x",
+    "y",
+    "z",
+    "x*y",
+    "x*z",
+    "y*z",
+    "x^2*y",
+    "x^2*z",
+    "x*y*z",
+    "x^2",
+]
+
+SPECIFIC_BASES = {
+    "vanderpol": VANDERPOL_BASIS,
+    "lotka_volterra": LOTKA_BASIS,
+    "pendulum": PENDULUM_BASIS,
+    "duffing": DUFFING_BASIS,
+    "lorenz": LORENZ_BASIS,
+}
 
 
 class ManualExpansion(nn.Module):
     """
-    Class to handle manual basis expansions, general and specific
+    General polynomial or system-specific basis expansion.
     """
 
     def __init__(
-            self, 
-            state_dim=2, 
-            expansion_degree=3, 
-            constant_expansion=True, 
-            sine_cosine_expansion=True
-        ):
-
+        self,
+        state_dim=2,
+        expansion_degree=3,
+        constant_expansion=True,
+        sine_cosine_expansion=False,
+        expansion_type="general",
+        system=None,
+    ):
         super().__init__()
 
-        self.expanded_basis = []
+        self.state_dim = state_dim
+        self.expansion_type = expansion_type
         self.expand_names = []
+        self.expanded_basis = []
 
-        # Constant term
-        if constant_expansion:
-            self.expanded_basis = [(0, 0)]
-            self.expand_names = ["1"]
+        if expansion_type == "specific":
 
-        # Polynomial expansion of the state 
-        for d in range(1, expansion_degree + 1):
-            for i in range(d + 1):
-                e_x = d-i
-                e_y = i
-                self.expanded_basis.append((e_x, e_y))
-                expansion_string = f"x^{e_x} y^{e_y}".replace("x^0", "").replace("y^0", "").replace("^1", "").strip()
-                self.expand_names.append(expansion_string)
-        self.expanded_dim = len(self.expanded_basis)
+            if system is None:
+                raise ValueError("system must be provided when expansion_type='specific'")
 
-        # Sine and cosine expansion of the state
-        if sine_cosine_expansion:
-            for var in ["x", "y"]:
-                for func in ["sin", "cos"]:
-                    self.expanded_basis.append((func, var))
-                    self.expand_names.append(f"{func}({var})")
-            self.expanded_dim += 4
+            if system not in SPECIFIC_BASES:
+                raise ValueError(f"No specific basis defined for system '{system}'")
 
+            basis_list = SPECIFIC_BASES[system]
+
+            if expansion_degree > len(basis_list):
+                raise ValueError(
+                    f"expansion_degree={expansion_degree} exceeds available basis size "
+                    f"({len(basis_list)}) for system '{system}'"
+                )
+
+            selected_basis = basis_list[:expansion_degree]
+
+            self.expand_names = selected_basis
+            self.expanded_basis = selected_basis
+
+        elif expansion_type == "general":
+            for exps in product(range(expansion_degree + 1), repeat=state_dim):
+                total_degree = sum(exps)
+
+                if total_degree == 0 and not constant_expansion:
+                    continue
+
+                if total_degree <= expansion_degree:
+                    self.expanded_basis.append(exps)
+
+                    name_parts = []
+                    for i, e in enumerate(exps):
+                        if e == 0:
+                            continue
+
+                        var = f"x{i+1}"
+                        name_parts.append(var if e == 1 else f"{var}^{e}")
+
+                    name = " ".join(name_parts) if name_parts else "1"
+                    self.expand_names.append(name)
+
+            if sine_cosine_expansion:
+                for i in range(state_dim):
+                    self.expanded_basis.append(("sin", i))
+                    self.expand_names.append(f"sin(x{i+1})")
+
+                    self.expanded_basis.append(("cos", i))
+                    self.expand_names.append(f"cos(x{i+1})")
+
+        else:
+            raise ValueError("expansion_type must be 'general' or 'specific'")
+
+        self.expanded_dim = len(self.expand_names)
+
+        # Precompile specific basis functions once
+        if self.expansion_type == "specific":
+            self._compiled_basis = [self._compile_basis(expr) for expr in self.expand_names]
+
+    def _compile_basis(self, expr):
+        """
+        Turn strings like 'x^2*y' or 'sin(x)' into callable functions.
+        """
+        expr_py = expr.replace("^", "**")
+
+        allowed_names = {
+            "sin": torch.sin,
+            "cos": torch.cos,
+        }
+
+        def basis_fn(var_dict):
+            local_dict = {**allowed_names, **var_dict}
+            return eval(expr_py, {"__builtins__": {}}, local_dict)
+
+        return basis_fn
 
     def expand(self, x):
         expanded_features = []
 
-        for i, j in self.expanded_basis:
-            if isinstance(i, int) and isinstance(j, int):
-                expanded_features.append((x[:, 0] ** i) * (x[:, 1] ** j))
-            elif isinstance(i, str) and isinstance(j, str):
-                if i == "sin":
-                    if j == "x":
-                        expanded_features.append(torch.sin(x[:, 0]))
-                    elif j == "y":
-                        expanded_features.append(torch.sin(x[:, 1]))
-                elif i == "cos":
-                    if j == "x":
-                        expanded_features.append(torch.cos(x[:, 0]))
-                    elif j == "y":
-                        expanded_features.append(torch.cos(x[:, 1]))
+        if self.expansion_type == "specific":
+            var_names = ["x", "y", "z", "w", "v", "u"]
+            var_dict = {}
 
-        x_expanded = torch.stack(expanded_features, dim=1)
+            for i in range(self.state_dim):
+                if i < len(var_names):
+                    var_dict[var_names[i]] = x[:, i]
+                else:
+                    var_dict[f"x{i+1}"] = x[:, i]
 
-        return x_expanded
-    
+            for fn in self._compiled_basis:
+                expanded_features.append(fn(var_dict))
+
+        else:
+            for basis in self.expanded_basis:
+                if isinstance(basis[0], int):
+                    term = torch.ones(x.shape[0], device=x.device, dtype=x.dtype)
+
+                    for dim, power in enumerate(basis):
+                        if power > 0:
+                            term = term * (x[:, dim] ** power)
+
+                    expanded_features.append(term)
+
+                else:
+                    func, dim = basis
+
+                    if func == "sin":
+                        expanded_features.append(torch.sin(x[:, dim]))
+                    elif func == "cos":
+                        expanded_features.append(torch.cos(x[:, dim]))
+
+        return torch.stack(expanded_features, dim=1)
 
     def de_expand(self, x_expanded):
-        # Extract original state (x,y) from expanded features - take features 2 and 3 (1st term is a constant)
-        x_reconstructed = x_expanded[:, 1:3]
-        return x_reconstructed
+        """
+        Recover original state variables.
+        Assumes the first entries are the original coordinates.
+        """
+        start = 1 if self.expand_names[0] == "1" else 0
+        end = start + self.state_dim
+        return x_expanded[:, start:end]

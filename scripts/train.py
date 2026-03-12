@@ -9,7 +9,6 @@ from src.models.linear_baseline import fit_linear_map
 from src.models.dmd_baseline import fit_dmd
 
 from src.models.ml_eigen_dmd import MLEigenDMD
-from src.models.expanded_eigen_dmd import ExpandedEigenDMD
 from src.models.ml_dmd import ML_DMD
 from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
 from src.models.manual_expansion_manual_dmd import ManualExpansion_ManualDMD
@@ -77,13 +76,12 @@ Global options (defaults):
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --epochs 10
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --epochs 10
 
----------------------------------------------------------------------------------------------
-
-# ML Eigen DMD
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/saddle_point_trajectory.npz --epochs 10
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --epochs 10
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --epochs 10
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --epochs 10
+# Manual expansion + Eigen DMD
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/saddle_point_trajectory.npz --epochs 10
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --epochs 10
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --epochs 10
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --epochs 10
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/vanderpol_trajectory.npz --epochs 10 --expansion_type specific
 
 ---------------------------------------------------------------------------------------------
 
@@ -345,16 +343,27 @@ def main():
         model = ManualExpansion_MLDMD(
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
+            expansion_type=args.expansion_type,
+            system=system_name,
         ).to(device)
     
     elif args.model == "manual_expansion_eigen_dmd":
         model = ManualExpansion_EigenDMD(
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
-        ).to(device) 
+            expansion_type=args.expansion_type,
+            system=system_name,
+        ).to(device)
 
     else:
         raise ValueError(f"Unknown model: {args.model}")
+        
+    if hasattr(model, "expansion_type"):
+        print(f"Expansion type: {args.expansion_type}")
+    if hasattr(model, "expansion_degree"):
+        print(f"Expansion degree: {args.expansion_degree}")
+    if hasattr(model, "expansion_type"):
+        print(f"Expand names: {model.expand_names}")
 
     model, (train_losses, batch_val_losses, epoch_val_losses, loss_components_val) = train_onestep(
         model=model,
@@ -396,7 +405,8 @@ def main():
         loss_path, 
         train_losses=train_losses, 
         batch_val_losses=batch_val_losses, 
-        epoch_val_losses=epoch_val_losses)
+        epoch_val_losses=epoch_val_losses,
+        loss_components_val=loss_components_val)
     print("Saved model and losses to:", save_path, loss_path)
 
 

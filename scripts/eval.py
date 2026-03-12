@@ -75,6 +75,8 @@ Global options (defaults):
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_degenerate_node.pt
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_inward_spiral.pt
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_harmonic_oscillator.pt
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/vanderpol_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_vanderpol.pt
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/lotka_volterra_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_lotka_volterra.pt
 
 ---------------------------------------------------------------------------------------------
 
@@ -179,13 +181,30 @@ def main():
 
     elif args.model == "manual_expansion_ml_dmd":
         ckpt = torch.load(args.model_path, map_location=device)
-        model = ManualExpansion_MLDMD(state_dim=ckpt["state_dim"],).to(device)
+        train_args = ckpt["train_args"]
+
+        model = ManualExpansion_MLDMD(
+            state_dim=ckpt["state_dim"],
+            expansion_degree=train_args["expansion_degree"],
+            expansion_type=train_args["expansion_type"],
+            system=ckpt["system"],
+        ).to(device)
         model.load_state_dict(ckpt["model_state_dict"])
         model.eval()
 
     elif args.model == "manual_expansion_eigen_dmd":
+
         ckpt = torch.load(args.model_path, map_location=device)
-        model = ManualExpansion_EigenDMD(state_dim=ckpt["state_dim"],).to(device)
+
+        train_args = ckpt["train_args"]
+
+        model = ManualExpansion_EigenDMD(
+            state_dim=ckpt["state_dim"],
+            expansion_degree=train_args["expansion_degree"],
+            expansion_type=train_args["expansion_type"],
+            system=ckpt["system"],
+        ).to(device)
+
         model.load_state_dict(ckpt["model_state_dict"])
         model.eval()
 
@@ -322,11 +341,12 @@ def main():
         eigvals = np.linalg.eigvals(A)
 
     elif hasattr(model, "Lambda") and hasattr(model, "Phi") and hasattr(model, "Phi_inv"):
-        Phi_np = model.Phi.detach().cpu().numpy()
-        Phi_inv_np = model.Phi_inv.detach().cpu().numpy()
-        Lambda_np = model.Lambda.detach().cpu().numpy()
-        A = Phi_np @ Lambda_np @ Phi_inv_np
-        eigvals = np.linalg.eigvals(A)
+        # Phi_np = model.Phi.detach().cpu().numpy()
+        # Phi_inv_np = model.Phi_inv.detach().cpu().numpy()
+        # Lambda_np = model.Lambda.detach().cpu().numpy()
+        # A = Phi_np @ Lambda_np @ Phi_inv_np
+        # eigvals = np.linalg.eigvals(A)
+        eigvals = np.diag(model.Lambda.detach().cpu().numpy())
 
     if eigvals is not None:
         plt.figure(figsize=(6, 6))

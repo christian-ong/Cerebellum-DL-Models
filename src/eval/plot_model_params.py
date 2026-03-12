@@ -98,7 +98,7 @@ if __name__ == "__main__":
     # plot_training_losses(model_name, ignore_first_epochs=0)
     # plot_transition_matrix(model_name, print_K_xy=True)
 
-    data = np.load(f"data/models/loss_components/{model_name}_losses.npz", allow_pickle=True)
+    data = np.load(f"data/models/{model_name}_losses.npz", allow_pickle=True)
 
     # Print data summary
     for key in data.keys():
