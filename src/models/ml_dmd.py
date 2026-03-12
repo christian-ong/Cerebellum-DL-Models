@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-class LinearDynamics(nn.Module):
+class ML_DMD(nn.Module):
     """
     Linear dynamics model.
 

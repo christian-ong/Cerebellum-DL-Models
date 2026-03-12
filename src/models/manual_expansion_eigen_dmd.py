@@ -3,13 +3,11 @@ import torch.nn as nn
 from itertools import product
 
 
-class ManualExpansion_MLDMD(nn.Module):
+class ManualExpansion_EigenDMD(nn.Module):
     """
-    Manual expansion + directly learned Koopman operator.
+    Eigen-DMD model with manual polynomial expansion.
 
-    Pipeline
-    --------
-    x -> expand(x) -> K -> expanded_next -> x_next
+    Works for arbitrary state dimension.
     """
 
     def __init__(
@@ -41,6 +39,7 @@ class ManualExpansion_MLDMD(nn.Module):
 
                 self.expanded_basis.append(exps)
 
+                # build readable name
                 name_parts = []
 
                 for i, e in enumerate(exps):
@@ -62,14 +61,12 @@ class ManualExpansion_MLDMD(nn.Module):
         self.expanded_dim = len(self.expanded_basis)
 
         # ------------------------------------------------
-        # Linear Koopman operator
+        # Eigen-parameterized Koopman operator
         # ------------------------------------------------
 
-        self.K = nn.Linear(
-            in_features=self.expanded_dim,
-            out_features=self.expanded_dim,
-            bias=False,
-        )
+        self.Phi = nn.Parameter(torch.eye(self.expanded_dim))
+        self.Phi_inv = nn.Parameter(torch.eye(self.expanded_dim))
+        self.Lambda = nn.Parameter(torch.eye(self.expanded_dim))
 
     # ------------------------------------------------
     # Expansion
@@ -99,6 +96,8 @@ class ManualExpansion_MLDMD(nn.Module):
     def de_expand(self, x_expanded):
         """
         Recover original state variables.
+
+        Assumes linear terms appear directly after constant.
         """
 
         start = 1 if self.expanded_basis[0] == tuple([0]*self.state_dim) else 0
@@ -114,7 +113,9 @@ class ManualExpansion_MLDMD(nn.Module):
 
         x_big = self.expand(x)
 
-        x_big_next = self.K(x_big)
+        b_t = x_big @ self.Phi_inv.mT
+        b_next = b_t @ self.Lambda.mT
+        x_big_next = b_next @ self.Phi.mT
 
         x_next = self.de_expand(x_big_next)
 
@@ -128,25 +129,28 @@ class ManualExpansion_MLDMD(nn.Module):
 
         x_next, _, _ = self.forward(x)
 
+        # prediction loss
         actual_loss = nn.MSELoss()(x_next, x_next_true)
-
         step_length = torch.norm(x_next_true - x)
-
         loss_predict = actual_loss / (step_length + 1e-6)
 
-        return loss_predict
+        # eigenvector constraint
+        A = self.Phi @ self.Lambda @ self.Phi_inv
+        loss_eigvec = torch.norm(A @ self.Phi - self.Phi @ self.Lambda)
 
-    # ------------------------------------------------
-    # Rollout
-    # ------------------------------------------------
+        # inverse constraint
+        identity = torch.eye(self.expanded_dim, device=x.device)
+        loss_phi_inv = torch.norm(self.Phi @ self.Phi_inv - identity)
+
+        # unit eigenvectors
+        col_norms = torch.linalg.norm(self.Phi, dim=0)
+        loss_unit_length = torch.mean((col_norms - 1.0)**2)
+
+        return (loss_predict, loss_eigvec, loss_phi_inv, loss_unit_length)
     
     def rollout(self, x0, steps):
         """
         Roll out model dynamics from initial condition.
-
-        Returns
-        -------
-        trajectory : (steps+1, state_dim)
         """
 
         if isinstance(x0, torch.Tensor) is False:
@@ -162,7 +166,10 @@ class ManualExpansion_MLDMD(nn.Module):
 
         for _ in range(steps):
 
-            psi = self.K(psi)
+            b = psi @ self.Phi_inv.mT
+            b_next = b @ self.Lambda.mT
+            psi = b_next @ self.Phi.mT
+
             x_next = self.de_expand(psi)
 
             trajectory.append(x_next[0])

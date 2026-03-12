@@ -3,7 +3,7 @@ import numpy as np
 from tqdm import tqdm
 
 
-def train_ae_onestep(
+def train_onestep(
     model,
     train_loader,
     val_loader,
@@ -96,8 +96,8 @@ def train_ae_onestep(
 
                     else:
                         y_val_hat, _, _ = model(x_val)
-                        loss_val = loss_fn(y_val_hat, y_val)
-                        batch_val_losses.append(loss_val.item())
+                        val_loss = loss_fn(y_val_hat, y_val)
+                        batch_val_losses.append(val_loss.item())
                 model.train()
 
         train_loss /= n_train

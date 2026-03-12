@@ -6,57 +6,89 @@ import os
 
 from src.models.linear_baseline import rollout_linear_map
 from src.models.dmd_baseline import rollout_dmd_eig
-from src.models.edmd_baseline import rollout_edmd
-from src.models.ml_dmd import LinearDynamics
+from src.models.ml_dmd import ML_DMD
 from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
-from src.models.ae_linear import AELinearDynamics
-from src.models.ae_koopman import AEKoopmanDynamics
 from src.models.manual_expansion_manual_dmd import ManualExpansion_ManualDMD
+from src.models.manual_expansion_eigen_dmd import ManualExpansion_EigenDMD
 from src.eval.rollout import rollout_ae_model
 from src.models.dmd_baseline import *
-"""
-Usage examples:
 
+"""
 Global options (defaults):
-    --model {linear_baseline,dmd_baseline,edmd_baseline,ae_linear,ae_koopman}
+    --model {
+        linear_baseline,
+        dmd_baseline,
+        ml_dmd,
+        manual_expansion_ml_dmd,
+        manual_expansion_manual_dmd,
+        manual_expansion_eigen_dmd}
     --data_path data/trajectories/{system}_trajectory.npz
     --model_path data/models/{model}_{system}.pt
     --steps 5000
     --traj_index 0
+    --name optional_suffix
 
-Linear system (x' = A x): # OUTDATED NAMES (linear_trajectory xd)
-    python -m scripts.eval --model linear_baseline --data_path data/trajectories/linear_trajectory.npz --model_path data/models/linear_baseline.npz
-    python -m scripts.eval --model dmd_baseline    --data_path data/trajectories/linear_trajectory.npz --model_path data/models/dmd_baseline_linear.npz
-    python -m scripts.eval --model edmd_baseline   --data_path data/trajectories/linear_trajectory.npz --model_path data/models/edmd_baseline_linear.npz
-    python -m scripts.eval --model ae_linear       --data_path data/trajectories/linear_trajectory.npz --model_path data/models/ae_linear.pt
-    python -m scripts.eval --model ml_dmd           --data_path data/trajectories/linear_trajectory.npz --model_path data/models/ml_dmd_linear.pt
-    python -m scripts.eval --model manual_expansion_manual_dmd           --data_path data/trajectories/linear_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_linear.npz
-    
-    Options: --steps --traj_index
+---------------------------------------------------------------------------------------------
 
-Van der Pol:
-    python -m scripts.eval --model ae_koopman --data_path data/trajectories/vanderpol_trajectory.npz --model_path data/models/ae_koopman_vanderpol.pt
-    Options: --steps --traj_index
+# Linear baseline
+    python -m scripts.eval --model linear_baseline --data_path data/trajectories/saddle_point_trajectory.npz --model_path data/models/linear_baseline_saddle_point.npz
+    python -m scripts.eval --model linear_baseline --data_path data/trajectories/degenerate_node_trajectory.npz --model_path data/models/linear_baseline_degenerate_node.npz
+    python -m scripts.eval --model linear_baseline --data_path data/trajectories/inward_spiral_trajectory.npz --model_path data/models/linear_baseline_inward_spiral.npz
+    python -m scripts.eval --model linear_baseline --data_path data/trajectories/harmonic_oscillator_trajectory.npz --model_path data/models/linear_baseline_harmonic_oscillator.npz
 
-Lotka-Volterra:
-    python -m scripts.eval --model ae_koopman --data_path data/trajectories/lotka_volterra_trajectory.npz --model_path data/models/ae_koopman_lotka_volterra.pt
-    Options: --steps --traj_index
+# DMD baseline
+    python -m scripts.eval --model dmd_baseline --data_path data/trajectories/saddle_point_trajectory.npz --model_path data/models/dmd_baseline_saddle_point.npz
+    python -m scripts.eval --model dmd_baseline --data_path data/trajectories/degenerate_node_trajectory.npz --model_path data/models/dmd_baseline_degenerate_node.npz
+    python -m scripts.eval --model dmd_baseline --data_path data/trajectories/inward_spiral_trajectory.npz --model_path data/models/dmd_baseline_inward_spiral.npz
+    python -m scripts.eval --model dmd_baseline --data_path data/trajectories/harmonic_oscillator_trajectory.npz --model_path data/models/dmd_baseline_harmonic_oscillator.npz
 
-Pendulum:
-    python -m scripts.eval --model ae_koopman --data_path data/trajectories/pendulum_trajectory.npz --model_path data/models/ae_koopman_pendulum.pt
-    Options: --steps --traj_index
+---------------------------------------------------------------------------------------------
 
-Lorenz:
-    python -m scripts.eval --model ae_koopman --data_path data/trajectories/lorenz_trajectory.npz --model_path data/models/ae_koopman_lorenz.pt
-    Options: --steps --traj_index
+# ML DMD
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/saddle_point_trajectory.npz --model_path data/models/ml_dmd_saddle_point.pt
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --model_path data/models/ml_dmd_degenerate_node.pt
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --model_path data/models/ml_dmd_inward_spiral.pt
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --model_path data/models/ml_dmd_harmonic_oscillator.pt
+
+---------------------------------------------------------------------------------------------
+
+# Manual expansion + Manual DMD
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/saddle_point_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_saddle_point.npz
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_degenerate_node.npz
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_inward_spiral.npz
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_harmonic_oscillator.npz
+
+# Manual expansion + ML DMD
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/saddle_point_trajectory.npz --model_path data/models/manual_expansion_ml_dmd_saddle_point.pt
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_ml_dmd_degenerate_node.pt
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_ml_dmd_inward_spiral.pt
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_ml_dmd_harmonic_oscillator.pt
+
+# Manual expansion + Eigen DMD
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/saddle_point_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_saddle_point.pt
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_degenerate_node.pt
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_inward_spiral.pt
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_harmonic_oscillator.pt
+
+---------------------------------------------------------------------------------------------
+
+Output:
+    data/figures/{model}/{system}/{name}/time_series_idx{traj_index}.png
+    data/figures/{model}/{system}/{name}/rollout_idx{traj_index}.png
 """
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate trained models")
 
     parser.add_argument("--model", type=str, required=True,
-                        choices=["linear_baseline", "dmd_baseline", "edmd_baseline", "ae_linear", "ae_koopman", "ml_dmd", "manual_expansion_ml_dmd", "manual_expansion_manual_dmd"],)
-
+                        choices=[
+                            "linear_baseline",
+                            "dmd_baseline",
+                            "ml_dmd",
+                            "manual_expansion_ml_dmd",
+                            "manual_expansion_manual_dmd",
+                            "manual_expansion_eigen_dmd",
+                        ])
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--model_path", type=str, required=True)
     parser.add_argument("--steps", type=int, default=5000)
@@ -90,7 +122,7 @@ def main():
     if len(val_idx) == 0:
         raise ValueError("No validation trajectories available.")
     
-    system = args.data_path.split("/")[-1].split("_")[0]  # crude way to get system name from filename
+    system = os.path.basename(args.data_path).replace("_trajectory.npz", "")
     print(f"Loaded {X.shape[1]} trajectories for system '{system}', with {len(val_idx)} validation trajectories.")
 
     # --------------------------------------------------
@@ -108,13 +140,6 @@ def main():
         Phi = model_data["Phi"]
         model = None
 
-    elif args.model == "edmd_baseline":
-        model_data = np.load(args.model_path)
-        K = model_data["K"]
-        C = model_data["C"]
-        degree = int(model_data["degree"])
-        model = None
-    
     elif args.model == "manual_expansion_manual_dmd":
         model_data = np.load(args.model_path)
         K = model_data["K"]
@@ -133,34 +158,23 @@ def main():
         ).to(device)
         model.eval()
 
-    elif args.model == "ae_linear":
-        ckpt = torch.load(args.model_path, map_location=device)
-        model = AELinearDynamics(
-            state_dim=ckpt["state_dim"],
-            latent_dim=ckpt["latent_dim"],
-        ).to(device)
-        model.load_state_dict(ckpt["model_state_dict"])
-        model.eval()
-
-    elif args.model == "ae_koopman":
-        ckpt = torch.load(args.model_path, map_location=device)
-        model = AEKoopmanDynamics(
-            state_dim=ckpt["state_dim"],
-            latent_dim=ckpt["latent_dim"],
-            hidden_dim=ckpt["hidden_dim"],
-        ).to(device)
-        model.load_state_dict(ckpt["model_state_dict"])
-        model.eval()
-    
     elif args.model == "ml_dmd":
         ckpt = torch.load(args.model_path, map_location=device)
-        model = LinearDynamics(state_dim=ckpt["state_dim"]).to(device)
+        model = ML_DMD(state_dim=ckpt["state_dim"]).to(device)
         model.load_state_dict(ckpt["model_state_dict"])
         model.eval()
 
     elif args.model == "manual_expansion_ml_dmd":
         ckpt = torch.load(args.model_path, map_location=device)
         model = ManualExpansion_MLDMD(state_dim=ckpt["state_dim"],).to(device)
+        model.load_state_dict(ckpt["model_state_dict"])
+        model.eval()
+    
+    elif args.model == "manual_expansion_eigen_dmd":
+        ckpt = torch.load(args.model_path, map_location=device)
+        model = ManualExpansion_EigenDMD(
+            state_dim=ckpt["state_dim"],
+        ).to(device)
         model.load_state_dict(ckpt["model_state_dict"])
         model.eval()
 
@@ -186,11 +200,14 @@ def main():
         elif args.model == "dmd_baseline":
             X_hat = rollout_dmd_eig(Lambda, Phi, x0=x0, steps=steps)
 
-        elif args.model == "edmd_baseline":
-            X_hat = rollout_edmd(K, C, degree=degree, x0=x0, steps=steps)
-
         elif args.model == "manual_expansion_manual_dmd":
             X_hat = model.rollout(K=K, C=C, x0=x0, steps=steps).cpu().numpy()
+
+        elif args.model == "manual_expansion_eigen_dmd":
+            X_hat = model.rollout(x0=x0, steps=steps).cpu().numpy()
+        
+        elif args.model == "manual_expansion_ml_dmd":
+            X_hat = model.rollout(x0=x0, steps=steps).cpu().numpy()
 
         else:
             x0_torch = torch.tensor(x0, dtype=torch.float64)
@@ -234,8 +251,6 @@ def main():
     elif args.model == "dmd_baseline":
         X_hat = rollout_dmd_eig(Lambda, Phi, x0=x0, steps=steps)
 
-    elif args.model == "edmd_baseline":
-        X_hat = rollout_edmd(K, C, degree=degree, x0=x0, steps=steps)
     elif args.model == "manual_expansion_manual_dmd":
         X_hat = model.rollout(K=K, C=C, x0=x0, steps=steps).cpu().numpy()
     else:
@@ -247,7 +262,7 @@ def main():
             device=device,
         ).cpu().numpy()
     
-    system = args.data_path.split("/")[-1].split("_")[0]  # crude way to get system name from filename
+    system = os.path.basename(args.data_path).replace("_trajectory.npz", "")
     figdir = f"data/figures/{args.model}/{system}/{args.name if args.name else 'default'}"
     os.makedirs(figdir, exist_ok=True)
 
