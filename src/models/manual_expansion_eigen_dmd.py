@@ -31,48 +31,52 @@ class ManualExpansion_EigenDMD(ManualExpansion):
         self.Phi_inv = nn.Parameter(torch.eye(self.latent_dim))
         self.Lambda = nn.Parameter(torch.eye(self.latent_dim))
 
-    # ------------------------------------------------
-    # Forward
-    # ------------------------------------------------
 
     def forward(self, x):
 
+        # Expand basis
         x_expanded = self.expand(x)
 
-        b_t = x_expanded @ self.Phi_inv.mT
-        b_next = b_t @ self.Lambda.mT
-        x_expanded_next = b_next @ self.Phi.mT
+        # Step with dynamic modes
+        b_t = x_expanded @ self.Phi_inv.mT # to eigenvector coordinates
+        b_next = b_t @ self.Lambda.mT # step in eigenvector coordinates
+        x_expanded_next = b_next @ self.Phi.mT # back to expanded space
 
+        # De-expand to original space
         x_next = self.de_expand(x_expanded_next)
 
         return x_next
 
-    # ------------------------------------------------
-    # Loss
-    # ------------------------------------------------
 
     def compute_loss(self, x, x_next_true):
 
-        x_next = self.forward(x)
+        # Compute the forward pass
+        x_expanded = self.expand(x)
+        b_t = x_expanded @ self.Phi_inv.mT 
+        b_next = b_t @ self.Lambda.mT
+        x_expanded_next_hat = b_next @ self.Phi.mT 
+        x_next = self.de_expand(x_expanded_next_hat) 
 
-        actual_loss = nn.MSELoss()(x_next, x_next_true)
+        # Prediction loss - from the expanded space
+        x_expanded_next_true = self.expand(x_next_true)
+        expanded_loss = nn.MSELoss()(x_expanded_next_hat, x_expanded_next_true)
         step_length = torch.norm(x_next_true - x)
-        loss_predict = actual_loss / (step_length + 1e-6)
+        loss_predict = expanded_loss / (step_length + 1e-6) # normalize + avoid division by zero
 
+        # Eigenvector loss
         A = self.Phi @ self.Lambda @ self.Phi_inv
         loss_eigvec = torch.norm(A @ self.Phi - self.Phi @ self.Lambda)
 
+        # Phi and Phi_inv are inverses
         identity = torch.eye(self.latent_dim, device=x.device, dtype=x.dtype)
         loss_phi_inv = torch.norm(self.Phi @ self.Phi_inv - identity)
 
+        # Unit eigenvectors
         col_norms = torch.linalg.norm(self.Phi, dim=0)
         loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
 
         return (loss_predict, loss_eigvec, loss_phi_inv, loss_unit_length)
 
-    # ------------------------------------------------
-    # Rollout
-    # ------------------------------------------------
 
     def rollout(self, x0, steps):
 

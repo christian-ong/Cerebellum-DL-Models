@@ -28,7 +28,7 @@ Global options (defaults):
     --data_path data/trajectories/{system}_trajectory.npz
     --epochs 50
     --subset 1.0
-    --batch_size 512
+    --batch_size 64
     --lr 1e-3
     --weight_decay 1e-6
     --latent_dim 2
@@ -81,15 +81,12 @@ Global options (defaults):
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --epochs 10
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --epochs 10
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --epochs 10
+
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/vanderpol_trajectory.npz --epochs 10 --expansion_type specific
-
----------------------------------------------------------------------------------------------
-
-# Expanded Eigen DMD
-    python -m scripts.train --model expanded_eigen_dmd --data_path data/trajectories/saddle_point_trajectory.npz --epochs 10
-    python -m scripts.train --model expanded_eigen_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --epochs 10
-    python -m scripts.train --model expanded_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --epochs 10
-    python -m scripts.train --model expanded_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --epochs 10
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/lotka_volterra.npz --epochs 10 --expansion_type specific
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/pendulum.npz --epochs 10 --expansion_type specific
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/duffing.npz --epochs 10 --expansion_type specific
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/lorenz.npz --epochs 10 --expansion_type specific
 
 ---------------------------------------------------------------------------------------------
 
