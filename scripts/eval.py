@@ -133,7 +133,6 @@ def main():
     
     system = os.path.basename(args.data_path).replace("_trajectory.npz", "")
     print(f"Loaded {X.shape[1]} trajectories for system '{system}', with {len(val_idx)} validation trajectories.")
-
     # --------------------------------------------------
     # Load model ONCE
     # --------------------------------------------------

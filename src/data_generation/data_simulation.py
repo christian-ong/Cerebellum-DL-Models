@@ -113,3 +113,81 @@ def duffing_system(alpha=1.0, beta=1.0, delta=0.2,
 
     return f
 
+def koopman_poly_system(mu=0.1, alpha=-1.0):
+    def f(t, x):
+        x = np.asarray(x, dtype=float)
+        x1 = x[..., 0]
+        x2 = x[..., 1]
+        dx1 = mu * x1
+        dx2 = alpha * (x2 - x1**2)
+        return np.stack([dx1, dx2], axis=-1)
+    return f
+
+def koopman_poly_system_large(mu=0.1, alpha=-1.0, beta=0.8, gamma=-0.4, delta=0.2):
+    """
+    2D nonlinear system with exact finite-dimensional polynomial closure:
+        x' = mu * x
+        y' = alpha * y + beta * x^2 + gamma * x^3 + delta * x^4
+
+    In lifted coordinates z = [x, y, x^2, x^3, x^4], the dynamics are linear.
+    """
+    def f(t, x):
+        x = np.asarray(x, dtype=float)
+        x1 = x[..., 0]
+        x2 = x[..., 1]
+
+        dx1 = mu * x1
+        dx2 = alpha * x2 + beta * x1**2 + gamma * x1**3 + delta * x1**4
+
+        return np.stack([dx1, dx2], axis=-1)
+
+    return f
+
+def koopman_poly_trig_system(
+    omega=1.0,
+    alpha=-0.8,
+    beta_s1=0.7,
+    beta_c1=-0.5,
+    beta_s2=0.4,
+    beta_c2=0.2,
+    beta_s3=-0.25,
+    beta_c3=0.15,
+    beta_x=0.3,
+    beta_x2=-0.08,
+):
+    """
+    2D nonlinear system with an exact finite-dimensional closure in a
+    custom polynomial + trigonometric observable dictionary.
+
+    Dynamics:
+        x' = omega
+        y' = alpha*y
+             + beta_s1*sin(x) + beta_c1*cos(x)
+             + beta_s2*sin(2x) + beta_c2*cos(2x)
+             + beta_s3*sin(3x) + beta_c3*cos(3x)
+             + beta_x*x + beta_x2*x^2
+
+    A suitable exact lifted dictionary is for example:
+        [1, x, x^2, y, sin(x), cos(x), sin(2x), cos(2x), sin(3x), cos(3x)]
+    """
+    def f(t, x):
+        x = np.asarray(x, dtype=float)
+        x1 = x[..., 0]
+        x2 = x[..., 1]
+
+        dx1 = np.full_like(x1, omega, dtype=float)
+        dx2 = (
+            alpha * x2
+            + beta_s1 * np.sin(x1)
+            + beta_c1 * np.cos(x1)
+            + beta_s2 * np.sin(2.0 * x1)
+            + beta_c2 * np.cos(2.0 * x1)
+            + beta_s3 * np.sin(3.0 * x1)
+            + beta_c3 * np.cos(3.0 * x1)
+            + beta_x * x1
+            + beta_x2 * x1**2
+        )
+
+        return np.stack([dx1, dx2], axis=-1)
+
+    return f

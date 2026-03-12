@@ -9,7 +9,10 @@ from src.data_generation.data_simulation import (
     lotka_volterra_system,
     pendulum_system,
     lorenz_system,
-    duffing_system
+    duffing_system,
+    koopman_poly_system,
+    koopman_poly_system_large,
+    koopman_poly_trig_system
 )
 from src.data_generation.plot_data import plot_init_conditions, plot_trajectories_only, plot_flow_map_displacement
 
@@ -64,7 +67,9 @@ python -m scripts.simulate_data --system lotka_volterra --n_traj 100 --T 15
 python -m scripts.simulate_data --system pendulum --n_traj 100 --T 15
 python -m scripts.simulate_data --system duffing --n_traj 100 --T 15
 python -m scripts.simulate_data --system lorenz --n_traj 100 --T 15
-
+python -m scripts.simulate_data --system koopman_poly --n_traj 100 --T 8 --dt 0.01 --mu_KP 0.1 --alpha_KP -1.0
+python -m scripts.simulate_data --system koopman_poly_large --n_traj 100 --T 8 --dt 0.01
+python -m scripts.simulate_data --system koopman_poly_trig --n_traj 100 --T 8 --dt 0.01
 --------------------------------------------------
 Output
 --------------------------------------------------
@@ -379,6 +384,98 @@ def build_lorenz(args, rng):
     meta = {"sigma": args.sigma, "rho": args.rho, "beta": args.beta_LZ}
     return f, x0, meta
 
+def build_koopman_poly(args, rng):
+    f = koopman_poly_system(mu=args.mu_KP, alpha=args.alpha_KP)
+
+    if args.n_traj == 1:
+        x0 = np.array([0.8, 0.4], dtype=float)
+    else:
+        x_init = rng.uniform(-1.0, 1.0, size=args.n_traj)
+        y_init = rng.uniform(-1.0, 1.5, size=args.n_traj)
+        x0 = np.stack([x_init, y_init], axis=1)
+
+    A_lift = np.array([
+        [args.mu_KP, 0.0, 0.0],
+        [0.0, args.alpha_KP, -args.alpha_KP],
+        [0.0, 0.0, 2.0 * args.mu_KP],
+    ], dtype=float)
+
+    return f, x0, {
+        "mu": args.mu_KP,
+        "alpha": args.alpha_KP,
+        "A_lift": A_lift,
+    }
+
+def build_koopman_poly_large(args, rng):
+    f = koopman_poly_system_large(
+        mu=args.mu_K234,
+        alpha=args.alpha_K234,
+        beta=args.beta_K234,
+        gamma=args.gamma_K234,
+        delta=args.delta_K234,
+    )
+
+    if args.n_traj == 1:
+        x0 = np.array([0.8, 0.1], dtype=float)
+    else:
+        # Keep x moderate so x^2, x^3, x^4 stay well-behaved
+        x_init = rng.uniform(-1.0, 1.0, size=args.n_traj)
+        y_init = rng.uniform(-1.0, 1.0, size=args.n_traj)
+        x0 = np.stack([x_init, y_init], axis=1)
+
+    A_lift = np.array([
+        [args.mu_K234,      0.0,             0.0,              0.0,              0.0],
+        [0.0,               args.alpha_K234, args.beta_K234,   args.gamma_K234,  args.delta_K234],
+        [0.0,               0.0,             2.0*args.mu_K234, 0.0,              0.0],
+        [0.0,               0.0,             0.0,              3.0*args.mu_K234, 0.0],
+        [0.0,               0.0,             0.0,              0.0,              4.0*args.mu_K234],
+    ], dtype=float)
+
+    return f, x0, {
+        "mu": args.mu_K234,
+        "alpha": args.alpha_K234,
+        "beta": args.beta_K234,
+        "gamma": args.gamma_K234,
+        "delta": args.delta_K234,
+        "A_lift": A_lift,
+    }
+
+def build_koopman_poly_trig(args, rng):
+    f = koopman_poly_trig_system(
+        omega=args.omega_KPT,
+        alpha=args.alpha_KPT,
+        beta_s1=args.beta_s1_KPT,
+        beta_c1=args.beta_c1_KPT,
+        beta_s2=args.beta_s2_KPT,
+        beta_c2=args.beta_c2_KPT,
+        beta_s3=args.beta_s3_KPT,
+        beta_c3=args.beta_c3_KPT,
+        beta_x=args.beta_x_KPT,
+        beta_x2=args.beta_x2_KPT,
+    )
+
+    if args.n_traj == 1:
+        x0 = np.array([0.0, 0.0], dtype=float)
+    else:
+        # Keep x in a moderate interval initially; since x' = omega,
+        # x will drift linearly in time.
+        x_init = rng.uniform(-2.0, 2.0, size=args.n_traj)
+        y_init = rng.uniform(-1.0, 1.0, size=args.n_traj)
+        x0 = np.stack([x_init, y_init], axis=1)
+
+    return f, x0, {
+        "omega": args.omega_KPT,
+        "alpha": args.alpha_KPT,
+        "beta_s1": args.beta_s1_KPT,
+        "beta_c1": args.beta_c1_KPT,
+        "beta_s2": args.beta_s2_KPT,
+        "beta_c2": args.beta_c2_KPT,
+        "beta_s3": args.beta_s3_KPT,
+        "beta_c3": args.beta_c3_KPT,
+        "beta_x": args.beta_x_KPT,
+        "beta_x2": args.beta_x2_KPT,
+    }
+
 
 SYSTEMS = {
     # linear
@@ -393,7 +490,10 @@ SYSTEMS = {
     "lotka_volterra": build_lotka_volterra,
     "pendulum": build_pendulum,
     "lorenz": build_lorenz,
-    "duffing": build_duffing
+    "duffing": build_duffing,
+    "koopman_poly": build_koopman_poly,
+    "koopman_poly_large": build_koopman_poly_large,
+    "koopman_poly_trig": build_koopman_poly_trig
 }
 
 # --------------------------------------------------
@@ -439,6 +539,29 @@ def main():
     parser.add_argument("--delta_DUF", type=float, default=0.2)
     parser.add_argument("--gamma_DUF", type=float, default=0.0)
     parser.add_argument("--omega_DUF", type=float, default=0.0)
+
+    # koopman poly simple nonlinear system (section 2.5.2 overleaf)
+    parser.add_argument("--mu_KP", type=float, default=0.1)
+    parser.add_argument("--alpha_KP", type=float, default=-1.0)
+    
+    # Koopman polynomial LARGE (x^2 + x^3 + x^4 test system, written in docs)
+    parser.add_argument("--mu_K234", type=float, default=0.1)
+    parser.add_argument("--alpha_K234", type=float, default=-1.0)
+    parser.add_argument("--beta_K234", type=float, default=0.8)
+    parser.add_argument("--gamma_K234", type=float, default=-0.4)
+    parser.add_argument("--delta_K234", type=float, default=0.2)
+
+    # Koopman polynomial + trigonometric test system (last level closed form system)
+    parser.add_argument("--omega_KPT", type=float, default=1.0)
+    parser.add_argument("--alpha_KPT", type=float, default=-0.8)
+    parser.add_argument("--beta_s1_KPT", type=float, default=0.7)
+    parser.add_argument("--beta_c1_KPT", type=float, default=-0.5)
+    parser.add_argument("--beta_s2_KPT", type=float, default=0.4)
+    parser.add_argument("--beta_c2_KPT", type=float, default=0.2)
+    parser.add_argument("--beta_s3_KPT", type=float, default=-0.25)
+    parser.add_argument("--beta_c3_KPT", type=float, default=0.15)
+    parser.add_argument("--beta_x_KPT", type=float, default=0.3)
+    parser.add_argument("--beta_x2_KPT", type=float, default=-0.08)
 
     parser.add_argument("--outdir", type=str, default="data/trajectories")
 
@@ -545,7 +668,24 @@ def main():
                 ylim=(-30, 30),
                 zlim=(0, 50)
             )
+        if args.system in ["koopman_poly", "koopman_poly_large"]:
+            plot_flow_map_displacement(
+                f=f,
+                state_dim=state_dim,
+                system_name=args.system,
+                xlim=(-1.5, 1.5),
+                ylim=(-1.5, 1.5),
+            )
 
+
+        if args.system in ["koopman_poly_trig"]:
+            plot_flow_map_displacement(
+                f=f,
+                state_dim=state_dim,
+                system_name=args.system,
+                xlim=(-2.5, 2.5),
+                ylim=(-2.0, 2.0),
+            )    
         return
     
     t, X = simulate(f, x0=x0, dt=args.dt, T=args.T, method=args.method)
