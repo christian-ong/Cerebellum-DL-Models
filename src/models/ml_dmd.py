@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-class LinearDynamics(nn.Module):
+class ML_DMD(nn.Module):
     """
     Linear dynamics model.
 
@@ -51,4 +51,29 @@ class LinearDynamics(nn.Module):
         # Apply linear latent dynamics
         x_next = self.K(x)
 
-        return x_next, None, None
+        return x_next
+
+    def rollout(self, x0, steps):
+        """
+        Rollout trajectory from initial state x0.
+        """
+
+        if not torch.is_tensor(x0):
+            x0 = torch.tensor(
+                x0,
+                dtype=next(self.parameters()).dtype,
+                device=next(self.parameters()).device
+            )
+
+        if x0.ndim == 1:
+            x = x0.unsqueeze(0)
+        else:
+            x = x0
+
+        traj = [x.squeeze(0)]
+
+        for _ in range(steps):
+            x = self.forward(x)
+            traj.append(x.squeeze(0))
+
+        return torch.stack(traj)
