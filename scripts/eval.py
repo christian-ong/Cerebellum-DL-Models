@@ -90,9 +90,12 @@ def main():
     if len(val_idx) == 0:
         raise ValueError("No validation trajectories available.")
     
-    system = args.data_path.split("/")[-1].split("_")[0]  # crude way to get system name from filename
-    print(f"Loaded {X.shape[1]} trajectories for system '{system}', with {len(val_idx)} validation trajectories.")
+    # system = args.data_path.split("/")[-1].split("_")[0]  # crude way to get system name from filename
+    system = os.path.basename(args.data_path).replace(".npz", "")
+    if system.endswith("_trajectory"):
+        system = system[:-len("_trajectory")]
 
+    print(f"Loaded {X.shape[1]} trajectories for system '{system}', with {len(val_idx)} validation trajectories.")
     # --------------------------------------------------
     # Load model ONCE
     # --------------------------------------------------
@@ -247,7 +250,12 @@ def main():
             device=device,
         ).cpu().numpy()
     
-    system = args.data_path.split("/")[-1].split("_")[0]  # crude way to get system name from filename
+    # system = args.data_path.split("/")[-1].split("_")[0]  # crude way to get system name from filename
+    # figdir = f"data/figures/{args.model}/{system}/{args.name if args.name else 'default'}"
+    system = os.path.basename(args.data_path).replace(".npz", "")
+    if system.endswith("_trajectory"):
+        system = system[:-len("_trajectory")]
+
     figdir = f"data/figures/{args.model}/{system}/{args.name if args.name else 'default'}"
     os.makedirs(figdir, exist_ok=True)
 
