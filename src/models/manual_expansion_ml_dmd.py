@@ -81,7 +81,7 @@ class ManualExpansion_MLDMD(nn.Module):
 
         for exps in self.expanded_basis:
 
-            term = torch.ones(x.shape[0], device=x.device)
+            term = torch.ones(x.shape[0], device=x.device, dtype=x.dtype)
 
             for dim, power in enumerate(exps):
 
@@ -118,7 +118,7 @@ class ManualExpansion_MLDMD(nn.Module):
 
         x_next = self.de_expand(x_big_next)
 
-        return x_next, x_big, x_big_next
+        return x_next
 
     # ------------------------------------------------
     # Loss
@@ -126,7 +126,7 @@ class ManualExpansion_MLDMD(nn.Module):
 
     def compute_loss(self, x, x_next_true):
 
-        x_next, _, _ = self.forward(x)
+        x_next = self.forward(x)
 
         actual_loss = nn.MSELoss()(x_next, x_next_true)
 
@@ -142,29 +142,25 @@ class ManualExpansion_MLDMD(nn.Module):
     
     def rollout(self, x0, steps):
         """
-        Roll out model dynamics from initial condition.
-
-        Returns
-        -------
-        trajectory : (steps+1, state_dim)
+        Rollout trajectory from initial state x0.
         """
 
-        if isinstance(x0, torch.Tensor) is False:
-            x0 = torch.tensor(x0, dtype=torch.float32)
+        if not torch.is_tensor(x0):
+            x0 = torch.tensor(
+                x0,
+                dtype=next(self.parameters()).dtype,
+                device=next(self.parameters()).device
+            )
 
         if x0.ndim == 1:
-            x0 = x0.unsqueeze(0)
+            x = x0.unsqueeze(0)
+        else:
+            x = x0
 
-        psi = self.expand(x0)
-
-        x_current = self.de_expand(psi)
-        trajectory = [x_current[0]]
+        traj = [x.squeeze(0)]
 
         for _ in range(steps):
+            x = self.forward(x)
+            traj.append(x.squeeze(0))
 
-            psi = self.K(psi)
-            x_next = self.de_expand(psi)
-
-            trajectory.append(x_next[0])
-
-        return torch.stack(trajectory)
+        return torch.stack(traj)

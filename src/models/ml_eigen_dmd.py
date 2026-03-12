@@ -71,13 +71,24 @@ class MLEigenDMD(nn.Module):
         return (loss_predict, loss_eigvec, loss_phi_inv, loss_unit_length)
     
 
-    def rollout(self, x0, n_steps):
-        """
-        Rollout trajectory from initial state x0 for n_steps.
-        """
-        traj = [x0]
-        x = x0
-        for _ in range(n_steps):
+    def rollout(self, x0, steps):
+
+        if not torch.is_tensor(x0):
+            x0 = torch.tensor(
+                x0,
+                dtype=next(self.parameters()).dtype,
+                device=next(self.parameters()).device
+            )
+
+        if x0.ndim == 1:
+            x = x0.unsqueeze(0)
+        else:
+            x = x0
+
+        traj = [x.squeeze(0)]
+
+        for _ in range(steps):
             x = self.forward(x)
-            traj.append(x)
-        return torch.stack(traj, dim=0)
+            traj.append(x.squeeze(0))
+
+        return torch.stack(traj)

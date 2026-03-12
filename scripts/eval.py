@@ -7,12 +7,10 @@ import os
 from src.models.linear_baseline import rollout_linear_map
 from src.models.dmd_baseline import rollout_dmd_eig
 from src.models.ml_dmd import ML_DMD
+from src.models.ml_eigen_dmd import MLEigenDMD
 from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
 from src.models.manual_expansion_manual_dmd import ManualExpansion_ManualDMD
 from src.models.manual_expansion_eigen_dmd import ManualExpansion_EigenDMD
-from src.eval.rollout import rollout_ae_model
-from src.models.dmd_baseline import *
-from src.models.ml_eigen_dmd import MLEigenDMD
 
 
 """
@@ -51,6 +49,12 @@ Global options (defaults):
     python -m scripts.eval --model ml_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --model_path data/models/ml_dmd_degenerate_node.pt
     python -m scripts.eval --model ml_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --model_path data/models/ml_dmd_inward_spiral.pt
     python -m scripts.eval --model ml_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --model_path data/models/ml_dmd_harmonic_oscillator.pt
+
+# ML Eigen DMD
+    python -m scripts.eval --model ml_eigen_dmd --data_path data/trajectories/saddle_point_trajectory.npz --model_path data/models/ml_eigen_dmd_saddle_point.pt
+    python -m scripts.eval --model ml_eigen_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --model_path data/models/ml_eigen_dmd_degenerate_node.pt
+    python -m scripts.eval --model ml_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --model_path data/models/ml_eigen_dmd_inward_spiral.pt
+    python -m scripts.eval --model ml_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --model_path data/models/ml_eigen_dmd_harmonic_oscillator.pt
 
 ---------------------------------------------------------------------------------------------
 
@@ -166,6 +170,12 @@ def main():
         model = ML_DMD(state_dim=ckpt["state_dim"]).to(device)
         model.load_state_dict(ckpt["model_state_dict"])
         model.eval()
+    
+    elif args.model == "ml_eigen_dmd":
+        ckpt = torch.load(args.model_path, map_location=device)
+        model = MLEigenDMD(state_dim=ckpt["state_dim"],).to(device)
+        model.load_state_dict(ckpt["model_state_dict"])
+        model.eval()
 
     elif args.model == "manual_expansion_ml_dmd":
         ckpt = torch.load(args.model_path, map_location=device)
@@ -173,9 +183,9 @@ def main():
         model.load_state_dict(ckpt["model_state_dict"])
         model.eval()
 
-    elif args.model == "ml_eigen_dmd":
+    elif args.model == "manual_expansion_eigen_dmd":
         ckpt = torch.load(args.model_path, map_location=device)
-        model = MLEigenDMD(state_dim=ckpt["state_dim"],).to(device)
+        model = ManualExpansion_EigenDMD(state_dim=ckpt["state_dim"],).to(device)
         model.load_state_dict(ckpt["model_state_dict"])
         model.eval()
 
@@ -204,23 +214,8 @@ def main():
         elif args.model == "manual_expansion_manual_dmd":
             X_hat = model.rollout(K=K, C=C, x0=x0, steps=steps).cpu().numpy()
 
-        elif args.model == "manual_expansion_eigen_dmd":
-            X_hat = model.rollout(x0=x0, steps=steps).cpu().numpy()
-        
-        elif args.model == "manual_expansion_ml_dmd":
-            X_hat = model.rollout(x0=x0, steps=steps).cpu().numpy()
-
-        elif "eigen" in args.model:
-            X_hat = model.rollout(x0=x0, n_steps=steps).cpu().numpy()
-
         else:
-            x0_torch = torch.tensor(x0, dtype=torch.float64)
-            X_hat = rollout_ae_model(
-                model,
-                x0=x0_torch,
-                steps=steps,
-                device=device,
-            ).cpu().numpy()
+            X_hat = model.rollout(x0=x0, steps=steps).detach().cpu().numpy()
 
         mse = np.mean((X_hat - X_true) ** 2)
         mse_list.append(mse)
@@ -257,109 +252,97 @@ def main():
 
     elif args.model == "manual_expansion_manual_dmd":
         X_hat = model.rollout(K=K, C=C, x0=x0, steps=steps).cpu().numpy()
-    elif args.model == "ml_eigen_dmd":
-        X_hat = model.rollout(x0=x0, n_steps=steps).cpu().numpy()
+
     else:
-        x0_torch = torch.tensor(x0, dtype=torch.float64)
-        X_hat = rollout_ae_model(
-            model,
-            x0=x0_torch,
-            steps=steps,
-            device=device,
-        ).cpu().numpy()
-    
-    system = os.path.basename(args.data_path).replace("_trajectory.npz", "")
+        X_hat = model.rollout(x0=x0, steps=steps).detach().cpu().numpy()
+
     figdir = f"data/figures/{args.model}/{system}/{args.name if args.name else 'default'}"
     os.makedirs(figdir, exist_ok=True)
 
-    # Plot x1 over time and x2 over time for X_hat
-    plt.figure(figsize=(12, 5))
-    plt.subplot(1, 2, 1)
-    plt.plot(X_true[:, 0], label=f"True x1 ({system})")
-    plt.plot(X_hat[:, 0], "--", label=f"{args.model}_{system} x1")
-    plt.xlabel("Time step")
-    plt.ylabel("x1")
-    plt.title(f"x1 over time ({args.model}_{system})")
-    plt.legend()
-    plt.subplot(1, 2, 2)
-    plt.plot(X_true[:, 1], label=f"True x2 ({system})")
-    plt.plot(X_hat[:, 1], "--", label=f"{args.model}_{system} x2")
-    plt.xlabel("Time step")
-    plt.ylabel("x2")
-    plt.title(f"x2 over time ({args.model}_{system})")
-    plt.legend()
+    state_dim = X_true.shape[1]
+
+    # --------------------------------------------------
+    # Time series plot
+    # --------------------------------------------------
+
+    plt.figure(figsize=(6 * state_dim, 4))
+
+    for i in range(state_dim):
+        plt.subplot(1, state_dim, i + 1)
+        plt.plot(X_true[:, i], label=f"True x{i+1}")
+        plt.plot(X_hat[:, i], "--", label=f"Pred x{i+1}")
+        plt.xlabel("Time step")
+        plt.ylabel(f"x{i+1}")
+        plt.title(f"x{i+1} over time")
+        plt.legend()
+
     plt.tight_layout()
     plt.savefig(f"{figdir}/time_series_idx{args.traj_index}.png")
     plt.show()
+    plt.close()
 
-    # Plot phase space (x1 vs x2)
-    # If it is a Lorenz trajectory, plot x1 and x3 instead (since x2 is just noise around 0)
-    if system == "lorenz":
-        plt.figure(figsize=(6, 6))
-        plt.plot(X_true[:, 0], X_true[:, 2], label=f"True ({system})")
-        plt.plot(X_hat[:, 0], X_hat[:, 2], "--", label=f"{args.model}_{system}")
-        plt.xlabel("x1")
-        plt.ylabel("x3")
-        plt.title(f"Phase space rollout ({args.model}_{system})")
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(f"{figdir}/rollout_idx{args.traj_index}.png")
-        plt.show()
-        plt.close()
-    
+    # --------------------------------------------------
+    # Phase space plot
+    # --------------------------------------------------
+
+    if system == "lorenz" and state_dim >= 3:
+        i, j = 0, 2
     else:
+        i, j = 0, 1
+
+    plt.figure(figsize=(6, 6))
+    plt.plot(X_true[:, i], X_true[:, j], label="True")
+    plt.plot(X_hat[:, i], X_hat[:, j], "--", label="Prediction")
+    plt.xlabel(f"x{i+1}")
+    plt.ylabel(f"x{j+1}")
+    plt.title(f"Phase space rollout ({args.model}_{system})")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(f"{figdir}/rollout_idx{args.traj_index}.png")
+    plt.show()
+    plt.close()
+
+    # --------------------------------------------------
+    # Eigenvalue spectrum (all linear models)
+    # --------------------------------------------------
+
+    eigvals = None
+
+    if args.model == "linear_baseline":
+        eigvals = np.linalg.eigvals(M)
+
+    elif args.model == "dmd_baseline":
+        eigvals = Lambda
+
+    elif args.model == "manual_expansion_manual_dmd":
+        eigvals = np.linalg.eigvals(K)
+
+    elif hasattr(model, "K"):
+        A = model.K.weight.detach().cpu().numpy()
+        eigvals = np.linalg.eigvals(A)
+
+    elif hasattr(model, "Lambda") and hasattr(model, "Phi") and hasattr(model, "Phi_inv"):
+        Phi_np = model.Phi.detach().cpu().numpy()
+        Phi_inv_np = model.Phi_inv.detach().cpu().numpy()
+        Lambda_np = model.Lambda.detach().cpu().numpy()
+        A = Phi_np @ Lambda_np @ Phi_inv_np
+        eigvals = np.linalg.eigvals(A)
+
+    if eigvals is not None:
         plt.figure(figsize=(6, 6))
-        plt.plot(X_true[:, 0], X_true[:, 1], label=f"True ({system})")
-        plt.plot(X_hat[:, 0], X_hat[:, 1], "--", label=f"{args.model}_{system}")
-        plt.xlabel("x1")
-        plt.ylabel("x2")
-        plt.title(f"Phase space rollout ({args.model}_{system})")
-        plt.legend()
+        plt.scatter(eigvals.real, eigvals.imag)
+
+        circle = plt.Circle((0, 0), 1, color="gray", fill=False)
+        plt.gca().add_artist(circle)
+
+        plt.xlabel("Real")
+        plt.ylabel("Imag")
+        plt.title(f"Eigenvalues ({args.model})")
+        plt.xlim(-1.1, 1.1)
+        plt.ylim(-1.1, 1.1)
         plt.tight_layout()
-        plt.savefig(f"{figdir}/rollout_idx{args.traj_index}.png")
-        plt.show()
+        plt.savefig(f"{figdir}/eigenvalues.png")
         plt.close()
-    
-    
-
-    # DMD mode
-    if args.model == "dmd_baseline":
-        
-        dt = data["dt"]
-        plot_dmd_eigenvalues(
-            Lambda,
-            savepath=f"{figdir}/eigs_complex.png",
-            title=f"DMD Eigenvalues ({args.name if args.name else system})",
-        )
-
-        plot_mode_amplitudes(
-            Lambda,
-            Phi,
-            x0,
-            savepath=f"{figdir}/mode_amplitudes.png",
-        )
-
-        if Phi.shape[0] == 2:
-            plot_dmd_modes_2d(
-                Phi,
-                Lambda,
-                savepath=f"{figdir}/modes_geometry.png",
-            )
-
-        plot_continuous_spectrum(
-            Lambda,
-            dt,
-            savepath=f"{figdir}/continuous_spectrum.png",
-        )
-
-        plot_conjugate_mode_reconstruction(
-            Lambda,
-            Phi,
-            x0,
-            steps,
-            X_true,
-            savepath=f"{figdir}/dominant_mode_reconstruction.png",
-        )
 
 if __name__ == "__main__":
     main()

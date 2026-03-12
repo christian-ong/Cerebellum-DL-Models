@@ -78,7 +78,7 @@ class ManualExpansion_EigenDMD(nn.Module):
 
         for exps in self.expanded_basis:
 
-            term = torch.ones(x.shape[0], device=x.device)
+            term = torch.ones(x.shape[0], device=x.device, dtype=x.dtype)
 
             for dim, power in enumerate(exps):
 
@@ -119,7 +119,7 @@ class ManualExpansion_EigenDMD(nn.Module):
 
         x_next = self.de_expand(x_big_next)
 
-        return x_next, x_big, x_big_next
+        return x_next
 
     # ------------------------------------------------
     # Loss
@@ -127,7 +127,7 @@ class ManualExpansion_EigenDMD(nn.Module):
 
     def compute_loss(self, x, x_next_true):
 
-        x_next, _, _ = self.forward(x)
+        x_next = self.forward(x)
 
         # prediction loss
         actual_loss = nn.MSELoss()(x_next, x_next_true)
@@ -148,30 +148,31 @@ class ManualExpansion_EigenDMD(nn.Module):
 
         return (loss_predict, loss_eigvec, loss_phi_inv, loss_unit_length)
     
+    # ------------------------------------------------
+    # Rollout
+    # ------------------------------------------------
+    
     def rollout(self, x0, steps):
         """
-        Roll out model dynamics from initial condition.
+        Rollout trajectory from initial state x0.
         """
 
-        if isinstance(x0, torch.Tensor) is False:
-            x0 = torch.tensor(x0, dtype=torch.float32)
+        if not torch.is_tensor(x0):
+            x0 = torch.tensor(
+                x0,
+                dtype=next(self.parameters()).dtype,
+                device=next(self.parameters()).device
+            )
 
         if x0.ndim == 1:
-            x0 = x0.unsqueeze(0)
+            x = x0.unsqueeze(0)
+        else:
+            x = x0
 
-        psi = self.expand(x0)
-
-        x_current = self.de_expand(psi)
-        trajectory = [x_current[0]]
+        traj = [x.squeeze(0)]
 
         for _ in range(steps):
+            x = self.forward(x)
+            traj.append(x.squeeze(0))
 
-            b = psi @ self.Phi_inv.mT
-            b_next = b @ self.Lambda.mT
-            psi = b_next @ self.Phi.mT
-
-            x_next = self.de_expand(psi)
-
-            trajectory.append(x_next[0])
-
-        return torch.stack(trajectory)
+        return torch.stack(traj)

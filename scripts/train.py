@@ -57,10 +57,10 @@ Global options (defaults):
     python -m scripts.train --model ml_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --epochs 10
 
 # ML Eigen DMD
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/saddle_point_trajectory.npz --epochs 10
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --epochs 10
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --epochs 10
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --epochs 10
+    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/saddle_point_trajectory.npz --epochs 2
+    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --epochs 2
+    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --epochs 2
+    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --epochs 2
 
 ---------------------------------------------------------------------------------------------
 
