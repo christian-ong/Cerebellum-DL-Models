@@ -149,20 +149,48 @@ def main():
         model = None
 
     elif args.model == "manual_expansion_manual_dmd":
-        model_data = np.load(args.model_path)
+        model_data = np.load(args.model_path, allow_pickle=True)
         K = model_data["K"]
+
         if "C" not in model_data:
             raise ValueError(
                 "Checkpoint is missing decoder matrix C. "
                 "Please retrain manual_expansion_manual_dmd with the updated EDMD-style implementation."
             )
         C = model_data["C"]
+
         degree = int(model_data["expansion_degree"]) if "expansion_degree" in model_data else 3
-        include_bias = bool(np.asarray(model_data["include_bias"]).item()) if "include_bias" in model_data else True
+
+        # Backward compatibility: old checkpoints used include_bias,
+        # newer ones use constant_expansion
+        if "constant_expansion" in model_data:
+            constant_expansion = bool(np.asarray(model_data["constant_expansion"]).item())
+        elif "include_bias" in model_data:
+            constant_expansion = bool(np.asarray(model_data["include_bias"]).item())
+        else:
+            constant_expansion = True
+
+        if "sine_cosine_expansion" in model_data:
+            sine_cosine_expansion = bool(np.asarray(model_data["sine_cosine_expansion"]).item())
+        else:
+            sine_cosine_expansion = False
+
+        expansion_type = str(model_data["expansion_type"]) if "expansion_type" in model_data else "general"
+
+        if "system_basis" in model_data:
+            system_basis = str(model_data["system_basis"])
+            if system_basis == "":
+                system_basis = None
+        else:
+            system_basis = system if expansion_type == "specific" else None
+
         model = ManualExpansion_ManualDMD(
             state_dim=state_dim,
             expansion_degree=degree,
-            include_bias=include_bias,
+            constant_expansion=constant_expansion,
+            sine_cosine_expansion=sine_cosine_expansion,
+            expansion_type=expansion_type,
+            system=system_basis,
         ).to(device)
         model.eval()
 

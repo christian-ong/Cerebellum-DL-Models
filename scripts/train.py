@@ -171,6 +171,7 @@ def main():
     parser.add_argument("--manual_regression_method", type=str, default="svd")
     parser.add_argument("--expansion_type", type=str, default="general", choices=["general", "specific"], help="Whether to use general polynomial expansion (all combinations up to degree) or specific expansion (e.g. only x^2, y^2, xy) for the manual expansion models")
     parser.add_argument("--expansion_degree", type=int, default=3)
+    parser.add_argument("--sine_cosine_expansion", type=str.lower,choices=["true", "false"], default="false",help="Include sin(x_i) and cos(x_i) terms in the manual expansion basis")
 
     # --------------------------------------------------
     # Misc
@@ -287,7 +288,10 @@ def main():
                 expansion_degree=args.expansion_degree,
                 rank=args.rank,
                 ridge=args.ridge,
-                include_bias=args.bias == "true",
+                constant_expansion=args.bias == "true",
+                sine_cosine_expansion=args.sine_cosine_expansion == "true",
+                expansion_type=args.expansion_type,
+                system=system_name if args.expansion_type == "specific" else None,
                 decoder_mode=args.manual_decoder,
             ).to(device)
             K, C = model.fit(X, Y, method=args.manual_regression_method)
@@ -307,7 +311,10 @@ def main():
                 C=C.detach().cpu().numpy(),
                 state_dim=state_dim,
                 expansion_degree=args.expansion_degree,
-                include_bias=args.bias == "true",
+                constant_expansion=args.bias == "true",
+                sine_cosine_expansion=args.sine_cosine_expansion == "true",
+                expansion_type=args.expansion_type,
+                system_basis=system_name if args.expansion_type == "specific" else "",
                 decoder_mode=args.manual_decoder,
                 regression_method=args.manual_regression_method,
                 rank=args.rank,
