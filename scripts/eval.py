@@ -12,6 +12,11 @@ from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
 from src.models.manual_expansion_manual_dmd import ManualExpansion_ManualDMD
 from src.models.manual_expansion_eigen_dmd import ManualExpansion_EigenDMD
 
+from src.eval.rollout_eval import evaluate_validation_rollouts, compute_single_rollout
+from src.eval.plot_rollout import plot_time_series, plot_phase_space
+from src.eval.plot_eigenvalues import plot_eigenvalues
+from src.eval.plot_training_losses import plot_training_losses
+from src.eval.plot_matrices import plot_transition_matrix
 
 """
 Global options (defaults):
@@ -250,32 +255,20 @@ def main():
     # Evaluate on ALL validation trajectories
     # --------------------------------------------------
 
-    mse_list = []
-
-    for traj_id in val_idx:
-        X_true = X[:, traj_id, :]
-        steps = min(args.steps, X_true.shape[0] - 1)
-        X_true = X_true[: steps + 1]
-
-        x0 = X_true[0]
-
-        if args.model == "linear_baseline":
-            X_hat = rollout_linear_map(M, x0=x0, steps=steps)
-
-        elif args.model == "dmd_baseline":
-            X_hat = rollout_dmd_eig(Lambda, Phi, x0=x0, steps=steps)
-
-        elif args.model == "manual_expansion_manual_dmd":
-            X_hat = model.rollout(K=K, C=C, x0=x0, steps=steps).cpu().numpy()
-
-        else:
-            X_hat = model.rollout(x0=x0, steps=steps).detach().cpu().numpy()
-
-        mse = np.mean((X_hat - X_true) ** 2)
-        mse_list.append(mse)
-
-    mse_mean = np.mean(mse_list)
-    mse_std = np.std(mse_list)
+    mse_mean, mse_std = evaluate_validation_rollouts(
+        X=X,
+        val_idx=val_idx,
+        model_name=args.model,
+        model=model,
+        steps=args.steps,
+        rollout_linear_map=rollout_linear_map,
+        rollout_dmd_eig=rollout_dmd_eig,
+        M=locals().get("M"),
+        Lambda=locals().get("Lambda"),
+        Phi=locals().get("Phi"),
+        K=locals().get("K"),
+        C=locals().get("C"),
+    )
 
     print(
         f"Validation rollout MSE over {len(val_idx)} trajectories: "
@@ -292,72 +285,46 @@ def main():
         )
 
     traj_id = val_idx[args.traj_index]
-    X_true = X[:, traj_id, :]
-    steps = min(args.steps, X_true.shape[0] - 1)
-    X_true = X_true[: steps + 1]
 
-    x0 = X_true[0]
+    X_true, X_hat = compute_single_rollout(
+        X=X,
+        traj_id=traj_id,
+        steps=args.steps,
+        model_name=args.model,
+        model=model,
+        rollout_linear_map=rollout_linear_map,
+        rollout_dmd_eig=rollout_dmd_eig,
+        M=locals().get("M"),
+        Lambda=locals().get("Lambda"),
+        Phi=locals().get("Phi"),
+        K=locals().get("K"),
+        C=locals().get("C"),
+    )
 
-    if args.model == "linear_baseline":
-        X_hat = rollout_linear_map(M, x0=x0, steps=steps)
-
-    elif args.model == "dmd_baseline":
-        X_hat = rollout_dmd_eig(Lambda, Phi, x0=x0, steps=steps)
-
-    elif args.model == "manual_expansion_manual_dmd":
-        X_hat = model.rollout(K=K, C=C, x0=x0, steps=steps).cpu().numpy()
-
-    else:
-        X_hat = model.rollout(x0=x0, steps=steps).detach().cpu().numpy()
+    # --------------------------------------------------
+    # Figure directory
+    # --------------------------------------------------
 
     figdir = f"data/figures/{args.model}/{system}/{args.name if args.name else 'default'}"
     os.makedirs(figdir, exist_ok=True)
 
-    state_dim = X_true.shape[1]
-
     # --------------------------------------------------
-    # Time series plot
+    # Plots
     # --------------------------------------------------
 
-    plt.figure(figsize=(6 * state_dim, 4))
+    plot_time_series(X_true, X_hat, figdir, args.traj_index)
 
-    for i in range(state_dim):
-        plt.subplot(1, state_dim, i + 1)
-        plt.plot(X_true[:, i], label=f"True x{i+1}")
-        plt.plot(X_hat[:, i], "--", label=f"Pred x{i+1}")
-        plt.xlabel("Time step")
-        plt.ylabel(f"x{i+1}")
-        plt.title(f"x{i+1} over time")
-        plt.legend()
-
-    plt.tight_layout()
-    plt.savefig(f"{figdir}/time_series_idx{args.traj_index}.png")
-    plt.show()
-    plt.close()
+    plot_phase_space(
+        X_true,
+        X_hat,
+        system,
+        figdir,
+        args.model,
+        args.traj_index,
+    )
 
     # --------------------------------------------------
-    # Phase space plot
-    # --------------------------------------------------
-
-    if system == "lorenz" and state_dim >= 3:
-        i, j = 0, 2
-    else:
-        i, j = 0, 1
-
-    plt.figure(figsize=(6, 6))
-    plt.plot(X_true[:, i], X_true[:, j], label="True")
-    plt.plot(X_hat[:, i], X_hat[:, j], "--", label="Prediction")
-    plt.xlabel(f"x{i+1}")
-    plt.ylabel(f"x{j+1}")
-    plt.title(f"Phase space rollout ({args.model}_{system})")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(f"{figdir}/rollout_idx{args.traj_index}.png")
-    plt.show()
-    plt.close()
-
-    # --------------------------------------------------
-    # Eigenvalue spectrum (all linear models)
+    # Eigenvalue spectrum
     # --------------------------------------------------
 
     eigvals = None
@@ -371,33 +338,42 @@ def main():
     elif args.model == "manual_expansion_manual_dmd":
         eigvals = np.linalg.eigvals(K)
 
-    elif hasattr(model, "K"):
+    elif model is not None and hasattr(model, "K"):
         A = model.K.weight.detach().cpu().numpy()
         eigvals = np.linalg.eigvals(A)
 
-    elif hasattr(model, "Lambda") and hasattr(model, "Phi") and hasattr(model, "Phi_inv"):
-        # Phi_np = model.Phi.detach().cpu().numpy()
-        # Phi_inv_np = model.Phi_inv.detach().cpu().numpy()
-        # Lambda_np = model.Lambda.detach().cpu().numpy()
-        # A = Phi_np @ Lambda_np @ Phi_inv_np
-        # eigvals = np.linalg.eigvals(A)
+    elif model is not None and hasattr(model, "Lambda"):
         eigvals = np.diag(model.Lambda.detach().cpu().numpy())
 
-    if eigvals is not None:
-        plt.figure(figsize=(6, 6))
-        plt.scatter(eigvals.real, eigvals.imag)
+    plot_eigenvalues(eigvals, figdir)
 
-        circle = plt.Circle((0, 0), 1, color="gray", fill=False)
-        plt.gca().add_artist(circle)
+    # --------------------------------------------------
+    # Training loss plots
+    # --------------------------------------------------
 
-        plt.xlabel("Real")
-        plt.ylabel("Imag")
-        plt.title(f"Eigenvalues ({args.model})")
-        plt.xlim(-1.1, 1.1)
-        plt.ylim(-1.1, 1.1)
-        plt.tight_layout()
-        plt.savefig(f"{figdir}/eigenvalues.png")
-        plt.close()
+    loss_file = args.model_path.replace(".pt", "_losses.npz")
+
+    if os.path.exists(loss_file):
+        plot_training_losses(loss_file, figdir)
+    else:
+        print(f"No loss file found at {loss_file}, skipping loss plots.")
+
+    # --------------------------------------------------
+    # Transition matrix visualization
+    # --------------------------------------------------
+
+    model_name = os.path.basename(args.model_path).replace(".pt","")
+
+    expand_names = None
+    if "expand_names" in ckpt:
+        expand_names = ckpt["expand_names"]
+
+    plot_transition_matrix(
+        model=model,
+        model_name=model_name,
+        figdir=figdir,
+        expand_names=expand_names,
+    )
 
 if __name__ == "__main__":
     main()
