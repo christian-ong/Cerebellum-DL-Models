@@ -69,12 +69,26 @@ LORENZ_BASIS = [
     "x^2",
 ]
 
+KOOPMAN_POLY_TRIG_BASIS = [
+    "1",
+    "x",
+    "x^2",
+    "y",
+    "sin(x)",
+    "cos(x)",
+    "sin(2*x)",
+    "cos(2*x)",
+    "sin(3*x)",
+    "cos(3*x)",
+]
+
 SPECIFIC_BASES = {
     "vanderpol": VANDERPOL_BASIS,
     "lotka_volterra": LOTKA_BASIS,
     "pendulum": PENDULUM_BASIS,
     "duffing": DUFFING_BASIS,
     "lorenz": LORENZ_BASIS,
+    "koopman_poly_trig": KOOPMAN_POLY_TRIG_BASIS,
 }
 
 
@@ -161,6 +175,7 @@ class ManualExpansion(nn.Module):
     def _compile_basis(self, expr):
         """
         Turn strings like 'x^2*y' or 'sin(x)' into callable functions.
+        Supports constants like '1' by broadcasting them to batch shape.
         """
         expr_py = expr.replace("^", "**")
 
@@ -171,10 +186,16 @@ class ManualExpansion(nn.Module):
 
         def basis_fn(var_dict):
             local_dict = {**allowed_names, **var_dict}
-            return eval(expr_py, {"__builtins__": {}}, local_dict)
+            out = eval(expr_py, {"__builtins__": {}}, local_dict)
 
+            # Broadcast scalar constants like "1" to shape (batch,)
+            if not torch.is_tensor(out):
+                ref = next(iter(var_dict.values()))
+                out = torch.full_like(ref, float(out))
+
+            return out
         return basis_fn
-
+    
     def expand(self, x):
         expanded_features = []
 
