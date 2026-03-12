@@ -64,6 +64,14 @@ Global options (defaults):
     python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_inward_spiral.npz
     python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_harmonic_oscillator.npz
 
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/vanderpol_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_vanderpol.npz
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/lotka_volterra_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_lotka_volterra.npz
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/pendulum_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_pendulum.npz
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/duffing_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_duffing.npz
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/lorenz_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_lorenz.npz
+
+
+
 # Manual expansion + ML DMD
     python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/saddle_point_trajectory.npz --model_path data/models/manual_expansion_ml_dmd_saddle_point.pt
     python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_ml_dmd_degenerate_node.pt
