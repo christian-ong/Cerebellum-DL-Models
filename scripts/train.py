@@ -194,7 +194,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Using device:", device)
 
-    suffix = f"_{args.name}" if args.name else ""
+    # suffix = f"_{args.name}" if args.name else ""
 
     # --------------------------------------------------
     # Load dataset metadata
@@ -202,6 +202,9 @@ def main():
     meta = np.load(args.data_path)
     system_name = str(meta["system"])
     state_dim = meta["X"].shape[-1]
+    run_name = args.name if args.name else "default"
+    save_dir = os.path.join(args.outdir, args.model, system_name, run_name)
+    os.makedirs(save_dir, exist_ok=True)
 
     # --------------------------------------------------
     # Build datasets + loaders
@@ -236,10 +239,7 @@ def main():
         X, Y = dataloader_to_numpy(train_loader)
         M = fit_linear_map(X, Y)
 
-        save_path = os.path.join(
-            args.outdir,
-            f"linear_baseline_{system_name}{suffix}.npz",
-        )
+        save_path = os.path.join(save_dir, "model.npz")
 
         np.savez(
             save_path,
@@ -268,10 +268,7 @@ def main():
                 ridge=args.ridge,
             )
 
-            save_path = os.path.join(
-                args.outdir,
-                f"dmd_baseline_{system_name}{suffix}.npz",
-            )
+            save_path = os.path.join(save_dir, "model.npz")
 
             np.savez(
                 save_path,
@@ -306,10 +303,7 @@ def main():
             print("C shape:", C.shape, C)
             print("Model expand names:", model.expand_names)
 
-            save_path = os.path.join(
-                args.outdir,
-                f"manual_expansion_manual_dmd_{system_name}{suffix}.npz",
-            )
+            save_path = os.path.join(save_dir, "model.npz")
 
             np.savez(
                 save_path,
@@ -391,10 +385,7 @@ def main():
     # --------------------------------------------------
     # Save model
     # --------------------------------------------------
-    save_path = os.path.join(
-        args.outdir,
-        f"{args.model}_{system_name}{suffix}.pt",
-    )
+    save_path = os.path.join(save_dir, "model.pt")
 
     torch.save(
         {
@@ -413,7 +404,7 @@ def main():
     )
 
     # Save training losses
-    loss_path = save_path.replace(".pt", "_losses.npz")
+    loss_path = os.path.join(save_dir, "losses.npz")
     np.savez(
         loss_path, 
         train_losses=train_losses, 

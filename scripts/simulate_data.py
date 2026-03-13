@@ -495,7 +495,13 @@ SYSTEMS = {
     "koopman_poly_large": build_koopman_poly_large,
     "koopman_poly_trig": build_koopman_poly_trig
 }
-
+LINEAR_SYSTEMS = {
+    "linear",
+    "inward_spiral",
+    "harmonic_oscillator",
+    "saddle_point",
+    "degenerate_node",
+}
 # --------------------------------------------------
 # Main
 # --------------------------------------------------
@@ -708,7 +714,19 @@ def main():
         filename = f"{base}_{args.name}.npz"
     else:
         filename = f"{base}.npz"
-    outpath = os.path.join(args.outdir, filename)
+
+    if args.system in LINEAR_SYSTEMS:
+        subfolder = "linear"
+    elif args.system in SYSTEMS and args.system not in LINEAR_SYSTEMS:
+        subfolder = "nonlinear"
+    else:
+        raise ValueError(f"System '{args.system}' is not assigned to a save category.")
+
+    save_dir = os.path.join(args.outdir, subfolder)
+    os.makedirs(save_dir, exist_ok=True)
+
+    outpath = os.path.join(save_dir, filename)
+
     np.savez(
         outpath,
         t=t,
