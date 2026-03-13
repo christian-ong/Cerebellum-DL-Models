@@ -88,11 +88,11 @@ Global options (defaults):
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --epochs 10
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --epochs 10
 
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/vanderpol_trajectory.npz --epochs 10 --expansion_type specific
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/lotka_volterra_trajectory.npz --epochs 10 --expansion_type specific
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/pendulum_trajectory.npz --epochs 10 --expansion_type specific
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/duffing_trajectory.npz --epochs 10 --expansion_type specific
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/lorenz_trajectory.npz --epochs 10 --expansion_type specific
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/vanderpol_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 7 --name deg7
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/lotka_volterra_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 7 --name deg7
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/pendulum_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 7 --name deg7
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/duffing_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 7 --name deg7
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/lorenz_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 7 --name deg7
 
 ---------------------------------------------------------------------------------------------
 

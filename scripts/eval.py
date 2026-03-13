@@ -88,8 +88,12 @@ Global options (defaults):
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_degenerate_node.pt
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_inward_spiral.pt
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_harmonic_oscillator.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/vanderpol_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_vanderpol.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/lotka_volterra_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_lotka_volterra.pt
+    
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/vanderpol_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_vanderpol_deg7.pt --name deg7
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/lotka_volterra_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_lotka_volterra_deg7.pt --name deg7
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/pendulum_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_pendulum_deg7.pt --name deg7
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/duffing_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_duffing_deg7.pt --name deg7
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/lorenz_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd_lorenz_deg7.pt --name deg7
 
 ---------------------------------------------------------------------------------------------
 
