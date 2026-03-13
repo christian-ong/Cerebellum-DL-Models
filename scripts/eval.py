@@ -74,8 +74,9 @@ Global options (defaults):
     python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/pendulum_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_pendulum.npz
     python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/duffing_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_duffing.npz
     python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/lorenz_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_lorenz.npz
-
-
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/koopman_poly_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_koopman_poly.npz    
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/koopman_poly_large_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_koopman_poly_large.npz
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/koopman_poly_trig_trajectory.npz --model_path data/models/manual_expansion_manual_dmd_koopman_poly_trig.npz
 
 # Manual expansion + ML DMD
     python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/saddle_point_trajectory.npz --model_path data/models/manual_expansion_ml_dmd_saddle_point.pt
@@ -361,20 +362,39 @@ def main():
     # --------------------------------------------------
     # Transition matrix visualization
     # --------------------------------------------------
-
-    model_name = os.path.basename(args.model_path).replace(".pt","")
+    model_name = os.path.basename(args.model_path).replace(".pt", "").replace(".npz", "")
 
     expand_names = None
-    if ".pt" in args.model_path:
+    matrix_to_plot = None
+
+    if args.model == "manual_expansion_manual_dmd":
+        matrix_to_plot = K
+        expand_names = model.expand_names if hasattr(model, "expand_names") else None
+
+    elif ".pt" in args.model_path and "ckpt" in locals():
         if "expand_names" in ckpt:
             expand_names = ckpt["expand_names"]
 
     plot_transition_matrix(
-        model=model,
+        model=None if matrix_to_plot is not None else model,
+        matrix=matrix_to_plot,
         model_name=model_name,
         figdir=figdir,
         expand_names=expand_names,
     )
+    # model_name = os.path.basename(args.model_path).replace(".pt","")
+
+    # expand_names = None
+    # if ".pt" in args.model_path:
+    #     if "expand_names" in ckpt:
+    #         expand_names = ckpt["expand_names"]
+
+    # plot_transition_matrix(
+    #     model=model,
+    #     model_name=model_name,
+    #     figdir=figdir,
+    #     expand_names=expand_names,
+    # )
 
 if __name__ == "__main__":
     main()

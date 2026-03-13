@@ -75,6 +75,9 @@ Global options (defaults):
     python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/pendulum_trajectory.npz --expansion_type specific --expansion_degree 10
     python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/duffing_trajectory.npz --expansion_type specific --expansion_degree 10
     python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/lorenz_trajectory.npz --expansion_type specific --expansion_degree 10
+    python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/koopman_poly_trajectory.npz --expansion_degree 2
+    python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/koopman_poly_large_trajectory.npz --expansion_degree 4
+    python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/koopman_poly_trig_trajectory.npz --expansion_type specific --expansion_degree 10
 
 # Manual expansion + ML DMD
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/saddle_point_trajectory.npz --epochs 10
