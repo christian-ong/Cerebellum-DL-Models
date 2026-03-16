@@ -242,8 +242,10 @@ def main():
         model = ManualExpansion_EigenDMD(
             state_dim=ckpt["state_dim"],
             expansion_degree=train_args["expansion_degree"],
+            bias=train_args["bias"] == "true",
+            sine_cosine_expansion=train_args["sine_cosine_expansion"] == "true",
             expansion_type=train_args["expansion_type"],
-            system=ckpt["system"],
+            system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
         ).to(device)
 
         model.load_state_dict(ckpt["model_state_dict"])
@@ -306,9 +308,17 @@ def main():
     # Figure directory
     # --------------------------------------------------
 
-    figdir = f"data/figures/{args.model}/{system}/{args.name if args.name else 'default'}"
+    if args.name is not None:
+        run_name = args.name
+    else:
+        # Infer run name from model path, e.g.
+        # data/models/manual_expansion_eigen_dmd/lorenz/deg7/model.pt -> deg7
+        run_name = os.path.basename(os.path.dirname(args.model_path))
+
+    figdir = os.path.join("data", "figures", args.model, system, run_name)
     os.makedirs(figdir, exist_ok=True)
 
+    print(f"Saving figures to: {figdir}")
     # --------------------------------------------------
     # Plots
     # --------------------------------------------------
@@ -344,9 +354,11 @@ def main():
         eigvals = np.linalg.eigvals(A)
 
     elif model is not None and hasattr(model, "Lambda"):
-        eigvals = np.diag(model.Lambda.detach().cpu().numpy())
+        Lambda = model.Lambda.detach().cpu().numpy()
+        eigvals = np.linalg.eigvals(Lambda)
 
-    plot_eigenvalues(eigvals, figdir)
+    if eigvals is not None:
+        plot_eigenvalues(eigvals, figdir)
 
     # --------------------------------------------------
     # Training loss plots
@@ -382,19 +394,44 @@ def main():
         figdir=figdir,
         expand_names=expand_names,
     )
-    # model_name = os.path.basename(args.model_path).replace(".pt","")
 
-    # expand_names = None
-    # if ".pt" in args.model_path:
-    #     if "expand_names" in ckpt:
-    #         expand_names = ckpt["expand_names"]
+    # --------------------------------------------------
+    # Compare learned state block with true A_d
+    # --------------------------------------------------
 
-    # plot_transition_matrix(
-    #     model=model,
-    #     model_name=model_name,
-    #     figdir=figdir,
-    #     expand_names=expand_names,
-    # )
+    if model is not None and hasattr(model, "Phi") and hasattr(model, "Lambda"):
+
+        print("\n--- Learned lifted operator ---")
+
+        Phi = model.Phi.detach().cpu().numpy()
+        Lambda = model.Lambda.detach().cpu().numpy()
+
+        try:
+            Phi_inv = np.linalg.inv(Phi)
+        except np.linalg.LinAlgError:
+            Phi_inv = np.linalg.pinv(Phi)
+
+        K = Phi @ Lambda @ Phi_inv
+
+        print("Full lifted transition matrix shape:", K.shape)
+
+        # extract state indices (x,y or x,y,z)
+        state_dim = model.state_dim
+        state_idx = list(range(state_dim))
+
+        K_xx = K[np.ix_(state_idx, state_idx)]
+
+        print("\nState-space block K_xx:")
+        print(K_xx)
+
+        # If linear system, also print true A_d if available
+        if args.model in ["manual_expansion_eigen_dmd"] and system in [
+            "saddle_point",
+            "degenerate_node",
+            "inward_spiral",
+            "harmonic_oscillator",
+        ]:
+            print("\nCompare this with true A_d from Overleaf.")
 
 if __name__ == "__main__":
     main()
