@@ -306,9 +306,17 @@ def main():
     # Figure directory
     # --------------------------------------------------
 
-    figdir = f"data/figures/{args.model}/{system}/{args.name if args.name else 'default'}"
+    if args.name is not None:
+        run_name = args.name
+    else:
+        # Infer run name from model path, e.g.
+        # data/models/manual_expansion_eigen_dmd/lorenz/deg7/model.pt -> deg7
+        run_name = os.path.basename(os.path.dirname(args.model_path))
+
+    figdir = os.path.join("data", "figures", args.model, system, run_name)
     os.makedirs(figdir, exist_ok=True)
 
+    print(f"Saving figures to: {figdir}")
     # --------------------------------------------------
     # Plots
     # --------------------------------------------------
