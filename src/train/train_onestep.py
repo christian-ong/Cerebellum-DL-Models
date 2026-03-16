@@ -40,7 +40,8 @@ def train_onestep(
     all_train_losses = []
     epoch_val_losses = []
     batch_val_losses = []
-    loss_components_val = {"predict": [], "orthogonal": [], "phi_inv": [], "unit_length": []}
+    loss_components_val = {"predict": [], "orthogonal": [], "phi_inv": [], "unit_length": [], "sparse": []}
+    model_params = {"K": []}
 
     for epoch in range(epochs):
         # -------------------
@@ -60,7 +61,7 @@ def train_onestep(
             # One-step prediction loss
             if hasattr(model, "compute_loss"): # multiple loss components
                 loss = model.compute_loss(x, y)
-                loss_predict, loss_orthogonal, loss_phi_inv, loss_unit_length = loss # can plot/weight these
+                # loss_predict, loss_orthogonal, loss_phi_inv, loss_unit_length, loss_sparse = loss # can plot/weight these
                 loss = sum(loss)
 
             else:
@@ -83,22 +84,27 @@ def train_onestep(
                     x_val = x_val.to(device)
                     y_val = y_val.to(device)
                     if hasattr(model, "compute_loss"): # multiple loss components
-                        val_loss = model.compute_loss(x_val, y_val)
-                        loss_predict, loss_orthogonal, loss_phi_inv, loss_unit_length = val_loss # can plot/weight these
-                        val_loss = sum(val_loss)
+                        val_losses = model.compute_loss(x_val, y_val)
+                        val_loss = sum(val_losses)
                         batch_val_losses.append(val_loss.item())
 
                         # Individual loss components
-                        loss_components_val["predict"].append(loss_predict.item())
-                        loss_components_val["orthogonal"].append(loss_orthogonal.item())
-                        loss_components_val["phi_inv"].append(loss_phi_inv.item())
-                        loss_components_val["unit_length"].append(loss_unit_length.item())
+                        if len(val_losses) == 5:
+                            loss_predict, loss_orthogonal, loss_phi_inv, loss_unit_length, loss_sparse = val_loss # can plot/weight these
+                            loss_components_val["predict"].append(loss_predict.item())
+                            loss_components_val["orthogonal"].append(loss_orthogonal.item())
+                            loss_components_val["phi_inv"].append(loss_phi_inv.item())
+                            loss_components_val["unit_length"].append(loss_unit_length.item())
+                            loss_components_val["sparse"].append(loss_sparse.item())
 
                     else:
                         y_val_hat, _, _ = model(x_val)
                         val_loss = loss_fn(y_val_hat, y_val)
                         batch_val_losses.append(val_loss.item())
                 model.train()
+
+            # plot model weights
+
 
         train_loss /= n_train
         all_train_losses.extend(train_losses)
@@ -152,7 +158,7 @@ def train_onestep(
             )
         
     if hasattr(model, "K"):    
-        K_matrix = model.K.weight.detach().T
+        K_matrix = model.K.detach().T
         print(f"K matrix:\n{K_matrix.cpu().numpy()}")
         eigvals, eigvecs = torch.linalg.eig(K_matrix)
         print(f"Eigenvalues:\n{eigvals.cpu().numpy()}")

@@ -27,38 +27,37 @@ class ManualExpansion_MLDMD(ManualExpansion):
 
         self.latent_dim = self.expanded_dim
 
-        self.K = nn.Linear(
-            in_features=self.latent_dim,
-            out_features=self.latent_dim,
-            bias=False,
-        )
+        # Randomly initialize K matrix
+        K_init = torch.randn(self.latent_dim, self.latent_dim) * 0.01
+        self.K = nn.Parameter(K_init)
 
-    # ------------------------------------------------
-    # Forward
-    # ------------------------------------------------
 
     def forward(self, x):
 
+        # Expand basis
         x_expanded = self.expand(x)
-        x_expanded_next = self.K(x_expanded)
+
+        # Step with linear dynamics in expanded space
+        x_expanded_next = x_expanded @ self.K.mT
+
+        # De-expand to original space
         x_next = self.de_expand(x_expanded_next)
+
         return x_next
 
-    # ------------------------------------------------
-    # Loss
-    # ------------------------------------------------
 
     def compute_loss(self, x, x_next_true):
 
-        x_next = self.forward(x)
-        actual_loss = nn.MSELoss()(x_next, x_next_true)
-        step_length = torch.norm(x_next_true - x)
-        loss_predict = actual_loss / (step_length + 1e-6)
-        return loss_predict
+        # Compute the forward pass
+        x_next_hat = self.forward(x)
 
-    # ------------------------------------------------
-    # Rollout
-    # ------------------------------------------------
+        # Prediction loss
+        loss_predict = nn.MSELoss()(x_next_hat, x_next_true)
+        step_length = torch.norm(x_next_true - x)
+        loss_predict_normalized = loss_predict / (step_length + 1e-6)
+
+        return [loss_predict_normalized]
+
 
     def rollout(self, x0, steps):
 

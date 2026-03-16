@@ -80,10 +80,16 @@ Global options (defaults):
     python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --expansion_type specific --expansion_degree 10
 
 # Manual expansion + ML DMD
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 10
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 10
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 10
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 10
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 10 --expansion_type general --expansion_degree 1 --bias false
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 10 --expansion_type general --expansion_degree 1 --bias false
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 10 --expansion_type general --expansion_degree 1 --bias false
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 10 --expansion_type general --expansion_degree 1 --bias false
+
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 3 --name deg3
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 3 --name deg3
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 3 --name deg3
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 3 --name deg3
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 3 --name deg3
 
 # Manual expansion + Eigen DMD
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 10
@@ -351,6 +357,7 @@ def main():
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
             expansion_type=args.expansion_type,
+            constant_expansion=(args.bias == "true"),
             system=system_name,
         ).to(device)
     
@@ -359,6 +366,7 @@ def main():
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
             expansion_type=args.expansion_type,
+            constant_expansion=(args.bias == "true"),
             system=system_name,
         ).to(device)
 

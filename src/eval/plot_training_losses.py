@@ -64,13 +64,12 @@ def plot_training_losses(loss_file, figdir, ignore_first_epochs=0):
     # Plot 2: Loss components (2x2)
     # --------------------------------------------------
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 6))
-    plt.suptitle(f"Validation Loss Components\nModel: {model_name_clean}")
-
     component_names = list(loss_components.keys())
 
-    for i, key in enumerate(component_names):
+    fig, axes = plt.subplots(int(np.ceil(len(component_names)/2)), 2, figsize=(12, 6))
+    plt.suptitle(f"Validation Loss Components\nModel: {model_name_clean}")
 
+    for i, key in enumerate(component_names):
         row = i // 2
         col = i % 2
 
