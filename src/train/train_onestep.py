@@ -47,6 +47,11 @@ def train_onestep(
 
             optimizer.zero_grad()
 
+            # One-step prediction loss
+            if hasattr(model, "compute_loss"): # multiple loss components
+                loss = model.compute_loss(x, y)
+                # loss_predict, loss_orthogonal, loss_phi_inv, loss_unit_length, loss_sparse = loss # can plot/weight these
+                loss = sum(loss)
             # ---------------------------------
             # Custom loss models
             # ---------------------------------
@@ -99,6 +104,9 @@ def train_onestep(
                     batch_val_losses.append(val_loss.item())
 
                 model.train()
+
+            # plot model weights
+
 
         train_loss /= n_train
         all_train_losses.extend(train_losses)
@@ -164,7 +172,7 @@ def train_onestep(
     # Print Koopman matrix
     # -------------------
     if hasattr(model, "K"):
-        K_matrix = model.K.weight.detach().T
+        K_matrix = model.K.detach().T
         print(f"K matrix:\n{K_matrix.cpu().numpy()}")
         eigvals, eigvecs = torch.linalg.eig(K_matrix)
         print(f"Eigenvalues:\n{eigvals.cpu().numpy()}")

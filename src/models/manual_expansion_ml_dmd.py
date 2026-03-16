@@ -48,9 +48,6 @@ class ManualExpansion_MLDMD(ManualExpansion):
 
         return x_next
 
-    # ------------------------------------------------
-    # Loss
-    # ------------------------------------------------
 
     def compute_loss(self, x, x_next_true):
 
@@ -70,9 +67,6 @@ class ManualExpansion_MLDMD(ManualExpansion):
 
         return (loss,)
 
-    # ------------------------------------------------
-    # Rollout
-    # ------------------------------------------------
 
     def rollout(self, x0, steps):
 

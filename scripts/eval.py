@@ -76,10 +76,10 @@ Global options (defaults):
     python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/koopman_poly_trig/default/model.npz
 
 # Manual expansion + ML DMD
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/saddle_point/default/model.pt
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/degenerate_node/default/model.pt
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/inward_spiral/default/model.pt
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/harmonic_oscillator/default/model.pt
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/saddle_point/deg1/model.pt --name deg1
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/degenerate_node/deg1/model.pt --name deg1
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/inward_spiral/deg1/model.pt --name deg1
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/harmonic_oscillator/deg1/model.pt --name deg1
 
 # Manual expansion + Eigen DMD
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/saddle_point/default/model.pt --name deg2epochs5
