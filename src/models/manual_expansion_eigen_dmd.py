@@ -60,10 +60,7 @@ class ManualExpansion_EigenDMD(ManualExpansion):
         # --------------------------------------------------
         # 1) Prediction loss in expanded space
         # --------------------------------------------------
-        expanded_loss = nn.MSELoss()(x_expanded_next_hat, x_expanded_next_true)
-
-        step_length = torch.norm(x_next_true - x)
-        loss_predict = expanded_loss / (step_length + 1e-6)
+        loss_predict = nn.MSELoss()(x_expanded_next_hat, x_expanded_next_true)
 
         # --------------------------------------------------
         # 2) Phi and Phi_inv should be inverses

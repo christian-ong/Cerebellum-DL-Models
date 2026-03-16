@@ -80,16 +80,16 @@ Global options (defaults):
     python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --expansion_type specific --expansion_degree 10
 
 # Manual expansion + ML DMD
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 10
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 10
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 10
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 10
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 10 --weight_decay 0.0
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 10 --weight_decay 0.0
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 10 --weight_decay 0.0
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 10 --weight_decay 0.0
 
 # Manual expansion + Eigen DMD
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 2 --expansion_degree 1 --bias false --sine_cosine_expansion false
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 2 --expansion_degree 1 --bias false --sine_cosine_expansion false
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 2 --expansion_degree 1 --bias false --sine_cosine_expansion false
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 2 --expansion_degree 1 --bias false --sine_cosine_expansion false
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 10 --expansion_degree 2 --bias true --sine_cosine_expansion false
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 10 --expansion_degree 2 --bias true --sine_cosine_expansion false
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 10 --expansion_degree 2 --bias true --sine_cosine_expansion false
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 10 --expansion_degree 2 --bias true --sine_cosine_expansion false
 
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 7 --name deg7
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 7 --name deg7
@@ -291,7 +291,7 @@ def main():
                 expansion_degree=args.expansion_degree,
                 rank=args.rank,
                 ridge=args.ridge,
-                constant_expansion=args.bias == "true",
+                bias=args.bias == "true",
                 sine_cosine_expansion=args.sine_cosine_expansion == "true",
                 expansion_type=args.expansion_type,
                 system=system_name if args.expansion_type == "specific" else None,
@@ -311,7 +311,7 @@ def main():
                 C=C.detach().cpu().numpy(),
                 state_dim=state_dim,
                 expansion_degree=args.expansion_degree,
-                constant_expansion=args.bias == "true",
+                bias=args.bias == "true",
                 sine_cosine_expansion=args.sine_cosine_expansion == "true",
                 expansion_type=args.expansion_type,
                 system_basis=system_name if args.expansion_type == "specific" else "",

@@ -82,10 +82,10 @@ Global options (defaults):
     python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/harmonic_oscillator/default/model.pt
 
 # Manual expansion + Eigen DMD
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/saddle_point/default/model.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/degenerate_node/default/model.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/inward_spiral/default/model.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/harmonic_oscillator/default/model.pt
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/saddle_point/default/model.pt --name deg2epochs5
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/degenerate_node/default/model.pt --name deg2epochs5
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/inward_spiral/default/model.pt --name deg2epochs5
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/harmonic_oscillator/default/model.pt --name deg2epochs5
 
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/vanderpol/deg7/model.pt --name deg7
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/lotka_volterra/deg7/model.pt --name deg7
@@ -177,12 +177,12 @@ def main():
 
         # Backward compatibility: old checkpoints used include_bias,
         # newer ones use constant_expansion
-        if "constant_expansion" in model_data:
-            constant_expansion = bool(np.asarray(model_data["constant_expansion"]).item())
+        if "bias" in model_data:
+            bias = bool(np.asarray(model_data["bias"]).item())
         elif "include_bias" in model_data:
-            constant_expansion = bool(np.asarray(model_data["include_bias"]).item())
+            bias = bool(np.asarray(model_data["include_bias"]).item())
         else:
-            constant_expansion = True
+            bias = True
 
         if "sine_cosine_expansion" in model_data:
             sine_cosine_expansion = bool(np.asarray(model_data["sine_cosine_expansion"]).item())
@@ -201,7 +201,7 @@ def main():
         model = ManualExpansion_ManualDMD(
             state_dim=state_dim,
             expansion_degree=degree,
-            constant_expansion=constant_expansion,
+            bias=bias,
             sine_cosine_expansion=sine_cosine_expansion,
             expansion_type=expansion_type,
             system=system_basis,
@@ -350,7 +350,7 @@ def main():
         eigvals = np.linalg.eigvals(K)
 
     elif model is not None and hasattr(model, "K"):
-        A = model.K.weight.detach().cpu().numpy()
+        A = model.K.weight.detach().cpu().numpy().T
         eigvals = np.linalg.eigvals(A)
 
     elif model is not None and hasattr(model, "Lambda"):
@@ -416,9 +416,7 @@ def main():
         print("Full lifted transition matrix shape:", K.shape)
 
         # extract state indices (x,y or x,y,z)
-        state_dim = model.state_dim
-        state_idx = list(range(state_dim))
-
+        state_idx = model.state_indices
         K_xx = K[np.ix_(state_idx, state_idx)]
 
         print("\nState-space block K_xx:")
@@ -426,6 +424,34 @@ def main():
 
         # If linear system, also print true A_d if available
         if args.model in ["manual_expansion_eigen_dmd"] and system in [
+            "saddle_point",
+            "degenerate_node",
+            "inward_spiral",
+            "harmonic_oscillator",
+        ]:
+            print("\nCompare this with true A_d from Overleaf.")
+            
+    # --------------------------------------------------
+    # Compare learned state block with true A_d
+    # --------------------------------------------------
+
+    if model is not None and hasattr(model, "K"):
+
+        print("\n--- Learned lifted Koopman operator ---")
+
+        # Full lifted operator
+        K = model.K.weight.detach().cpu().numpy().T
+
+        print("Full lifted transition matrix shape:", K.shape)
+
+        # Extract state block
+        state_idx = model.state_indices
+        K_xx = K[np.ix_(state_idx, state_idx)]
+
+        print("\nState-space block K_xx:")
+        print(K_xx)
+
+        if system in [
             "saddle_point",
             "degenerate_node",
             "inward_spiral",

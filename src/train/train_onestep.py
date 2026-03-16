@@ -12,15 +12,6 @@ def train_onestep(
     lr=1e-3,
     weight_decay=1e-6,
 ):
-    """
-    Train an autoencoder-based dynamics model using ONE-STEP prediction loss.
-
-    This function is intentionally simple and model-agnostic:
-    it works for both linear and nonlinear AE models.
-
-    The model is assumed to return:
-        x_next, z, z_next = model(x)
-    """
 
     model = model.to(device)
 
@@ -41,13 +32,6 @@ def train_onestep(
     epoch_val_losses = []
     batch_val_losses = []
 
-    # Updated loss components
-    loss_components_val = {
-        "predict": [],
-        "phi_inv": [],
-        "unit_length": [],
-    }
-
     for epoch in range(epochs):
         # -------------------
         # Training
@@ -64,16 +48,20 @@ def train_onestep(
             optimizer.zero_grad()
 
             # ---------------------------------
-            # Models with custom loss
+            # Custom loss models
             # ---------------------------------
 
             if hasattr(model, "compute_loss"):
                 loss_tuple = model.compute_loss(x, y)
-                loss_predict, loss_phi_inv, loss_unit_length = loss_tuple
-                loss = sum(loss_tuple)
+
+                if isinstance(loss_tuple, torch.Tensor):
+                    loss = loss_tuple
+                else:
+                    loss = sum(loss_tuple)
 
             else:
-                y_hat, _, _ = model(x)
+
+                y_hat = model(x)
                 loss = loss_fn(y_hat, y)
 
             loss.backward()
@@ -97,31 +85,26 @@ def train_onestep(
 
                     if hasattr(model, "compute_loss"):
                         val_tuple = model.compute_loss(x_val, y_val)
-                        loss_predict, loss_phi_inv, loss_unit_length = val_tuple
-                        val_loss = sum(val_tuple)
-                        batch_val_losses.append(val_loss.item())
 
-                        loss_components_val["predict"].append(
-                            loss_predict.item()
-                        )
-                        loss_components_val["phi_inv"].append(
-                            loss_phi_inv.item()
-                        )
-                        loss_components_val["unit_length"].append(
-                            loss_unit_length.item()
-                        )
+                        if isinstance(val_tuple, torch.Tensor):
+                            val_loss = val_tuple
+                        else:
+                            val_loss = sum(val_tuple)
 
                     else:
-                        y_val_hat, _, _ = model(x_val)
+
+                        y_val_hat = model(x_val)
                         val_loss = loss_fn(y_val_hat, y_val)
-                        batch_val_losses.append(val_loss.item())
+
+                    batch_val_losses.append(val_loss.item())
+
                 model.train()
 
         train_loss /= n_train
         all_train_losses.extend(train_losses)
 
         # -------------------
-        # Validation over full dataset
+        # Full validation
         # -------------------
         val_loss = None
 
@@ -136,10 +119,17 @@ def train_onestep(
                     y = y.to(device)
 
                     if hasattr(model, "compute_loss"):
-                        loss_tuple = model.compute_loss(x, y)
-                        loss = sum(loss_tuple)
+
+                        val_tuple = model.compute_loss(x, y)
+
+                        if isinstance(val_tuple, torch.Tensor):
+                            loss = val_tuple
+                        else:
+                            loss = sum(val_tuple)
+
                     else:
-                        y_hat, _, _ = model(x)
+
+                        y_hat = model(x)
                         loss = loss_fn(y_hat, y)
 
                     batch_size = x.size(0)
@@ -153,7 +143,7 @@ def train_onestep(
         scheduler.step()
 
         # -------------------
-        # Print progress
+        # Progress print
         # -------------------
         current_lr = optimizer.param_groups[0]["lr"]
         if val_loss is not None:
@@ -171,7 +161,7 @@ def train_onestep(
             )
 
     # -------------------
-    # Print Koopman matrix if available
+    # Print Koopman matrix
     # -------------------
     if hasattr(model, "K"):
         K_matrix = model.K.weight.detach().T
@@ -184,7 +174,7 @@ def train_onestep(
         all_train_losses,
         batch_val_losses,
         epoch_val_losses,
-        loss_components_val,
+        None,
     )
 
     return model, losses
