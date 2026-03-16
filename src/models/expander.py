@@ -185,6 +185,24 @@ class ManualExpansion(nn.Module):
         if self.expansion_type == "specific":
             self._compiled_basis = [self._compile_basis(expr) for expr in self.expand_names]
 
+        # --------------------------------------------------
+        # Track where the ORIGINAL state variables are located
+        # inside the expanded basis
+        # --------------------------------------------------
+        if self.expansion_type == "general":
+            target_names = [f"x{i+1}" for i in range(self.state_dim)]
+        else:
+            var_names = ["x", "y", "z", "w", "v", "u"]
+            target_names = var_names[:self.state_dim]
+
+        missing = [name for name in target_names if name not in self.expand_names]
+        if missing:
+            raise ValueError(
+                f"Could not locate original state variables {missing} in expand_names = {self.expand_names}"
+            )
+
+        self.state_indices = [self.expand_names.index(name) for name in target_names]
+
     def _compile_basis(self, expr):
         """
         Turn strings like 'x^2*y' or 'sin(x)' into callable functions.
@@ -248,9 +266,7 @@ class ManualExpansion(nn.Module):
 
     def de_expand(self, x_expanded):
         """
-        Recover original state variables.
-        Assumes the first entries are the original coordinates.
+        Recover original state variables using their actual indices
+        in the expanded basis.
         """
-        start = 1 if self.expand_names[0] == "1" else 0
-        end = start + self.state_dim
-        return x_expanded[:, start:end]
+        return x_expanded[:, self.state_indices]
