@@ -40,7 +40,13 @@ def train_onestep(
     all_train_losses = []
     epoch_val_losses = []
     batch_val_losses = []
-    loss_components_val = {"predict": [], "orthogonal": [], "phi_inv": [], "unit_length": []}
+
+    # Updated loss components
+    loss_components_val = {
+        "predict": [],
+        "phi_inv": [],
+        "unit_length": [],
+    }
 
     for epoch in range(epochs):
         # -------------------
@@ -57,11 +63,14 @@ def train_onestep(
 
             optimizer.zero_grad()
 
-            # One-step prediction loss
-            if hasattr(model, "compute_loss"): # multiple loss components
-                loss = model.compute_loss(x, y)
-                loss_predict, loss_orthogonal, loss_phi_inv, loss_unit_length = loss # can plot/weight these
-                loss = sum(loss)
+            # ---------------------------------
+            # Models with custom loss
+            # ---------------------------------
+
+            if hasattr(model, "compute_loss"):
+                loss_tuple = model.compute_loss(x, y)
+                loss_predict, loss_phi_inv, loss_unit_length = loss_tuple
+                loss = sum(loss_tuple)
 
             else:
                 y_hat, _, _ = model(x)
@@ -75,24 +84,32 @@ def train_onestep(
             train_loss += loss.item() * batch_size
             n_train += batch_size
 
-            # Validation loss on single batch (during training)
+            # -------------------
+            # Batch validation during training
+            # -------------------
+
             if val_loader is not None:
                 model.eval()
                 with torch.no_grad():
                     x_val, y_val = next(iter(val_loader))
                     x_val = x_val.to(device)
                     y_val = y_val.to(device)
-                    if hasattr(model, "compute_loss"): # multiple loss components
-                        val_loss = model.compute_loss(x_val, y_val)
-                        loss_predict, loss_orthogonal, loss_phi_inv, loss_unit_length = val_loss # can plot/weight these
-                        val_loss = sum(val_loss)
+
+                    if hasattr(model, "compute_loss"):
+                        val_tuple = model.compute_loss(x_val, y_val)
+                        loss_predict, loss_phi_inv, loss_unit_length = val_tuple
+                        val_loss = sum(val_tuple)
                         batch_val_losses.append(val_loss.item())
 
-                        # Individual loss components
-                        loss_components_val["predict"].append(loss_predict.item())
-                        loss_components_val["orthogonal"].append(loss_orthogonal.item())
-                        loss_components_val["phi_inv"].append(loss_phi_inv.item())
-                        loss_components_val["unit_length"].append(loss_unit_length.item())
+                        loss_components_val["predict"].append(
+                            loss_predict.item()
+                        )
+                        loss_components_val["phi_inv"].append(
+                            loss_phi_inv.item()
+                        )
+                        loss_components_val["unit_length"].append(
+                            loss_unit_length.item()
+                        )
 
                     else:
                         y_val_hat, _, _ = model(x_val)
@@ -104,7 +121,7 @@ def train_onestep(
         all_train_losses.extend(train_losses)
 
         # -------------------
-        # Validation
+        # Validation over full dataset
         # -------------------
         val_loss = None
 
@@ -118,9 +135,9 @@ def train_onestep(
                     x = x.to(device)
                     y = y.to(device)
 
-                    if hasattr(model, "compute_loss"): # multiple loss components
-                        loss = model.compute_loss(x, y)
-                        loss = sum(loss)
+                    if hasattr(model, "compute_loss"):
+                        loss_tuple = model.compute_loss(x, y)
+                        loss = sum(loss_tuple)
                     else:
                         y_hat, _, _ = model(x)
                         loss = loss_fn(y_hat, y)
@@ -135,7 +152,9 @@ def train_onestep(
 
         scheduler.step()
 
+        # -------------------
         # Print progress
+        # -------------------
         current_lr = optimizer.param_groups[0]["lr"]
         if val_loss is not None:
             print(
@@ -150,15 +169,22 @@ def train_onestep(
                 f"lr {current_lr:.2e} | "
                 f"train {train_loss:.6e}"
             )
-        
-    if hasattr(model, "K"):    
+
+    # -------------------
+    # Print Koopman matrix if available
+    # -------------------
+    if hasattr(model, "K"):
         K_matrix = model.K.weight.detach().T
         print(f"K matrix:\n{K_matrix.cpu().numpy()}")
         eigvals, eigvecs = torch.linalg.eig(K_matrix)
         print(f"Eigenvalues:\n{eigvals.cpu().numpy()}")
         print(f"Eigenvectors:\n{eigvecs.cpu().numpy()}")
-    
-    losses = all_train_losses, batch_val_losses, epoch_val_losses, loss_components_val
+
+    losses = (
+        all_train_losses,
+        batch_val_losses,
+        epoch_val_losses,
+        loss_components_val,
+    )
 
     return model, losses
-                                                                                                                 
