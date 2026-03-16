@@ -92,10 +92,10 @@ Global options (defaults):
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 3 --name deg3
 
 # Manual expansion + Eigen DMD
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 10 --expansion_degree 2 --bias true --sine_cosine_expansion false
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 10 --expansion_degree 2 --bias true --sine_cosine_expansion false
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 10 --expansion_degree 2 --bias true --sine_cosine_expansion false
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 10 --expansion_degree 2 --bias true --sine_cosine_expansion false
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 10 --expansion_degree 2 --bias true --sine_cosine_expansion false --weight_decay 1e-6 --lr 1e-3
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 10 --expansion_degree 2 --bias true --sine_cosine_expansion false --weight_decay 1e-4 --lr 1e-3
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 10 --expansion_degree 2 --bias true --sine_cosine_expansion false --weight_decay 1e-4 --lr 1e-3
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 10 --expansion_degree 2 --bias true --sine_cosine_expansion false --weight_decay 1e-4 --lr 1e-3
 
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 7 --name deg7
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 7 --name deg7
