@@ -84,10 +84,6 @@ Global options (defaults):
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 10 --weight_decay 0.0
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 10 --weight_decay 0.0
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 10 --weight_decay 0.0
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 10 --expansion_type general --expansion_degree 1 --bias false
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 10 --expansion_type general --expansion_degree 1 --bias false
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 10 --expansion_type general --expansion_degree 1 --bias false
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 10 --expansion_type general --expansion_degree 1 --bias false
 
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 3 --name deg3
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 3 --name deg3
@@ -361,7 +357,8 @@ def main():
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
             expansion_type=args.expansion_type,
-            constant_expansion=(args.bias == "true"),
+            bias=args.bias == "true",
+            sine_cosine_expansion=args.sine_cosine_expansion == "true",
             system=system_name,
         ).to(device)
     

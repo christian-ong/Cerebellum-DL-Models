@@ -169,15 +169,8 @@ def train_onestep(
             )
 
     # -------------------
-    # Print Koopman matrix
+    # Return model and losses
     # -------------------
-    if hasattr(model, "K"):
-        K_matrix = model.K.detach().T
-        print(f"K matrix:\n{K_matrix.cpu().numpy()}")
-        eigvals, eigvecs = torch.linalg.eig(K_matrix)
-        print(f"Eigenvalues:\n{eigvals.cpu().numpy()}")
-        print(f"Eigenvectors:\n{eigvecs.cpu().numpy()}")
-
     losses = (
         all_train_losses,
         batch_val_losses,
