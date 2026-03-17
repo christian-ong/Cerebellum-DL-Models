@@ -31,6 +31,8 @@ class OneStepTrajectoryDataset(Dataset):
             traj_idx = data["train_idx"]
         elif split == "val":
             traj_idx = data["val_idx"]
+        elif split == "test":
+            traj_idx = data["test_idx"]
         elif split == "all":
             traj_idx = np.arange(X.shape[1])
         else:

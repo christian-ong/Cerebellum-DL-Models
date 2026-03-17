@@ -82,6 +82,7 @@ Contents:
     X         : (T_steps+1, state_dim) or (T_steps+1, n_traj, state_dim)
     train_idx : indices of training trajectories
     val_idx   : indices of validation trajectories
+    test_idx  : indices of test trajectories
     dt        : time step used in simulation
     T         : total simulation time
     system     : name of the system
@@ -517,7 +518,9 @@ def main():
     parser.add_argument("--T", type=float, default=20.0)
     parser.add_argument("--method", type=str, default="rk4")
     parser.add_argument("--n_traj", type=int, default=1)
+    parser.add_argument("--train_frac", type=float, default=0.7)
     parser.add_argument("--val_frac", type=float, default=0.2)
+    parser.add_argument("--test_frac", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=0)
 
     # System-specific params
@@ -576,6 +579,9 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
 
     rng = np.random.default_rng(args.seed)
+
+    if args.train_frac + args.val_frac + args.test_frac >= 1.0:
+        raise ValueError("train_frac + val_frac + test_frac must be < 1.0")
 
     # Build system
     f, x0, meta = SYSTEMS[args.system](args, rng)
@@ -700,13 +706,18 @@ def main():
     if args.n_traj == 1:
         train_idx = np.array([0], dtype=int)
         val_idx   = np.array([], dtype=int)
+        test_idx  = np.array([], dtype=int)
     else:
         indices = np.arange(args.n_traj)
         rng.shuffle(indices)
 
-        n_val = int(args.val_frac * args.n_traj)
-        val_idx = indices[:n_val]
-        train_idx = indices[n_val:]
+        n_train = int(args.train_frac * args.n_traj)
+        n_val  = int(args.val_frac  * args.n_traj)
+        n_test = int(args.test_frac * args.n_traj)
+
+        train_idx = indices[:n_train]
+        val_idx   = indices[n_train:n_train+n_val]
+        test_idx  = indices[n_train+n_val:n_train+n_val+n_test]
 
     # Save
     base = f"{args.system}_trajectory"
@@ -734,6 +745,7 @@ def main():
         x0=x0,
         train_idx=train_idx,
         val_idx=val_idx,
+        test_idx=test_idx,
         dt=args.dt,
         T=args.T,
         system=args.system,

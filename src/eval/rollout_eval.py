@@ -3,7 +3,7 @@ import numpy as np
 
 def evaluate_validation_rollouts(
     X,
-    val_idx,
+    test_idx,
     model_name,
     model,
     steps,
@@ -16,7 +16,7 @@ def evaluate_validation_rollouts(
     C=None,
 ):
     """
-    Computes rollout MSE over all validation trajectories.
+    Computes rollout MSE over all test trajectories.
     Returns:
         mse_mean
         mse_std
@@ -24,7 +24,7 @@ def evaluate_validation_rollouts(
 
     mse_list = []
 
-    for traj_id in val_idx:
+    for traj_id in test_idx:
         X_true = X[:, traj_id, :]
         steps_local = min(steps, X_true.shape[0] - 1)
         X_true = X_true[: steps_local + 1]
