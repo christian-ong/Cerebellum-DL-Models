@@ -28,35 +28,34 @@ def train_onestep(
     )
 
     loss_fn = torch.nn.MSELoss()
+
     all_train_losses = []
     epoch_val_losses = []
     batch_val_losses = []
 
     for epoch in range(epochs):
-        # -------------------
-        # Training
-        # -------------------
+
+        model.train()
+
         train_loss = 0.0
         n_train = 0
         train_losses = []
 
+        # Create validation iterator once per epoch
+        val_iter = iter(val_loader) if val_loader is not None else None
+
         for x, y in tqdm(train_loader):
-            model.train()
+
             x = x.to(device)
             y = y.to(device)
 
             optimizer.zero_grad()
 
-            # One-step prediction loss
-            if hasattr(model, "compute_loss"): # multiple loss components
-                loss = model.compute_loss(x, y)
-                # loss_predict, loss_orthogonal, loss_phi_inv, loss_unit_length, loss_sparse = loss # can plot/weight these
-                loss = sum(loss)
-            # ---------------------------------
-            # Custom loss models
-            # ---------------------------------
-
+            # -------------------
+            # Training loss
+            # -------------------
             if hasattr(model, "compute_loss"):
+
                 loss_tuple = model.compute_loss(x, y)
 
                 if isinstance(loss_tuple, torch.Tensor):
@@ -69,8 +68,12 @@ def train_onestep(
                 y_hat = model(x)
                 loss = loss_fn(y_hat, y)
 
+            # -------------------
+            # Backprop
+            # -------------------
             loss.backward()
             optimizer.step()
+
             train_losses.append(loss.item())
 
             batch_size = x.size(0)
@@ -78,17 +81,26 @@ def train_onestep(
             n_train += batch_size
 
             # -------------------
-            # Batch validation during training
+            # Batch validation
             # -------------------
-
             if val_loader is not None:
+
                 model.eval()
+
                 with torch.no_grad():
-                    x_val, y_val = next(iter(val_loader))
+
+                    # get next validation batch
+                    try:
+                        x_val, y_val = next(val_iter)
+                    except StopIteration:
+                        val_iter = iter(val_loader)
+                        x_val, y_val = next(val_iter)
+
                     x_val = x_val.to(device)
                     y_val = y_val.to(device)
 
                     if hasattr(model, "compute_loss"):
+
                         val_tuple = model.compute_loss(x_val, y_val)
 
                         if isinstance(val_tuple, torch.Tensor):
@@ -105,9 +117,6 @@ def train_onestep(
 
                 model.train()
 
-            # plot model weights
-
-
         train_loss /= n_train
         all_train_losses.extend(train_losses)
 
@@ -117,12 +126,16 @@ def train_onestep(
         val_loss = None
 
         if val_loader is not None:
+
             model.eval()
+
             val_loss = 0.0
             n_val = 0
 
             with torch.no_grad():
+
                 for x, y in val_loader:
+
                     x = x.to(device)
                     y = y.to(device)
 
@@ -150,10 +163,8 @@ def train_onestep(
 
         scheduler.step()
 
-        # -------------------
-        # Progress print
-        # -------------------
         current_lr = optimizer.param_groups[0]["lr"]
+
         if val_loss is not None:
             print(
                 f"Epoch {epoch:03d} | "
@@ -168,9 +179,6 @@ def train_onestep(
                 f"train {train_loss:.6e}"
             )
 
-    # -------------------
-    # Return model and losses
-    # -------------------
     losses = (
         all_train_losses,
         batch_val_losses,

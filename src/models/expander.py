@@ -74,6 +74,20 @@ LORENZ_BASIS = [
     "x^2*z",
 ]
 
+KOOPMAN_POLY_BASIS = [
+    "x",
+    "y",
+    "x^2"
+]
+
+KOOPMAN_POLY_LARGE_BASIS = [
+    "x",
+    "y",
+    "x^2",
+    "x^3",
+    "x^4"
+]
+
 KOOPMAN_POLY_TRIG_BASIS = [
     "1",
     "x",
@@ -93,6 +107,8 @@ SPECIFIC_BASES = {
     "pendulum": PENDULUM_BASIS,
     "duffing": DUFFING_BASIS,
     "lorenz": LORENZ_BASIS,
+    "koopman_poly": KOOPMAN_POLY_BASIS,
+    "koopman_poly_large": KOOPMAN_POLY_LARGE_BASIS,
     "koopman_poly_trig": KOOPMAN_POLY_TRIG_BASIS,
 }
 

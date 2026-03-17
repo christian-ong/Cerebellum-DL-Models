@@ -28,12 +28,13 @@ class ManualExpansion_EigenDMD(ManualExpansion):
         self.latent_dim = self.expanded_dim
 
         # eigenvectors
-        # self.Phi = nn.Parameter(torch.eye(self.latent_dim))
-        self.Phi = nn.Parameter(torch.randn(self.latent_dim, self.latent_dim))
-
-        # eigenvalue matrix (not forced diagonal)
-        # self.Lambda = nn.Parameter(torch.eye(self.latent_dim))
-        self.Lambda = nn.Parameter(torch.randn(self.latent_dim, self.latent_dim))
+        self.Phi = nn.Parameter(
+            torch.eye(self.latent_dim) + 0.01 * torch.randn(self.latent_dim, self.latent_dim)
+        )
+        # eigenvalue matrix
+        self.Lambda = nn.Parameter(
+            torch.eye(self.latent_dim) + 0.01 * torch.randn(self.latent_dim, self.latent_dim)
+        )
 
     # ------------------------------------------------
     # Forward
@@ -89,7 +90,6 @@ class ManualExpansion_EigenDMD(ManualExpansion):
 
         loss = (
             loss_lift
-            # + 0.1 * loss_state
             + 1e-4 * Phi_inv_norm
             + 1e-3 * loss_unit_length
         )
