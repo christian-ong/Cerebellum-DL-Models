@@ -225,7 +225,9 @@ class ManualExpansion_MLDMD(ManualExpansion):
         # Penalize eigenvalues outside the unit circle.
         #
         # Ensures stable long-term rollouts.
-        eigvals = torch.linalg.eigvals(self.K.weight)
+
+        K_eff = self.K.weight * self.z_scale.unsqueeze(1) / self.z_scale.unsqueeze(0)
+        eigvals = torch.linalg.eigvals(K_eff)
 
         loss_stability = torch.mean(
             torch.relu(torch.abs(eigvals) - 1.0) ** 2
@@ -237,7 +239,7 @@ class ManualExpansion_MLDMD(ManualExpansion):
         loss = (
             loss_lift
             + 0.1 * loss_state
-            + 1e-2 * loss_stability
+            + 1e-3 * loss_stability
         )
 
         return (loss,)
@@ -274,22 +276,7 @@ class ManualExpansion_MLDMD(ManualExpansion):
         traj = [x.squeeze(0)]
 
         for _ in range(steps):
-
-            # Lift
-            z_raw = self.expand(x)
-
-            # Normalize
-            z = z_raw / self.z_scale
-
-            # Koopman step
-            z = self.K(z)
-
-            # Convert back to original lifted coordinates
-            z_raw_next = z * self.z_scale
-
-            # Recover state
-            x = self.de_expand(z_raw_next)
-
+            x = self.forward(x)
             traj.append(x.squeeze(0))
 
         return torch.stack(traj)
