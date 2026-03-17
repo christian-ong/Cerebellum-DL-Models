@@ -87,11 +87,15 @@ Global options (defaults):
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/inward_spiral/default/model.pt
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/harmonic_oscillator/default/model.pt
 
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/vanderpol/deg7/model.pt --name deg7
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/lotka_volterra/deg7/model.pt --name deg7
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/pendulum/deg7/model.pt --name deg7
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/duffing/deg7/model.pt --name deg7
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/lorenz/deg7/model.pt --name deg7
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/koopman_poly/default/model.pt
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/koopman_poly_large/default/model.pt
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/koopman_poly_trig/default/model.pt
+
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/vanderpol/default/model.pt
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/lotka_volterra/default/model.pt
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/pendulum/default/model.pt
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/duffing/default/model.pt
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/lorenz/default/model.pt
 ---------------------------------------------------------------------------------------------
 
 Output:
@@ -177,12 +181,12 @@ def main():
 
         # Backward compatibility: old checkpoints used include_bias,
         # newer ones use constant_expansion
-        if "constant_expansion" in model_data:
-            constant_expansion = bool(np.asarray(model_data["constant_expansion"]).item())
+        if "bias" in model_data:
+            bias = bool(np.asarray(model_data["bias"]).item())
         elif "include_bias" in model_data:
-            constant_expansion = bool(np.asarray(model_data["include_bias"]).item())
+            bias = bool(np.asarray(model_data["include_bias"]).item())
         else:
-            constant_expansion = True
+            bias = True
 
         if "sine_cosine_expansion" in model_data:
             sine_cosine_expansion = bool(np.asarray(model_data["sine_cosine_expansion"]).item())
@@ -201,7 +205,7 @@ def main():
         model = ManualExpansion_ManualDMD(
             state_dim=state_dim,
             expansion_degree=degree,
-            constant_expansion=constant_expansion,
+            bias=bias,
             sine_cosine_expansion=sine_cosine_expansion,
             expansion_type=expansion_type,
             system=system_basis,
@@ -228,6 +232,8 @@ def main():
             state_dim=ckpt["state_dim"],
             expansion_degree=train_args["expansion_degree"],
             expansion_type=train_args["expansion_type"],
+            bias=train_args["bias"] == "true",
+            sine_cosine_expansion=train_args["sine_cosine_expansion"] == "true",
             system=ckpt["system"],
         ).to(device)
         model.load_state_dict(ckpt["model_state_dict"])
@@ -242,8 +248,10 @@ def main():
         model = ManualExpansion_EigenDMD(
             state_dim=ckpt["state_dim"],
             expansion_degree=train_args["expansion_degree"],
+            bias=train_args["bias"] == "true",
+            sine_cosine_expansion=train_args["sine_cosine_expansion"] == "true",
             expansion_type=train_args["expansion_type"],
-            system=ckpt["system"],
+            system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
         ).to(device)
 
         model.load_state_dict(ckpt["model_state_dict"])
@@ -348,19 +356,21 @@ def main():
         eigvals = np.linalg.eigvals(K)
 
     elif model is not None and hasattr(model, "K"):
-        A = model.K.weight.detach().cpu().numpy()
+        A = model.K.weight.detach().cpu().numpy().T
         eigvals = np.linalg.eigvals(A)
 
     elif model is not None and hasattr(model, "Lambda"):
-        eigvals = np.diag(model.Lambda.detach().cpu().numpy())
+        Lambda = model.Lambda.detach().cpu().numpy()
+        eigvals = np.linalg.eigvals(Lambda)
 
-    plot_eigenvalues(eigvals, figdir)
+    if eigvals is not None:
+        plot_eigenvalues(eigvals, figdir)
 
     # --------------------------------------------------
     # Training loss plots
     # --------------------------------------------------
     if ".pt" in args.model_path:
-        loss_file = args.model_path.replace(".pt", "_losses.npz")
+        loss_file = args.model_path.replace("model.pt", "losses.npz")
 
         if os.path.exists(loss_file):
             plot_training_losses(loss_file, figdir)
@@ -390,19 +400,70 @@ def main():
         figdir=figdir,
         expand_names=expand_names,
     )
-    # model_name = os.path.basename(args.model_path).replace(".pt","")
 
-    # expand_names = None
-    # if ".pt" in args.model_path:
-    #     if "expand_names" in ckpt:
-    #         expand_names = ckpt["expand_names"]
+    # --------------------------------------------------
+    # Compare learned state block with true A_d
+    # --------------------------------------------------
 
-    # plot_transition_matrix(
-    #     model=model,
-    #     model_name=model_name,
-    #     figdir=figdir,
-    #     expand_names=expand_names,
-    # )
+    if model is not None and hasattr(model, "Phi") and hasattr(model, "Lambda"):
+
+        print("\n--- Learned lifted operator ---")
+
+        Phi = model.Phi.detach().cpu().numpy()
+        Lambda = model.Lambda.detach().cpu().numpy()
+
+        try:
+            Phi_inv = np.linalg.inv(Phi)
+        except np.linalg.LinAlgError:
+            Phi_inv = np.linalg.pinv(Phi)
+
+        K = Phi @ Lambda @ Phi_inv
+
+        print("Full lifted transition matrix shape:", K.shape)
+
+        # extract state indices (x,y or x,y,z)
+        state_idx = model.state_indices
+        K_xx = K[np.ix_(state_idx, state_idx)]
+
+        print("\nState-space block K_xx:")
+        print(K_xx)
+
+        # If linear system, also print true A_d if available
+        if args.model in ["manual_expansion_eigen_dmd"] and system in [
+            "saddle_point",
+            "degenerate_node",
+            "inward_spiral",
+            "harmonic_oscillator",
+        ]:
+            print("\nCompare this with true A_d from Overleaf.")
+            
+    # --------------------------------------------------
+    # Compare learned state block with true A_d
+    # --------------------------------------------------
+
+    if model is not None and hasattr(model, "K"):
+
+        print("\n--- Learned lifted Koopman operator ---")
+
+        # Full lifted operator
+        K = model.K.weight.detach().cpu().numpy().T
+
+        print("Full lifted transition matrix shape:", K.shape)
+
+        # Extract state block
+        state_idx = model.state_indices
+        K_xx = K[np.ix_(state_idx, state_idx)]
+
+        print("\nState-space block K_xx:")
+        print(K_xx)
+
+        if system in [
+            "saddle_point",
+            "degenerate_node",
+            "inward_spiral",
+            "harmonic_oscillator",
+        ]:
+            print("\nCompare this with true A_d from Overleaf.")
 
 if __name__ == "__main__":
     main()

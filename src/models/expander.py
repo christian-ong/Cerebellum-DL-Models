@@ -74,6 +74,20 @@ LORENZ_BASIS = [
     "x^2*z",
 ]
 
+KOOPMAN_POLY_BASIS = [
+    "x",
+    "y",
+    "x^2"
+]
+
+KOOPMAN_POLY_LARGE_BASIS = [
+    "x",
+    "y",
+    "x^2",
+    "x^3",
+    "x^4"
+]
+
 KOOPMAN_POLY_TRIG_BASIS = [
     "1",
     "x",
@@ -93,6 +107,8 @@ SPECIFIC_BASES = {
     "pendulum": PENDULUM_BASIS,
     "duffing": DUFFING_BASIS,
     "lorenz": LORENZ_BASIS,
+    "koopman_poly": KOOPMAN_POLY_BASIS,
+    "koopman_poly_large": KOOPMAN_POLY_LARGE_BASIS,
     "koopman_poly_trig": KOOPMAN_POLY_TRIG_BASIS,
 }
 
@@ -106,8 +122,8 @@ class ManualExpansion(nn.Module):
         self,
         state_dim=2,
         expansion_degree=3,
-        constant_expansion=True,
-        sine_cosine_expansion=False,
+        bias=True,
+        sine_cosine_expansion=True,
         expansion_type="general",
         system=None,
     ):
@@ -143,7 +159,7 @@ class ManualExpansion(nn.Module):
             for exps in product(range(expansion_degree + 1), repeat=state_dim):
                 total_degree = sum(exps)
 
-                if total_degree == 0 and not constant_expansion:
+                if total_degree == 0 and not bias:
                     continue
 
                 if total_degree <= expansion_degree:
@@ -160,6 +176,17 @@ class ManualExpansion(nn.Module):
                     name = " ".join(name_parts) if name_parts else "1"
                     self.expand_names.append(name)
 
+            # --------------------------------------------------
+            # Sort polynomial terms:
+            # first by total degree, then by exponent tuple
+            # so degree-1 becomes [x1, x2] instead of [x2, x1]
+            # --------------------------------------------------
+            poly = list(zip(self.expanded_basis, self.expand_names))
+            poly.sort(key=lambda item: (sum(item[0]),) + tuple(reversed(item[0])))
+
+            self.expanded_basis = [b for b, _ in poly]
+            self.expand_names = [n for _, n in poly]
+
             if sine_cosine_expansion:
                 for i in range(state_dim):
                     for k in range(1, expansion_degree + 1):
@@ -175,7 +202,6 @@ class ManualExpansion(nn.Module):
                             self.expand_names.append(f"cos(x{i+1})")
                         else:
                             self.expand_names.append(f"cos({k}*x{i+1})")
-
         else:
             raise ValueError("expansion_type must be 'general' or 'specific'")
 

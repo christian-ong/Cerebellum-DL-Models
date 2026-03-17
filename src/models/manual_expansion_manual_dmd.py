@@ -22,7 +22,7 @@ class ManualExpansion_ManualDMD(ManualExpansion):
         rank=None,
         ridge=0.0,
         decoder_mode="fixed",
-        constant_expansion=True,
+        bias=True,
         sine_cosine_expansion=False,
         expansion_type="general",
         system=None,
@@ -30,7 +30,7 @@ class ManualExpansion_ManualDMD(ManualExpansion):
         super().__init__(
             state_dim=state_dim,
             expansion_degree=expansion_degree,
-            constant_expansion=constant_expansion,
+            bias=bias,
             sine_cosine_expansion=sine_cosine_expansion,
             expansion_type=expansion_type,
             system=system,
