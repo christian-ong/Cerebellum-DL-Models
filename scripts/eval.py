@@ -165,22 +165,22 @@ def main():
     X = data["X"]
     state_dim = X.shape[-1]
 
-    if "val_idx" not in data:
+    if "test_idx" not in data:
         raise ValueError(
-            "Dataset does not contain val_idx. "
+            "Dataset does not contain test_idx. "
             "Please regenerate it using simulate_data.py."
         )
 
-    val_idx = data["val_idx"]
+    test_idx = data["test_idx"]
 
     if X.ndim != 3:
         raise ValueError("Evaluation expects multiple trajectories (X must be 3D).")
 
-    if len(val_idx) == 0:
-        raise ValueError("No validation trajectories available.")
+    if len(test_idx) == 0:
+        raise ValueError("No test trajectories available.")
     
     system = os.path.basename(args.data_path).replace("_trajectory.npz", "")
-    print(f"Loaded {X.shape[1]} trajectories for system '{system}', with {len(val_idx)} validation trajectories.")
+    print(f"Loaded {X.shape[1]} trajectories for system '{system}', with {len(test_idx)} test trajectories.")
     # --------------------------------------------------
     # Load model ONCE
     # --------------------------------------------------
@@ -344,7 +344,7 @@ def main():
 
     mse_mean, mse_std = evaluate_validation_rollouts(
         X=X,
-        val_idx=val_idx,
+        test_idx=test_idx,
         model_name=args.model,
         model=model,
         steps=args.steps,
@@ -358,20 +358,20 @@ def main():
     )
 
     print(
-        f"Validation rollout MSE over {len(val_idx)} trajectories: "
+        f"Test rollout MSE over {len(test_idx)} trajectories: "
         f"{mse_mean:.6e} ± {mse_std:.6e}"
     )
 
     # --------------------------------------------------
-    # Plot ONE validation trajectory
+    # Plot ONE test trajectory
     # --------------------------------------------------
 
-    if args.traj_index >= len(val_idx):
+    if args.traj_index >= len(test_idx):
         raise IndexError(
-            f"traj_index={args.traj_index} but only {len(val_idx)} validation trajectories exist."
+            f"traj_index={args.traj_index} but only {len(test_idx)} test trajectories exist."
         )
 
-    traj_id = val_idx[args.traj_index]
+    traj_id = test_idx[args.traj_index]
 
     X_true, X_hat = compute_single_rollout(
         X=X,
