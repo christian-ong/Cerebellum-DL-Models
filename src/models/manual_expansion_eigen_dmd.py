@@ -147,7 +147,7 @@ class ManualExpansion_EigenDMD(ManualExpansion):
         z = z_raw / self.z_scale
 
         # Compute pseudo-inverse of Phi
-        Phi_inv = torch.linalg.pinv(self.Phi)
+        Phi_inv = torch.linalg.pinv(self.Phi, rcond=1e-6)
 
         # Convert to modal coordinates
         b = z @ Phi_inv.mT
@@ -180,7 +180,7 @@ class ManualExpansion_EigenDMD(ManualExpansion):
         z = z_raw / self.z_scale
         z_next_true = z_next_true_raw / self.z_scale
 
-        Phi_inv = torch.linalg.pinv(self.Phi)
+        Phi_inv = torch.linalg.pinv(self.Phi, rcond=1e-6)
 
         # Convert to modal coordinates
         b = z @ Phi_inv.mT
@@ -210,13 +210,8 @@ class ManualExpansion_EigenDMD(ManualExpansion):
         # 3) Φ conditioning regularization
         # --------------------------------------------------
 
-        loss_phi_inv = torch.norm(Phi_inv)
-
         col_norms = torch.linalg.norm(self.Phi, dim=0)
         loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
-
-        I = torch.eye(self.latent_dim, device=self.Phi.device)
-        loss_orth = torch.norm(self.Phi.T @ self.Phi - I)
 
         # --------------------------------------------------
         # 4) Stability regularization on effective operator
@@ -230,23 +225,14 @@ class ManualExpansion_EigenDMD(ManualExpansion):
         )
 
         # --------------------------------------------------
-        # 5) Φ orthogonality regularization
-        # --------------------------------------------------
-
-        I = torch.eye(self.latent_dim, device=self.Phi.device)
-        loss_orth = torch.norm(self.Phi.T @ self.Phi - I)
-
-        # --------------------------------------------------
         # Total loss
         # --------------------------------------------------
 
         loss = (
             loss_lift
             + 0.1 * loss_state
-            + 1e-4 * loss_phi_inv
             + 1e-3 * loss_unit_length
-            + 1e-2 * loss_stability
-            + 1e-3 * loss_orth
+            + 1e-3 * loss_stability
         )
         return (loss,)
 
