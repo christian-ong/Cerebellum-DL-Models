@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def fit_linear_map(X: np.ndarray):
+def fit_linear_map(X, Y):
     """
     Fit a linear map M such that:
         y ≈ x @ M.T
@@ -9,6 +9,9 @@ def fit_linear_map(X: np.ndarray):
 
     Args:
         X: np.ndarray with shape:
+           - (T, state_dim) OR
+           - (T, n_traj, state_dim)
+        Y: np.ndarray with shape:
            - (T, state_dim) OR
            - (T, n_traj, state_dim)
 
