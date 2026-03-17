@@ -14,6 +14,7 @@ from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
 from src.models.manual_expansion_manual_dmd import ManualExpansion_ManualDMD
 from src.models.manual_expansion_eigen_dmd import ManualExpansion_EigenDMD
 from src.train.train_onestep import train_onestep
+from src.models.sindy_baseline import SINDyBaseline
 
 """
 Global options (defaults):
@@ -107,6 +108,22 @@ Global options (defaults):
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-3
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-3
 
+    
+# SINDy baseline
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --sindy_discrete_time true --sindy_poly_order 1 --sindy_threshold 0.0 --sindy_alpha 0.0
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/linear/degenerate_node_trajectory.npz --sindy_discrete_time true --sindy_poly_order 1 --sindy_threshold 0.0 --sindy_alpha 0.0
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/linear/inward_spiral_trajectory.npz --sindy_discrete_time true --sindy_poly_order 1 --sindy_threshold 0.0 --sindy_alpha 0.0
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --sindy_discrete_time true --sindy_poly_order 1 --sindy_threshold 0.0 --sindy_alpha 0.0
+
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/duffing_trajectory.npz --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --sindy_discrete_time true --sindy_poly_order 2 --sindy_threshold 0.0 --sindy_alpha 0.0
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --sindy_discrete_time true --sindy_poly_order 4 --sindy_threshold 0.0 --sindy_alpha 0.0
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
+
 ---------------------------------------------------------------------------------------------
 
 Output:
@@ -156,6 +173,7 @@ def main():
             "manual_expansion_manual_dmd",
             "manual_expansion_ml_dmd",
             "manual_expansion_eigen_dmd",
+            "sindy_baseline",
         ],
     )
 
@@ -189,6 +207,20 @@ def main():
     parser.add_argument("--expansion_degree", type=int, default=3)
     parser.add_argument("--sine_cosine_expansion", type=str.lower,choices=["true", "false"], default="true",help="Include sin(x_i) and cos(x_i) terms in the manual expansion basis")
 
+    # --------------------------------------------------
+    # SINDy
+    # --------------------------------------------------
+    parser.add_argument("--sindy_discrete_time", type=str.lower, choices=["true", "false"], default="true")
+    parser.add_argument("--sindy_poly_order", type=int, default=3)
+    parser.add_argument("--sindy_threshold", type=float, default=0.1)
+    parser.add_argument("--sindy_alpha", type=float, default=0.0)
+    parser.add_argument("--sindy_include_bias", type=str.lower, choices=["true", "false"], default="true")
+    parser.add_argument("--sindy_include_interaction", type=str.lower, choices=["true", "false"], default="true")
+    parser.add_argument("--sindy_diff_method", type=str, default="finite_difference",choices=["finite_difference", "smoothed_finite_difference"])
+    parser.add_argument("--sindy_library_type",type=str,default="polynomial",choices=["polynomial", "fourier", "poly_fourier", "specific"])
+    parser.add_argument("--sindy_fourier_n_frequencies", type=int, default=1)
+    parser.add_argument("--sindy_specific_basis_size",type=int,default=None,help="If using sindy_library_type='specific', use the first k basis terms for that system.")
+    
     # --------------------------------------------------
     # Misc
     # --------------------------------------------------
@@ -336,10 +368,82 @@ def main():
 
             print("Saved manual DMD manual expansion baseline to:", save_path)
             return
-
+        
         else:
             raise ValueError(f"Unknown manual model: {args.model}")
+    # ==================================================
+    # SINDy baseline
+    # ==================================================
+    if args.model == "sindy_baseline":
+        print("Fitting SINDy baseline...")
 
+        sindy_discrete_time = (args.sindy_discrete_time == "true")
+        sindy_include_bias = (args.sindy_include_bias == "true")
+        sindy_include_interaction = (args.sindy_include_interaction == "true")
+
+        model = SINDyBaseline(
+            discrete_time=sindy_discrete_time,
+            poly_order=args.sindy_poly_order,
+            include_bias=sindy_include_bias,
+            include_interaction=sindy_include_interaction,
+            threshold=args.sindy_threshold,
+            alpha=args.sindy_alpha,
+            differentiation_method=args.sindy_diff_method,
+            library_type=args.sindy_library_type,
+            fourier_n_frequencies=args.sindy_fourier_n_frequencies,
+            specific_system=system_name if args.sindy_library_type == "specific" else None,
+            specific_basis_size=args.sindy_specific_basis_size,
+        )
+
+        save_path = os.path.join(save_dir, "model.npz")
+
+        if sindy_discrete_time:
+            X_train, Y_train = dataloader_to_numpy(train_loader)
+            model.fit_discrete_pairs(X_train, Y_train)
+        else:
+            meta_data = np.load(args.data_path)
+            X_all = meta_data["X"]
+            train_idx = meta_data["train_idx"]
+            dt = float(meta_data["dt"])
+
+            if X_all.ndim != 3:
+                raise ValueError("Continuous-time SINDy training expects X with shape (T, n_traj, d).")
+
+            X_train = X_all[:, train_idx, :]
+            model.fit_continuous_trajectories(X_train, dt=dt)
+
+        coeffs = model.get_coefficients()
+        equations = np.array(model.equations(), dtype=object)
+
+        np.savez(
+            save_path,
+            model="sindy_baseline",
+            system=system_name,
+            data_path=args.data_path,
+            discrete_time=sindy_discrete_time,
+            poly_order=args.sindy_poly_order,
+            threshold=args.sindy_threshold,
+            alpha=args.sindy_alpha,
+            include_bias=sindy_include_bias,
+            include_interaction=sindy_include_interaction,
+            diff_method=args.sindy_diff_method,
+            library_type=args.sindy_library_type,
+            fourier_n_frequencies=args.sindy_fourier_n_frequencies,
+            specific_system=system_name if args.sindy_library_type == "specific" else "",
+            specific_basis_size=-1 if args.sindy_specific_basis_size is None else args.sindy_specific_basis_size,
+            coefficients=coeffs,
+            equations=equations,
+        )
+
+        with open(os.path.join(save_dir, "equations.txt"), "w", encoding="utf-8") as f:
+            for eq in model.equations():
+                f.write(eq + "\n")
+
+        print("Saved SINDy baseline to:", save_path)
+        print("Discovered equations:")
+        model.print()
+        return
+    
     # ==================================================
     # Network models
     # ==================================================
@@ -395,7 +499,6 @@ def main():
         lr=args.lr,
         weight_decay=args.weight_decay,
     )
-
     # --------------------------------------------------
     # Save model
     # --------------------------------------------------

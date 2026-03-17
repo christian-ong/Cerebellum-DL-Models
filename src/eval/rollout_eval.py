@@ -39,6 +39,9 @@ def evaluate_validation_rollouts(
 
         elif model_name == "manual_expansion_manual_dmd":
             X_hat = model.rollout(K=K, C=C, x0=x0, steps=steps_local).cpu().numpy()
+        
+        elif model_name == "sindy_baseline":
+            X_hat = model.rollout(x0, steps=steps_local)
 
         else:
             X_hat = model.rollout(x0=x0, steps=steps_local).detach().cpu().numpy()
@@ -81,7 +84,10 @@ def compute_single_rollout(
 
     elif model_name == "manual_expansion_manual_dmd":
         X_hat = model.rollout(K=K, C=C, x0=x0, steps=steps).cpu().numpy()
-
+            
+    elif model_name == "sindy_baseline":
+        X_hat = model.rollout(x0, steps=steps)
+        
     else:
         X_hat = model.rollout(x0=x0, steps=steps).detach().cpu().numpy()
 
