@@ -5,6 +5,41 @@ from src.models.expander import ManualExpansion
 
 
 class ManualExpansion_EigenDMD(ManualExpansion):
+    """
+    Manual expansion + learned Koopman eigendecomposition.
+
+    Instead of learning the lifted linear operator K directly, we learn
+
+        K = Phi Λ Phi^{-1}
+
+    but we NEVER explicitly construct K.
+
+    The lifted dynamics are applied as
+
+        z_{t+1} = Phi Λ Phi^{-1} z_t
+
+    which corresponds to:
+
+        z_norm -> modal coordinates -> modal evolution -> lifted coordinates
+
+    Pipeline:
+
+        x  --expand-->  z
+        z  --scale-->   z_norm
+        z_norm --Phi^{-1}--> modal coordinates b
+        b --Lambda--> modal_next
+        modal_next --Phi--> z_norm_next
+        z_norm_next --descale--> z_next
+        z_next --de_expand--> x_next
+
+    Important design choices
+    ------------------------
+    • Polynomial / manual basis expansion
+    • Fixed feature normalization (z_scale)
+    • Degree-weighted lifted loss
+    • Regularization for Phi conditioning
+    • Eigenvalue stability regularization
+    """
 
     def __init__(
         self,
@@ -16,6 +51,9 @@ class ManualExpansion_EigenDMD(ManualExpansion):
         system=None,
     ):
 
+        # ------------------------------------------------
+        # Initialize manual basis expansion
+        # ------------------------------------------------
         super().__init__(
             state_dim=state_dim,
             expansion_degree=expansion_degree,
@@ -27,77 +65,193 @@ class ManualExpansion_EigenDMD(ManualExpansion):
 
         self.latent_dim = self.expanded_dim
 
-        # eigenvectors
+        # ------------------------------------------------
+        # Eigenvector matrix Φ
+        # ------------------------------------------------
+        # Columns correspond to Koopman modes.
+        # Initialized close to identity for stability.
         self.Phi = nn.Parameter(
-            torch.eye(self.latent_dim) + 0.01 * torch.randn(self.latent_dim, self.latent_dim)
-        )
-        # eigenvalue matrix
-        self.Lambda = nn.Parameter(
-            torch.eye(self.latent_dim) + 0.01 * torch.randn(self.latent_dim, self.latent_dim)
+            torch.eye(self.latent_dim)
+            + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
         )
 
+        # ------------------------------------------------
+        # Eigenvalue matrix Λ
+        # ------------------------------------------------
+        # We allow Λ to be a full matrix instead of diagonal.
+        # This allows the model to represent complex eigenvalue
+        # pairs using real-valued 2×2 blocks.
+        self.Lambda = nn.Parameter(
+            torch.eye(self.latent_dim)
+            + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
+        )
+
+        # ------------------------------------------------
+        # Feature scaling buffer
+        # ------------------------------------------------
+        # z_scale normalizes lifted observables
+        # (computed from training data).
+        self.register_buffer("z_scale", torch.ones(self.latent_dim))
+
+        # ------------------------------------------------
+        # Degree-based lifted loss weighting
+        # ------------------------------------------------
+        # High-degree monomials can dominate the loss.
+        # We therefore downweight them.
+        degrees = []
+
+        for name in self.expand_names:
+            deg = name.count("^") + name.count("*")
+            degrees.append(deg)
+
+        degrees = torch.tensor(degrees, dtype=torch.float32)
+        weights = 1.0 / (degrees + 1.0)
+        self.register_buffer("lift_weights", weights)
+
     # ------------------------------------------------
-    # Forward
+    # Set lifted scaling
+    # ------------------------------------------------
+
+    def set_z_scale(self, z_scale):
+        """
+        Store lifted feature scaling computed from training data.
+
+        z_scale_i ≈ mean(|z_i|)
+
+        This ensures the lifted coordinate system stays fixed
+        across training, validation, and rollout.
+        """
+
+        if not torch.is_tensor(z_scale):
+            z_scale = torch.tensor(z_scale, dtype=self.Phi.dtype)
+
+        self.z_scale.copy_(z_scale.to(self.z_scale.device))
+
+    # ------------------------------------------------
+    # Forward pass
     # ------------------------------------------------
 
     def forward(self, x):
+        """
+        One-step prediction
 
-        z = self.expand(x)
+            x_t → x_{t+1}
 
-        Phi_inv = torch.linalg.inv(self.Phi)
+        using the Koopman eigendecomposition.
+        """
 
+        # Lift state into observable space
+        z_raw = self.expand(x)
+
+        # Normalize lifted coordinates
+        z = z_raw / self.z_scale
+
+        # Compute pseudo-inverse of Phi
+        Phi_inv = torch.linalg.pinv(self.Phi)
+
+        # Convert to modal coordinates
         b = z @ Phi_inv.mT
+
+        # Modal evolution
         b_next = b @ self.Lambda.mT
+
+        # Convert back to lifted coordinates
         z_next = b_next @ self.Phi.mT
 
-        x_next = self.de_expand(z_next)
+        # De-normalize lifted observables
+        z_next_raw = z_next * self.z_scale
+
+        # Recover original state
+        x_next = self.de_expand(z_next_raw)
 
         return x_next
 
     # ------------------------------------------------
-    # Loss
+    # Training loss
     # ------------------------------------------------
 
     def compute_loss(self, x, x_next_true):
 
-        z = self.expand(x)
-        z_next_true = self.expand(x_next_true)
+        # Expand states
+        z_raw = self.expand(x)
+        z_next_true_raw = self.expand(x_next_true)
 
-        Phi_inv = torch.linalg.inv(self.Phi)
+        # Normalize lifted coordinates
+        z = z_raw / self.z_scale
+        z_next_true = z_next_true_raw / self.z_scale
 
+        Phi_inv = torch.linalg.pinv(self.Phi)
+
+        # Convert to modal coordinates
         b = z @ Phi_inv.mT
+
+        # Modal evolution
         b_next = b @ self.Lambda.mT
+
+        # Convert back to lifted coordinates
         z_next_pred = b_next @ self.Phi.mT
 
         # --------------------------------------------------
-        # 1) Prediction loss in lifted space
+        # 1) Weighted lifted loss
         # --------------------------------------------------
 
-        loss_lift = nn.MSELoss()(z_next_pred, z_next_true)
+        diff = z_next_pred - z_next_true
+        loss_lift = torch.mean(self.lift_weights * diff**2)
 
         # --------------------------------------------------
-        # 2) Φ conditioning regularization
+        # 2) State prediction loss
         # --------------------------------------------------
 
-        Phi_inv_norm = torch.norm(Phi_inv)
+        z_next_pred_raw = z_next_pred * self.z_scale
+        x_next_pred = self.de_expand(z_next_pred_raw)
+        loss_state = nn.MSELoss()(x_next_pred, x_next_true)
 
         # --------------------------------------------------
-        # 3) column normalization for Φ
+        # 3) Φ conditioning regularization
         # --------------------------------------------------
+
+        loss_phi_inv = torch.norm(Phi_inv)
 
         col_norms = torch.linalg.norm(self.Phi, dim=0)
         loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
 
-        loss = (
-            loss_lift
-            + 1e-4 * Phi_inv_norm
-            + 1e-3 * loss_unit_length
+        I = torch.eye(self.latent_dim, device=self.Phi.device)
+        loss_orth = torch.norm(self.Phi.T @ self.Phi - I)
+
+        # --------------------------------------------------
+        # 4) Stability regularization on effective operator
+        # --------------------------------------------------
+
+        K_eff = self.Phi @ self.Lambda @ Phi_inv
+        eigvals = torch.linalg.eigvals(K_eff)
+
+        loss_stability = torch.mean(
+            torch.relu(torch.abs(eigvals) - 1.0) ** 2
         )
 
+        # --------------------------------------------------
+        # 5) Φ orthogonality regularization
+        # --------------------------------------------------
+
+        I = torch.eye(self.latent_dim, device=self.Phi.device)
+        loss_orth = torch.norm(self.Phi.T @ self.Phi - I)
+
+        # --------------------------------------------------
+        # Total loss
+        # --------------------------------------------------
+
+        loss = (
+            loss_lift
+            + 0.1 * loss_state
+            + 1e-4 * loss_phi_inv
+            + 1e-3 * loss_unit_length
+            + 1e-2 * loss_stability
+            + 1e-3 * loss_orth
+        )
         return (loss,)
 
     # ------------------------------------------------
-    # Rollout
+    # Rollout simulation
     # ------------------------------------------------
 
     def rollout(self, x0, steps):
@@ -117,9 +271,7 @@ class ManualExpansion_EigenDMD(ManualExpansion):
         traj = [x.squeeze(0)]
 
         for _ in range(steps):
-
             x = self.forward(x)
-
             traj.append(x.squeeze(0))
 
         return torch.stack(traj)

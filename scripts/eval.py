@@ -84,6 +84,16 @@ Global options (defaults):
     python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/inward_spiral/default/model.pt
     python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/harmonic_oscillator/default/model.pt
 
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/koopman_poly/default/model.pt
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/koopman_poly_large/default/model.pt
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/koopman_poly_trig/default/model.pt
+
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/vanderpol/default/model.pt
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/lotka_volterra/default/model.pt
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/pendulum/default/model.pt
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/duffing/default/model.pt
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/lorenz/default/model.pt
+
 # Manual expansion + Eigen DMD
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/saddle_point/default/model.pt
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/degenerate_node/default/model.pt
@@ -490,8 +500,12 @@ def main():
         print("Full lifted transition matrix shape:", K.shape)
 
         # extract state indices (x,y or x,y,z)
-        state_idx = model.state_indices
-        K_xx = K[np.ix_(state_idx, state_idx)]
+        if hasattr(model, "state_indices"):
+            state_idx = model.state_indices
+            K_xx = K[np.ix_(state_idx, state_idx)]
+        else:
+            # no lifting → the whole matrix is the state block
+            K_xx = K
 
         print("\nState-space block K_xx:")
         print(K_xx)
@@ -519,8 +533,12 @@ def main():
         print("Full lifted transition matrix shape:", K.shape)
 
         # Extract state block
-        state_idx = model.state_indices
-        K_xx = K[np.ix_(state_idx, state_idx)]
+        if hasattr(model, "state_indices"):
+            state_idx = model.state_indices
+            K_xx = K[np.ix_(state_idx, state_idx)]
+        else:
+            # no lifting → the whole matrix is the state block
+            K_xx = K
 
         print("\nState-space block K_xx:")
         print(K_xx)
