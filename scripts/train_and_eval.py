@@ -259,8 +259,8 @@ def main():
     parser.add_argument("--sine_cosine_expansion", type=str.lower, choices=["true", "false"], default="false")
 
     # eval
-    parser.add_argument("--val_horizons", type=str, default="10,50,200")
-    parser.add_argument("--val_rollout_horizons", type=str, default="10,50,200")  
+    parser.add_argument("--val_horizons", type=str, default="10")
+    parser.add_argument("--val_rollout_horizons", type=str, default="10")  
     parser.add_argument("--max_one_step_pairs_per_traj", type=int, default=None)
     parser.add_argument("--max_horizon_starts_per_traj", type=int, default=None)
 

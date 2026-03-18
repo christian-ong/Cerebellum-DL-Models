@@ -9,24 +9,46 @@ command:
   - python
   - -m
   - scripts.train_and_eval
-  - --model
-  - <MODEL_NAME>
-  - --data_path
-  - <DATA_PATH>
   - --epochs
   - 50
   - ${args}
-  
+
 parameters:
+
+  # -------------------------
+  # Model (both expansion types)
+  # -------------------------
+  model:
+    values:
+      - manual_expansion_ml_dmd
+      - manual_expansion_eigen_dmd
+
+  # -------------------------
+  # Systems (datasets)
+  # -------------------------
+  data_path:
+    values:
+      - data/trajectories/nonlinear/vanderpol_trajectory.npz
+      - data/trajectories/nonlinear/lotka_volterra_trajectory.npz
+      - data/trajectories/nonlinear/pendulum_trajectory.npz
+      - data/trajectories/nonlinear/duffing_trajectory.npz
+      - data/trajectories/nonlinear/lorenz_trajectory.npz
+
+  # -------------------------
+  # Training hyperparameters
+  # -------------------------
   lr:
     values: [1e-4, 5e-4, 1e-3]
 
   weight_decay:
-    values: [0.0, 1e-8, 1e-6]
+    values: [0.0, 1e-6]
 
   batch_size:
     values: [32, 64]
 
+  # -------------------------
+  # Expansion hyperparameters
+  # -------------------------
   expansion_degree:
     values: [2, 3, 4, 5]
 

@@ -10,5 +10,6 @@
 # data (except .py files)
 /data/*
 
-# wandb
+# hpc + wandb
 wandb/
+hpc/runs/*
