@@ -9,3 +9,6 @@
 
 # data (except .py files)
 /data/*
+
+# wandb
+wandb/
