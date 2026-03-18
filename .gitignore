@@ -12,4 +12,5 @@
 
 # hpc + wandb
 wandb/
-hpc/runs/*
+hpc/runs/*.err
+hpc/runs/*.out
