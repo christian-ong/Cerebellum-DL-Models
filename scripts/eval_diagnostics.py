@@ -22,10 +22,39 @@ from src.eval.model_io import (
     load_model,
     predict_rollout_from_x0,
 )
-'''
-# Run validation diagnostics and save summary/plots for manual-expansion manual DMD
+"""
+Validation-side diagnostic evaluation for trained dynamical-system models.
+
+This script is used for model selection and debugging on `val_idx`, not for final test reporting.
+
+It computes:
+- one-step MSE / RMSE / NRMSE
+- terminal horizon MSE / RMSE / NRMSE
+- full-rollout MSE / RMSE / NRMSE
+- composite validation score
+
+It saves:
+- diagnostics_summary.npz
+
+It also produces diagnostic plots:
+- error vs horizon
+- phase-space error maps
+- rollout error summary
+- initial-condition error map
+
+Typical workflow:
+train -> eval_diagnostics on validation -> compare models -> eval on test
+
+Examples:
+python -m scripts.eval_diagnostics --model linear_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/linear_baseline/saddle_point/default/model.npz --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
+python -m scripts.eval_diagnostics --model dmd_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/dmd_baseline/saddle_point/default/model.npz --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
+python -m scripts.eval_diagnostics --model ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_dmd/saddle_point/default/model.pt --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
+python -m scripts.eval_diagnostics --model ml_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_eigen_dmd/saddle_point/default/model.pt --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
 python -m scripts.eval_diagnostics --model manual_expansion_manual_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/saddle_point/default/model.npz --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
-'''
+python -m scripts.eval_diagnostics --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/saddle_point/default/model.pt --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
+python -m scripts.eval_diagnostics --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/saddle_point/default/model.pt --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
+python -m scripts.eval_diagnostics --model sindy_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/sindy_baseline/saddle_point/default/model.npz --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
+"""
 
 def parse_int_list(text: str) -> List[int]:
     values = []

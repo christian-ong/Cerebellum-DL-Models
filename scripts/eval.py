@@ -10,6 +10,14 @@ from src.eval.plot_eigenvalues import plot_eigenvalues
 from src.eval.plot_training_losses import plot_training_losses
 from src.eval.plot_matrices import plot_transition_matrix
 
+from src.eval.metrics import (
+    compute_one_step_metrics,
+    compute_horizon_metrics,
+    compute_full_rollout_metrics,
+    compute_composite_validation_score,
+    get_state_scale_from_train_split,
+    save_summary_npz,
+)
 """
 Global options (defaults):
     --model {
@@ -66,6 +74,9 @@ Global options (defaults):
     python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/koopman_poly/default/model.npz
     python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/koopman_poly_large/default/model.npz
     python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/koopman_poly_trig/default/model.npz
+    
+    # Final test evaluation + also print the saved validation diagnostics summary for the same run
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
 
 # Manual expansion + ML DMD
     python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/saddle_point/default/model.pt
@@ -113,13 +124,59 @@ Global options (defaults):
     python -m scripts.eval --model sindy_baseline --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --model_path data/models/sindy_baseline/koopman_poly/default/model.npz
     python -m scripts.eval --model sindy_baseline --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --model_path data/models/sindy_baseline/koopman_poly_large/default/model.npz
     python -m scripts.eval --model sindy_baseline --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --model_path data/models/sindy_baseline/koopman_poly_trig/default/model.npz
-        
+    
+    # Final test evaluation + print matching validation summary + save test_summary.npz.  (saddle_point example)
+    python -m scripts.eval --model linear_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/linear_baseline/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
+    python -m scripts.eval --model dmd_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/dmd_baseline/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
+    python -m scripts.eval --model ml_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_eigen_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
+    python -m scripts.eval --model sindy_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/sindy_baseline/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
 ---------------------------------------------------------------------------------------------
 
 Output:
     data/figures/{model}/{system}/{name}/time_series_idx{traj_index}.png
     data/figures/{model}/{system}/{name}/rollout_idx{traj_index}.png
 """
+def get_default_summary_path(model_name: str, system: str, run_name: str) -> str:
+    return os.path.join(
+        "data", "figures", model_name, system, run_name, "diagnostics", "diagnostics_summary.npz"
+    )
+
+
+def print_validation_summary(summary_path: str) -> None:
+    if not os.path.exists(summary_path):
+        print(f"\nNo validation summary found at: {summary_path}")
+        return
+
+    d = np.load(summary_path, allow_pickle=True)
+
+    print("\n--- Validation diagnostics summary ---")
+    if "composite_validation_score" in d:
+        print(f"Composite validation score : {float(d['composite_validation_score']):.6e}")
+    if "one_step_mse" in d:
+        print(f"One-step MSE               : {float(d['one_step_mse']):.6e}")
+    if "one_step_rmse" in d:
+        print(f"One-step RMSE              : {float(d['one_step_rmse']):.6e}")
+    if "one_step_nrmse" in d:
+        print(f"One-step NRMSE             : {float(d['one_step_nrmse']):.6e}")
+    if "horizon_nrmse" in d:
+        print(f"Mean horizon NRMSE         : {float(np.mean(d['horizon_nrmse'])):.6e}")
+    if "rollout_nrmse" in d:
+        print(f"Mean rollout NRMSE         : {float(np.mean(d['rollout_nrmse'])):.6e}")
+    print(f"Summary file               : {summary_path}")
+
+def parse_int_list(text: str):
+    values = []
+    for item in text.split(","):
+        item = item.strip()
+        if item:
+            values.append(int(item))
+    if not values:
+        raise ValueError("At least one horizon must be provided.")
+    return sorted(set(values))
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate trained models")
@@ -140,7 +197,14 @@ def main():
     parser.add_argument("--steps", type=int, default=5000)
     parser.add_argument("--traj_index", type=int, default=0, help="Which test trajectory to show")
     parser.add_argument("--name", type=str, help="Optional suffix for saved figure")
-
+    parser.add_argument("--print_validation_summary",action="store_true",help="Print saved validation diagnostics summary for the same run if available.")
+    parser.add_argument("--summary_path",type=str,default=None,help="Optional explicit path to diagnostics_summary.npz. If omitted, the default run-matched path is used.")
+    parser.add_argument("--horizons",type=str,default="1,2,5,10,20,50,100",help="Comma-separated terminal horizons for test metrics.")
+    parser.add_argument("--rollout_horizons",type=str,default="5,10,20,50,100",help="Comma-separated rollout horizons from x(0) for test metrics.")
+    parser.add_argument("--max_one_step_pairs_per_traj",type=int,default=None, help="Optional cap on one-step pairs per test trajectory.")
+    parser.add_argument("--max_horizon_starts_per_traj",type=int,default=None,help="Optional cap on number of start points per test trajectory for horizon metrics." )
+    
+    
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -229,6 +293,91 @@ def main():
 
     figdir = os.path.join("data", "figures", args.model, system, run_name)
     os.makedirs(figdir, exist_ok=True)
+    if args.print_validation_summary:
+        summary_path = args.summary_path
+        if summary_path is None:
+            summary_path = get_default_summary_path(args.model, system, run_name)
+        print_validation_summary(summary_path)
+
+    # --------------------------------------------------
+    # Compute richer TEST metrics (same family as diagnostics)
+    # --------------------------------------------------
+
+    horizons = parse_int_list(args.horizons)
+    rollout_horizons = parse_int_list(args.rollout_horizons)
+
+    max_needed = max(max(horizons), max(rollout_horizons))
+    if X.shape[0] <= max_needed:
+        raise ValueError(
+            f"Trajectory length T={X.shape[0]} is too short for requested max horizon {max_needed}. "
+            "Use smaller horizons."
+        )
+
+    scales = get_state_scale_from_train_split(args.data_path)
+    scale_std = scales["std"]
+
+    one_step_metrics = compute_one_step_metrics(
+        X=X,
+        traj_indices=test_idx,
+        model_name=args.model,
+        model=model,
+        extras=extras,
+        scale_std=scale_std,
+        max_pairs_per_traj=args.max_one_step_pairs_per_traj,
+    )
+
+    horizon_metrics = compute_horizon_metrics(
+        X=X,
+        traj_indices=test_idx,
+        horizons=horizons,
+        model_name=args.model,
+        model=model,
+        extras=extras,
+        scale_std=scale_std,
+        max_starts_per_traj=args.max_horizon_starts_per_traj,
+    )
+
+    rollout_metrics = compute_full_rollout_metrics(
+        X=X,
+        traj_indices=test_idx,
+        rollout_horizons=rollout_horizons,
+        model_name=args.model,
+        model=model,
+        extras=extras,
+        scale_std=scale_std,
+    )
+
+    test_composite_score = compute_composite_validation_score(
+        one_step_nrmse=float(one_step_metrics["one_step_nrmse"]),
+        horizon_nrmse=horizon_metrics["horizon_nrmse"],
+        rollout_nrmse=rollout_metrics["rollout_nrmse"],
+    )
+
+    print("\n--- Test metric summary ---")
+    print(f"One-step MSE              : {float(one_step_metrics['one_step_mse']):.6e}")
+    print(f"One-step RMSE             : {float(one_step_metrics['one_step_rmse']):.6e}")
+    print(f"One-step NRMSE            : {float(one_step_metrics['one_step_nrmse']):.6e}")
+    print(f"Mean horizon RMSE         : {float(np.mean(horizon_metrics['horizon_rmse'])):.6e}")
+    print(f"Mean horizon NRMSE        : {float(np.mean(horizon_metrics['horizon_nrmse'])):.6e}")
+    print(f"Mean rollout RMSE         : {float(np.mean(rollout_metrics['rollout_rmse'])):.6e}")
+    print(f"Mean rollout NRMSE        : {float(np.mean(rollout_metrics['rollout_nrmse'])):.6e}")
+    print(f"Composite test score      : {test_composite_score:.6e}  (reporting only)")
+
+    test_summary_path = os.path.join(figdir, "test_summary.npz")
+    test_summary_payload = {
+        "model_name": np.array(args.model),
+        "system": np.array(system),
+        "run_name": np.array(run_name),
+        "split": np.array("test"),
+        "test_idx": np.asarray(test_idx),
+        "scale_std": scale_std,
+        "test_composite_score": np.array(test_composite_score),
+        **one_step_metrics,
+        **horizon_metrics,
+        **rollout_metrics,
+    }
+    save_summary_npz(test_summary_path, test_summary_payload)
+    print(f"Saved test summary        : {test_summary_path}")
 
     # --------------------------------------------------
     # Save trajectory plots
@@ -384,7 +533,6 @@ def main():
             "harmonic_oscillator",
         ]:
             print("\nCompare this with true A_d from Overleaf.")
-
 
 if __name__ == "__main__":
     main()
