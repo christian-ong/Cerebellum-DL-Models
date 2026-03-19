@@ -24,11 +24,7 @@ parameters:
       - manual_expansion_eigen_dmd
 
   data_path:
-    values:
-      - data/trajectories/nonlinear/vanderpol_trajectory.npz
-      - data/trajectories/nonlinear/lotka_volterra_trajectory.npz
-      - data/trajectories/nonlinear/duffing_trajectory.npz
-      - data/trajectories/nonlinear/lorenz_trajectory.npz
+    - data/trajectories/nonlinear/pendulum_trajectory.npz
 
   lr:
     values: [1e-4, 5e-4, 1e-3]
@@ -40,10 +36,10 @@ parameters:
     values: [64]
 
   expansion_degree:
-    values: [3, 5, 10]
+    values: [2, 7]
 
   expansion_type:
-    values: ["specific"]
+    values: ["general"]
 
   sine_cosine_expansion:
-    values: ["false"]
+    values: ["true"]

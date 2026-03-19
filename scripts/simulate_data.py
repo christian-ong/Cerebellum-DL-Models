@@ -53,23 +53,23 @@ System-specific parameters:
 Linear system  x' = A x
 --------------------------------------------------
 
-python -m scripts.simulate_data --system inward_spiral --n_traj 500 --T 5
-python -m scripts.simulate_data --system harmonic_oscillator --n_traj 500 --T 5
-python -m scripts.simulate_data --system saddle_point --n_traj 500 --T 5
-python -m scripts.simulate_data --system degenerate_node --n_traj 500 --T 5
+python -m scripts.simulate_data --system inward_spiral --n_traj 100 --T 5
+python -m scripts.simulate_data --system harmonic_oscillator --n_traj 100 --T 5
+python -m scripts.simulate_data --system saddle_point --n_traj 100 --T 5
+python -m scripts.simulate_data --system degenerate_node --n_traj 100 --T 5
 
 --------------------------------------------------
 Nonlinear systems
 --------------------------------------------------
 
-python -m scripts.simulate_data --system vanderpol --n_traj 500 --T 15
-python -m scripts.simulate_data --system lotka_volterra --n_traj 500 --T 15
-python -m scripts.simulate_data --system pendulum --n_traj 500 --T 15
-python -m scripts.simulate_data --system duffing --n_traj 500 --T 15
-python -m scripts.simulate_data --system lorenz --n_traj 500 --T 15
-python -m scripts.simulate_data --system koopman_poly --n_traj 500 --T 8 --dt 0.01 --mu_KP 0.1 --alpha_KP -1.0
-python -m scripts.simulate_data --system koopman_poly_large --n_traj 500 --T 8 --dt 0.01
-python -m scripts.simulate_data --system koopman_poly_trig --n_traj 500 --T 8 --dt 0.01
+python -m scripts.simulate_data --system vanderpol --n_traj 100 --T 15
+python -m scripts.simulate_data --system lotka_volterra --n_traj 100 --T 15
+python -m scripts.simulate_data --system pendulum --n_traj 100 --T 15
+python -m scripts.simulate_data --system duffing --n_traj 100 --T 15
+python -m scripts.simulate_data --system lorenz --n_traj 100 --T 15
+python -m scripts.simulate_data --system koopman_poly --n_traj 100 --T 8 --dt 0.01 --mu_KP 0.1 --alpha_KP -1.0
+python -m scripts.simulate_data --system koopman_poly_large --n_traj 100 --T 8 --dt 0.01
+python -m scripts.simulate_data --system koopman_poly_trig --n_traj 100 --T 8 --dt 0.01
 --------------------------------------------------
 Output
 --------------------------------------------------
