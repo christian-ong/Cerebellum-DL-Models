@@ -1,0 +1,49 @@
+method: grid
+
+metric:
+  name: val_rollout_rmse
+  goal: minimize
+
+command:
+  - ${env}
+  - python
+  - -m
+  - scripts.train_sweep
+  - --epochs
+  - 20
+  - --eval_every
+  - 1
+  - --num_workers
+  - 4
+  - ${args}
+
+parameters:
+  model:
+    values:
+      - manual_expansion_ml_dmd
+      - manual_expansion_eigen_dmd
+
+  data_path:
+    values:
+      - data/trajectories/nonlinear/vanderpol_trajectory.npz
+      - data/trajectories/nonlinear/lotka_volterra_trajectory.npz
+      - data/trajectories/nonlinear/duffing_trajectory.npz
+      - data/trajectories/nonlinear/lorenz_trajectory.npz
+
+  lr:
+    values: [1e-4, 5e-4, 1e-3]
+
+  weight_decay:
+    values: [0.0, 1e-6]
+
+  batch_size:
+    values: [64]
+
+  expansion_degree:
+    values: [3, 5, 10]
+
+  expansion_type:
+    values: ["specific"]
+
+  sine_cosine_expansion:
+    values: ["false"]

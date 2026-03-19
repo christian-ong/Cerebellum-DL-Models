@@ -52,16 +52,16 @@ Global options (defaults):
 ---------------------------------------------------------------------------------------------
 
 # ML DMD
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 2
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 2
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 2
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 2
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 10
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 10
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 10
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 10
 
 # ML Eigen DMD
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 2
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 2
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 2
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 2
+    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 10
+    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 10
+    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 10
+    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 10
 
 ---------------------------------------------------------------------------------------------
 
@@ -76,8 +76,8 @@ Global options (defaults):
     python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --expansion_type specific --expansion_degree 10
     python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --expansion_type specific --expansion_degree 10
     python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --expansion_type specific --expansion_degree 10
-    python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --expansion_degree 2
-    python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --expansion_degree 4
+    python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --expansion_type specific --expansion_degree 3
+    python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --expansion_type specific --expansion_degree 5
     python -m scripts.train --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --expansion_type specific --expansion_degree 10
 
 # Manual expansion + ML DMD
@@ -90,7 +90,7 @@ Global options (defaults):
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5
 
-    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --epochs 10 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
     python -m scripts.train --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
@@ -106,11 +106,11 @@ Global options (defaults):
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 5 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
     python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5
 
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --epochs 10 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-3
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-3
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-3
-    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-3
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
 
     
 # SINDy baseline

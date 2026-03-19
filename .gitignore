@@ -9,3 +9,8 @@
 
 # data (except .py files)
 /data/*
+
+# hpc + wandb
+wandb/
+hpc/runs/*.err
+hpc/runs/*.out
