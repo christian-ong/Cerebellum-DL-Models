@@ -5,6 +5,32 @@ import numpy as np
 
 from src.eval.model_io import predict_rollout_from_x0
 
+"""
+Shared metric functions for dynamical-system evaluation.
+
+Metric meaning:
+- One-step metrics:
+  Start from many valid states x_t and compare the predicted next state to the true next state x_{t+1}.
+  These measure local one-step prediction quality.
+
+- Horizon metrics:
+  For a chosen horizon h, start from many valid states x_t, roll the model forward h steps,
+  and compare only the final predicted state x_{t+h} to the true x_{t+h}.
+  Example: horizon-5 RMSE means the error at the 5th predicted point only, not the sum of errors from steps 1 to 5.
+
+- Full-rollout metrics:
+  Start from x_0 of each selected trajectory, roll forward up to horizon h,
+  and compare the full predicted rollout [x_0, ..., x_h] to the full true rollout [x_0, ..., x_h].
+  These measure accumulated forecasting quality over the whole rollout.
+
+- NRMSE:
+  RMSE normalized by the state-wise standard deviation computed from the training split.
+  This makes errors more comparable across state dimensions and across models evaluated on the same dataset.
+
+- Composite score:
+  Weighted combination of one-step NRMSE, mean horizon NRMSE, and mean rollout NRMSE.
+  Lower is better.
+"""
 
 EPS = 1e-12
 
@@ -63,6 +89,64 @@ def _mse_rmse_nrmse_from_errors(errors: np.ndarray, scale: np.ndarray) -> Dict[s
         "nrmse_per_dim": nrmse_per_dim,
     }
 
+def build_rollout_cache(
+    *,
+    X: np.ndarray,
+    traj_indices: np.ndarray,
+    model_name: str,
+    model,
+    extras: Dict,
+    max_horizon: int,
+    start_stride: int = 1,
+    max_starts_per_traj: Optional[int] = None,
+) -> Dict[int, Dict[str, np.ndarray]]:
+    """
+    Cache rollouts for each selected trajectory and valid start point.
+
+    Returns
+    -------
+    cache : dict
+        cache[traj_id] = {
+            "starts": array of start indices,
+            "rollouts": list of rollout arrays, each of shape (max_horizon+1, d)
+        }
+    """
+    T, _, _ = X.shape
+    cache = {}
+
+    for traj_id in traj_indices:
+        X_traj = X[:, traj_id, :]
+        n_valid_starts = T - max_horizon
+        if n_valid_starts <= 0:
+            raise ValueError(f"Trajectory length {T} is too short for max horizon {max_horizon}.")
+
+        starts = np.arange(0, n_valid_starts, start_stride)
+
+        if max_starts_per_traj is not None and len(starts) > max_starts_per_traj:
+            keep = np.linspace(0, len(starts) - 1, max_starts_per_traj, dtype=int)
+            starts = starts[keep]
+            if starts[0] != 0:
+                starts[0] = 0
+            starts = np.unique(starts)
+
+        rollouts = []
+        for t0 in starts:
+            x0 = X_traj[t0]
+            rollout = predict_rollout_from_x0(
+                x0=x0,
+                steps=max_horizon,
+                model_name=model_name,
+                model=model,
+                extras=extras,
+            )
+            rollouts.append(rollout)
+
+        cache[traj_id] = {
+            "starts": starts,
+            "rollouts": rollouts,
+        }
+
+    return cache
 
 def compute_one_step_metrics(
     *,
@@ -73,45 +157,52 @@ def compute_one_step_metrics(
     extras: Dict,
     scale_std: np.ndarray,
     max_pairs_per_traj: Optional[int] = None,
+    rollout_cache: Optional[Dict[int, Dict[str, np.ndarray]]] = None,
 ) -> Dict[str, np.ndarray]:
     """
     Evaluate direct one-step prediction x_t -> x_{t+1} over selected trajectories.
+    If rollout_cache is provided, the same cached start points are used for consistency.
     """
-    T, _, d = X.shape
+    T, _, _ = X.shape
     err_list = []
     per_traj_mse = []
 
     for traj_id in traj_indices:
         X_traj = X[:, traj_id, :]
-        n_pairs = T - 1
-        starts = np.arange(n_pairs)
-
-        if max_pairs_per_traj is not None and len(starts) > max_pairs_per_traj:
-            keep = np.linspace(0, len(starts) - 1, max_pairs_per_traj, dtype=int)
-            starts = starts[keep]
-
         traj_sq_err = []
 
-        for t0 in starts:
-            x0 = X_traj[t0]
-            x1_true = X_traj[t0 + 1]
+        if rollout_cache is not None and traj_id in rollout_cache:
+            starts = rollout_cache[traj_id]["starts"]
+            rollouts = rollout_cache[traj_id]["rollouts"]
 
-            rollout = predict_rollout_from_x0(
-                x0=x0,
-                steps=1,
-                model_name=model_name,
-                model=model,
-                extras=extras,
-            )
-            x1_hat = rollout[1]
+            for t0, rollout in zip(starts, rollouts):
+                if t0 + 1 >= X_traj.shape[0]:
+                    continue
+                err = rollout[1] - X_traj[t0 + 1]
+                err_list.append(err)
+                traj_sq_err.append(np.mean(err ** 2))
+        else:
+            starts = np.arange(T - 1)
+            if max_pairs_per_traj is not None and len(starts) > max_pairs_per_traj:
+                keep = np.linspace(0, len(starts) - 1, max_pairs_per_traj, dtype=int)
+                starts = starts[keep]
 
-            err = x1_hat - x1_true
-            err_list.append(err)
-            traj_sq_err.append(np.mean(err ** 2))
+            for t0 in starts:
+                x0 = X_traj[t0]
+                rollout = predict_rollout_from_x0(
+                    x0=x0,
+                    steps=1,
+                    model_name=model_name,
+                    model=model,
+                    extras=extras,
+                )
+                err = rollout[1] - X_traj[t0 + 1]
+                err_list.append(err)
+                traj_sq_err.append(np.mean(err ** 2))
 
         per_traj_mse.append(np.mean(traj_sq_err))
 
-    errors = np.asarray(err_list)  # (N, d)
+    errors = np.asarray(err_list)
     stats = _mse_rmse_nrmse_from_errors(errors, scale_std)
 
     return {
@@ -137,11 +228,13 @@ def compute_horizon_metrics(
     scale_std: np.ndarray,
     start_stride: int = 1,
     max_starts_per_traj: Optional[int] = None,
+    rollout_cache: Optional[Dict[int, Dict[str, np.ndarray]]] = None,
 ) -> Dict[str, np.ndarray]:
     """
     Terminal h-step metrics over selected trajectories and valid starting points.
+    If rollout_cache is provided, cached rollouts are reused for all horizons.
     """
-    T, _, d = X.shape
+    T, _, _ = X.shape
     max_h = max(horizons)
 
     per_h_errors = {h: [] for h in horizons}
@@ -149,32 +242,43 @@ def compute_horizon_metrics(
 
     for traj_id in traj_indices:
         X_traj = X[:, traj_id, :]
-        n_valid_starts = T - max_h
-        if n_valid_starts <= 0:
-            raise ValueError(f"Trajectory length {T} is too short for max horizon {max_h}.")
-
-        starts = np.arange(0, n_valid_starts, start_stride)
-
-        if max_starts_per_traj is not None and len(starts) > max_starts_per_traj:
-            keep = np.linspace(0, len(starts) - 1, max_starts_per_traj, dtype=int)
-            starts = starts[keep]
-
         traj_h_sq = {h: [] for h in horizons}
 
-        for t0 in starts:
-            x0 = X_traj[t0]
-            rollout = predict_rollout_from_x0(
-                x0=x0,
-                steps=max_h,
-                model_name=model_name,
-                model=model,
-                extras=extras,
-            )
+        if rollout_cache is not None and traj_id in rollout_cache:
+            starts = rollout_cache[traj_id]["starts"]
+            rollouts = rollout_cache[traj_id]["rollouts"]
 
-            for h in horizons:
-                err = rollout[h] - X_traj[t0 + h]
-                per_h_errors[h].append(err)
-                traj_h_sq[h].append(np.mean(err ** 2))
+            for t0, rollout in zip(starts, rollouts):
+                for h in horizons:
+                    if t0 + h >= X_traj.shape[0]:
+                        continue
+                    err = rollout[h] - X_traj[t0 + h]
+                    per_h_errors[h].append(err)
+                    traj_h_sq[h].append(np.mean(err ** 2))
+        else:
+            n_valid_starts = T - max_h
+            if n_valid_starts <= 0:
+                raise ValueError(f"Trajectory length {T} is too short for max horizon {max_h}.")
+
+            starts = np.arange(0, n_valid_starts, start_stride)
+            if max_starts_per_traj is not None and len(starts) > max_starts_per_traj:
+                keep = np.linspace(0, len(starts) - 1, max_starts_per_traj, dtype=int)
+                starts = starts[keep]
+
+            for t0 in starts:
+                x0 = X_traj[t0]
+                rollout = predict_rollout_from_x0(
+                    x0=x0,
+                    steps=max_h,
+                    model_name=model_name,
+                    model=model,
+                    extras=extras,
+                )
+
+                for h in horizons:
+                    err = rollout[h] - X_traj[t0 + h]
+                    per_h_errors[h].append(err)
+                    traj_h_sq[h].append(np.mean(err ** 2))
 
         for h in horizons:
             per_h_traj_mse[h].append(np.mean(traj_h_sq[h]))
@@ -226,9 +330,11 @@ def compute_full_rollout_metrics(
     model,
     extras: Dict,
     scale_std: np.ndarray,
+    rollout_cache: Optional[Dict[int, Dict[str, np.ndarray]]] = None,
 ) -> Dict[str, np.ndarray]:
     """
     Full-rollout metrics from the first point of each selected trajectory.
+    If rollout_cache is provided, it expects that t0 = 0 is included in the cached starts.
     """
     out = {
         "rollout_horizons": np.asarray(rollout_horizons, dtype=int),
@@ -244,16 +350,27 @@ def compute_full_rollout_metrics(
         all_errors = []
 
         for traj_id in traj_indices:
-            X_true = X[: h + 1, traj_id, :]
-            x0 = X_true[0]
+            X_traj = X[:, traj_id, :]
 
-            rollout = predict_rollout_from_x0(
-                x0=x0,
-                steps=h,
-                model_name=model_name,
-                model=model,
-                extras=extras,
-            )
+            if rollout_cache is not None and traj_id in rollout_cache:
+                starts = rollout_cache[traj_id]["starts"]
+                rollouts = rollout_cache[traj_id]["rollouts"]
+
+                if len(starts) == 0 or starts[0] != 0:
+                    raise ValueError("Full-rollout metrics with cache expect start t0=0 to be included.")
+
+                rollout = rollouts[0][: h + 1]
+                X_true = X_traj[: h + 1]
+            else:
+                X_true = X_traj[: h + 1]
+                x0 = X_true[0]
+                rollout = predict_rollout_from_x0(
+                    x0=x0,
+                    steps=h,
+                    model_name=model_name,
+                    model=model,
+                    extras=extras,
+                )
 
             err = rollout - X_true
             all_errors.append(err.reshape(-1, err.shape[-1]))

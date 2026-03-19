@@ -9,7 +9,7 @@ from src.eval.plot_rollout import plot_time_series, plot_phase_space
 from src.eval.plot_eigenvalues import plot_eigenvalues
 from src.eval.plot_training_losses import plot_training_losses
 from src.eval.plot_matrices import plot_transition_matrix
-
+from src.eval.diagnostics import parse_int_list, run_diagnostics
 from src.eval.metrics import (
     compute_one_step_metrics,
     compute_horizon_metrics,
@@ -17,6 +17,7 @@ from src.eval.metrics import (
     compute_composite_validation_score,
     get_state_scale_from_train_split,
     save_summary_npz,
+    build_rollout_cache,
 )
 """
 Global options (defaults):
@@ -125,16 +126,18 @@ Global options (defaults):
     python -m scripts.eval --model sindy_baseline --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --model_path data/models/sindy_baseline/koopman_poly_large/default/model.npz
     python -m scripts.eval --model sindy_baseline --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --model_path data/models/sindy_baseline/koopman_poly_trig/default/model.npz
     
-    # Final test evaluation + print matching validation summary + save test_summary.npz.  (saddle_point example)
-    python -m scripts.eval --model linear_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/linear_baseline/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
-    python -m scripts.eval --model dmd_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/dmd_baseline/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
-    python -m scripts.eval --model ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
-    python -m scripts.eval --model ml_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_eigen_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
-    python -m scripts.eval --model sindy_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/sindy_baseline/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
----------------------------------------------------------------------------------------------
+# Final test evaluation + print matching validation summary + save test_summary.npz.
+# Add --run_diagnostics to also generate the deeper diagnostic plots on the test split.
+# Saddle-point example:
+    python -m scripts.eval --model linear_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/linear_baseline/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
+    python -m scripts.eval --model dmd_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/dmd_baseline/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
+    python -m scripts.eval --model ml_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_eigen_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
+    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
+    python -m scripts.eval --model sindy_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/sindy_baseline/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
+--------------------------------------------------------------------------------------------
 
 Output:
     data/figures/{model}/{system}/{name}/time_series_idx{traj_index}.png
@@ -168,16 +171,6 @@ def print_validation_summary(summary_path: str) -> None:
         print(f"Mean rollout NRMSE         : {float(np.mean(d['rollout_nrmse'])):.6e}")
     print(f"Summary file               : {summary_path}")
 
-def parse_int_list(text: str):
-    values = []
-    for item in text.split(","):
-        item = item.strip()
-        if item:
-            values.append(int(item))
-    if not values:
-        raise ValueError("At least one horizon must be provided.")
-    return sorted(set(values))
-
 def main():
     parser = argparse.ArgumentParser(description="Evaluate trained models")
 
@@ -201,10 +194,15 @@ def main():
     parser.add_argument("--summary_path",type=str,default=None,help="Optional explicit path to diagnostics_summary.npz. If omitted, the default run-matched path is used.")
     parser.add_argument("--horizons",type=str,default="1,2,5,10,20,50,100",help="Comma-separated terminal horizons for test metrics.")
     parser.add_argument("--rollout_horizons",type=str,default="5,10,20,50,100",help="Comma-separated rollout horizons from x(0) for test metrics.")
-    parser.add_argument("--max_one_step_pairs_per_traj",type=int,default=None, help="Optional cap on one-step pairs per test trajectory.")
+    parser.add_argument("--max_one_step_pairs_per_traj",type=int,default=None, help="Optional cap on one-step pairs per test trajectory. Ignored when shared rollout cache is used.")
     parser.add_argument("--max_horizon_starts_per_traj",type=int,default=None,help="Optional cap on number of start points per test trajectory for horizon metrics." )
     
-    
+    parser.add_argument("--run_diagnostics",action="store_true",help="Run deeper diagnostic plots on the test split.")
+    parser.add_argument("--phase_horizons",type=str,default="1,10,50",help="Comma-separated horizons for phase-space error maps.")
+    parser.add_argument("--heatmap_horizon",type=int, default=50,help="Horizon for initial-condition error map.")
+    parser.add_argument("--heatmap_mode",type=str, default="traj_initials",choices=["traj_initials", "all_valid_starts"],help="Use only test trajectory initials or all valid start points for the error heatmap.")
+    parser.add_argument("--linear_error_scale",action="store_true", help="Use linear instead of log scale on the horizon-error plot when diagnostics are enabled.")
+
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -315,6 +313,28 @@ def main():
 
     scales = get_state_scale_from_train_split(args.data_path)
     scale_std = scales["std"]
+    diag_max_horizon = 1
+    if args.run_diagnostics:
+        phase_horizons = parse_int_list(args.phase_horizons)
+        diag_max_horizon = max(max(phase_horizons), args.heatmap_horizon)
+
+    metric_max_horizon = max(
+        1,
+        max(horizons),
+        max(rollout_horizons),
+        diag_max_horizon,
+    )
+
+    rollout_cache = build_rollout_cache(
+        X=X,
+        traj_indices=test_idx,
+        model_name=args.model,
+        model=model,
+        extras=extras,
+        max_horizon=metric_max_horizon,
+        start_stride=1,
+        max_starts_per_traj=args.max_horizon_starts_per_traj,
+    )
 
     one_step_metrics = compute_one_step_metrics(
         X=X,
@@ -323,7 +343,8 @@ def main():
         model=model,
         extras=extras,
         scale_std=scale_std,
-        max_pairs_per_traj=args.max_one_step_pairs_per_traj,
+        max_pairs_per_traj=None,
+        rollout_cache=rollout_cache,
     )
 
     horizon_metrics = compute_horizon_metrics(
@@ -335,6 +356,7 @@ def main():
         extras=extras,
         scale_std=scale_std,
         max_starts_per_traj=args.max_horizon_starts_per_traj,
+        rollout_cache=rollout_cache,
     )
 
     rollout_metrics = compute_full_rollout_metrics(
@@ -345,6 +367,7 @@ def main():
         model=model,
         extras=extras,
         scale_std=scale_std,
+        rollout_cache=rollout_cache,
     )
 
     test_composite_score = compute_composite_validation_score(
@@ -352,7 +375,36 @@ def main():
         horizon_nrmse=horizon_metrics["horizon_nrmse"],
         rollout_nrmse=rollout_metrics["rollout_nrmse"],
     )
+    if args.run_diagnostics:
+        max_diag_needed = max(max(phase_horizons), args.heatmap_horizon)
+        if X.shape[0] <= max_diag_needed:
+            raise ValueError(
+                f"Trajectory length T={X.shape[0]} is too short for requested diagnostic horizon {max_diag_needed}. "
+                "Use smaller --phase_horizons / --heatmap_horizon."
+            )
 
+        diagnostics_figdir = os.path.join(figdir, "diagnostics_test")
+        os.makedirs(diagnostics_figdir, exist_ok=True)
+
+        run_diagnostics(
+            X=X,
+            split_idx=test_idx,
+            traj_id=traj_id,
+            model_name=args.model,
+            model=model,
+            extras=extras,
+            system=system,
+            figdir=diagnostics_figdir,
+            horizon_metrics=horizon_metrics,
+            rollout_metrics=rollout_metrics,
+            phase_horizons=phase_horizons,
+            heatmap_horizon=args.heatmap_horizon,
+            heatmap_mode=args.heatmap_mode,
+            linear_error_scale=args.linear_error_scale,
+            rollout_cache=rollout_cache,
+        )
+
+        print(f"Saved test diagnostics     : {diagnostics_figdir}")
     print("\n--- Test metric summary ---")
     print(f"One-step MSE              : {float(one_step_metrics['one_step_mse']):.6e}")
     print(f"One-step RMSE             : {float(one_step_metrics['one_step_rmse']):.6e}")
