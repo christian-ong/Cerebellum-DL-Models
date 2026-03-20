@@ -50,9 +50,9 @@ python -m scripts.eval_diagnostics --model linear_baseline --data_path data/traj
 python -m scripts.eval_diagnostics --model dmd_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/dmd_baseline/saddle_point/default/model.npz --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
 python -m scripts.eval_diagnostics --model ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_dmd/saddle_point/default/model.pt --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
 python -m scripts.eval_diagnostics --model ml_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_eigen_dmd/saddle_point/default/model.pt --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
-python -m scripts.eval_diagnostics --model manual_expansion_manual_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/saddle_point/default/model.npz --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
-python -m scripts.eval_diagnostics --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/saddle_point/default/model.pt --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
-python -m scripts.eval_diagnostics --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/saddle_point/default/model.pt --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
+python -m scripts.eval_diagnostics --model regression_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/regression_dmd/saddle_point/default/model.npz --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
+python -m scripts.eval_diagnostics --model ml_lineardynamics --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_lineardynamics/saddle_point/default/model.pt --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
+python -m scripts.eval_diagnostics --model ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_dmd/saddle_point/default/model.pt --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
 python -m scripts.eval_diagnostics --model sindy_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/sindy_baseline/saddle_point/default/model.npz --horizons 1,2,5,10 --rollout_horizons 5,10 --phase_horizons 1,5 --heatmap_horizon 5
 """
 
@@ -361,11 +361,11 @@ def main():
         choices=[
             "linear_baseline",
             "dmd_baseline",
+            # "ml_dmd",
+            # "ml_eigen_dmd",
+            "regression_dmd",
+            "ml_lineardynamics",
             "ml_dmd",
-            "ml_eigen_dmd",
-            "manual_expansion_ml_dmd",
-            "manual_expansion_manual_dmd",
-            "manual_expansion_eigen_dmd",
             "sindy_baseline",
         ],
     )

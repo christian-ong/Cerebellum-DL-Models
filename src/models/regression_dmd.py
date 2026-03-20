@@ -3,7 +3,7 @@ import numpy as np
 from src.models.expander import ManualExpansion
 
 
-class ManualExpansion_ManualDMD(ManualExpansion):
+class Regression_DMD(ManualExpansion):
     """
     EDMD model built on top of the shared ManualExpansion class.
 

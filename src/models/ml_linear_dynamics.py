@@ -4,7 +4,7 @@ import torch.nn as nn
 from src.models.expander import ManualExpansion
 
 
-class ManualExpansion_MLDMD(ManualExpansion):
+class ML_LinearDynamics(ManualExpansion):
     """
     Manual expansion + learned Koopman operator (ML-DMD).
 

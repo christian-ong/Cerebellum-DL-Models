@@ -1,10 +1,10 @@
 import numpy as np
 import torch
 
+# from src.models.deprecated.ml_dmd import ML_DMD
+# from src.models.deprecated.ml_eigen_dmd import MLEigenDMD
+from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.ml_dmd import ML_DMD
-from src.models.ml_eigen_dmd import MLEigenDMD
-from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
-from src.models.manual_expansion_eigen_dmd import ManualExpansion_EigenDMD
 
 
 def maybe_set_z_scale(model, train_loader, device):
@@ -41,18 +41,18 @@ def build_run_name(args, system_name, run_id=None):
 
 
 def build_model(args, state_dim, system_name, device):
-    if args.model == "ml_dmd":
-        model = ML_DMD(
-            state_dim=state_dim,
-        ).to(device)
+    # if args.model == "ml_dmd":
+    #     model = ML_DMD(
+    #         state_dim=state_dim,
+    #     ).to(device)
 
-    elif args.model == "ml_eigen_dmd":
-        model = MLEigenDMD(
-            state_dim=state_dim,
-        ).to(device)
+    # elif args.model == "ml_eigen_dmd":
+    #     model = MLEigenDMD(
+    #         state_dim=state_dim,
+    #     ).to(device)
 
-    elif args.model == "manual_expansion_ml_dmd":
-        model = ManualExpansion_MLDMD(
+    if args.model == "ml_lineardynamics":
+        model = ML_LinearDynamics(
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
             expansion_type=args.expansion_type,
@@ -61,8 +61,8 @@ def build_model(args, state_dim, system_name, device):
             system=system_name,
         ).to(device)
 
-    elif args.model == "manual_expansion_eigen_dmd":
-        model = ManualExpansion_EigenDMD(
+    elif args.model == "ml_dmd":
+        model = ML_DMD(
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
             bias=args.bias == "true",
@@ -102,8 +102,13 @@ def compute_loader_loss_and_rmse(model, loader, device):
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
 
-            loss = _get_loss_tensor(model, x, y, loss_fn)
             y_hat = model(x)
+
+            if hasattr(model, "compute_loss"):
+                loss_out = model.compute_loss(x, y)
+                loss = loss_out if isinstance(loss_out, torch.Tensor) else sum(loss_out)
+            else:
+                loss = loss_fn(y_hat, y)
 
             bs = x.size(0)
             total_loss += loss.item() * bs
@@ -126,65 +131,41 @@ def compute_multi_horizon_rollout_rmse(
     fractions=(0.25, 0.5, 0.75, 1.0),
     max_trajs=None,
 ):
-    """
-    Computes rollout RMSE at multiple fractions of trajectory length.
-
-    Returns dict:
-        {
-            0.25: rmse_25,
-            0.5: rmse_50,
-            0.75: rmse_75,
-            1.0: rmse_full,
-        }
-    """
-
     if len(traj_idx) == 0:
         return None
 
-    T = X.shape[0]
-    max_horizon = T - 1
-
-    # Convert fractions → horizons
-    horizons = [int(f * max_horizon) for f in fractions]
-    horizons = [max(1, h) for h in horizons]
-
+    traj_idx = np.asarray(traj_idx)
     if max_trajs is not None and len(traj_idx) > max_trajs:
         traj_idx = traj_idx[:max_trajs]
 
     model.eval()
 
-    # storage for each horizon
-    sq_errors = {h: 0.0 for h in horizons}
+    X_sel = torch.tensor(X[:, traj_idx, :], dtype=torch.float32, device=device)
+    T, N, d = X_sel.shape
+    max_horizon = T - 1
+
+    horizons = [max(1, int(f * max_horizon)) for f in fractions]
+
+    x = X_sel[0]  # (N, d)
+
+    sq_errors = {h: torch.tensor(0.0, device=device) for h in horizons}
     numels = {h: 0 for h in horizons}
 
     with torch.no_grad():
-        for traj in traj_idx:
+        for t in range(1, max_horizon + 1):
+            x = model(x)
+            diff = x - X_sel[t]
 
-            x_t = torch.tensor(X[0, traj], dtype=torch.float32, device=device).unsqueeze(0)
+            diff_sq = torch.sum(diff * diff)
+            n_el = diff.numel()
 
-            preds = []
-
-            # rollout FULL trajectory ONCE
-            for _ in range(max_horizon):
-                x_t = model(x_t)
-                preds.append(x_t.squeeze(0).cpu().numpy())
-
-            pred = np.stack(preds, axis=0)     # (T-1, d)
-            true = X[1:, traj]                 # (T-1, d)
-
-            # compute RMSE at each horizon
             for h in horizons:
-                diff = pred[:h] - true[:h]
-                sq_errors[h] += float(np.sum(diff ** 2))
-                numels[h] += diff.size
+                if t <= h:
+                    sq_errors[h] += diff_sq
+                    numels[h] += n_el
 
-    rmse_dict = {
-        h: float(np.sqrt(sq_errors[h] / max(numels[h], 1)))
-        for h in horizons
-    }
-
-    # map back to fractions for nicer logging
+    # convert ONCE
     return {
-        int(100 * h / max_horizon): rmse_dict[h]
+        int(100 * h / max_horizon): float(torch.sqrt(sq_errors[h] / max(numels[h], 1)).item())
         for h in horizons
     }
