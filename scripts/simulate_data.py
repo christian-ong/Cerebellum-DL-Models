@@ -14,17 +14,25 @@ from src.data_generation.data_simulation import (
     koopman_poly_system_large,
     koopman_poly_trig_system
 )
-from src.data_generation.plot_data import plot_init_conditions, plot_trajectories_only, plot_flow_map_displacement
+from src.data_generation.plot_data import (
+    plot_init_conditions,
+    plot_trajectories_only,
+    plot_flow_map_displacement,
+    plot_trajectories_from_array,
+)
 
 """
 Defaults parameters:
     --system (inward_spiral | harmonic_oscillator | saddle_point | degenerate_node | vanderpol | lotka_volterra | pendulum | duffing | lorenz)
     --name (optional suffix for filename)
     --dt 0.01
-    --T 20.0
+    --T_train 3.0
+    --T_val 5.0
+    --T_test 20.0
     --method rk4
-    --n_traj 1
-    --val_frac 0.2
+    --n_traj_train 1
+    --n_traj_val 1
+    --n_traj_test 1
     --seed 0
 
 System-specific parameters:
@@ -53,40 +61,41 @@ System-specific parameters:
 Linear system  x' = A x
 --------------------------------------------------
 
-python -m scripts.simulate_data --system inward_spiral --n_traj 100 --T 5
-python -m scripts.simulate_data --system harmonic_oscillator --n_traj 100 --T 5
-python -m scripts.simulate_data --system saddle_point --n_traj 100 --T 5
-python -m scripts.simulate_data --system degenerate_node --n_traj 100 --T 5
+python -m scripts.simulate_data --system inward_spiral --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
+python -m scripts.simulate_data --system harmonic_oscillator --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
+python -m scripts.simulate_data --system saddle_point --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
+python -m scripts.simulate_data --system degenerate_node --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
 
 --------------------------------------------------
 Nonlinear systems
 --------------------------------------------------
 
-python -m scripts.simulate_data --system vanderpol --n_traj 100 --T 15
-python -m scripts.simulate_data --system lotka_volterra --n_traj 100 --T 15
-python -m scripts.simulate_data --system pendulum --n_traj 100 --T 15
-python -m scripts.simulate_data --system duffing --n_traj 100 --T 15
-python -m scripts.simulate_data --system lorenz --n_traj 100 --T 15
-python -m scripts.simulate_data --system koopman_poly --n_traj 100 --T 8 --dt 0.01 --mu_KP 0.1 --alpha_KP -1.0
-python -m scripts.simulate_data --system koopman_poly_large --n_traj 100 --T 8 --dt 0.01
-python -m scripts.simulate_data --system koopman_poly_trig --n_traj 100 --T 8 --dt 0.01
+python -m scripts.simulate_data --system vanderpol --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
+python -m scripts.simulate_data --system lotka_volterra --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
+python -m scripts.simulate_data --system pendulum --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
+python -m scripts.simulate_data --system duffing --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
+python -m scripts.simulate_data --system lorenz --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
+python -m scripts.simulate_data --system koopman_poly --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --dt 0.01 --mu_KP 0.1 --alpha_KP -1.0
+python -m scripts.simulate_data --system koopman_poly_large --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --dt 0.01
+python -m scripts.simulate_data --system koopman_poly_trig --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --dt 0.01
 --------------------------------------------------
 Output
 --------------------------------------------------
 
-Saved file:
-    data/trajectories/{system}_trajectory[_<name>].npz
+Saved files:
+    data/trajectories/{linear|nonlinear}/{system}/{split}.npz
+    data/trajectories/{linear|nonlinear}/{system}/{name}/{split}.npz   (if --name is provided)
 
-Contents:
+Where split is one of: train, val, test
+
+Each .npz file contains:
     t         : (T_steps+1,)
     X         : (T_steps+1, state_dim) or (T_steps+1, n_traj, state_dim)
-    train_idx : indices of training trajectories
-    val_idx   : indices of validation trajectories
-    test_idx  : indices of test trajectories
+    x0        : initial conditions for this split
     dt        : time step used in simulation
-    T         : total simulation time
+    T         : total simulation time for this split
     system     : name of the system
-    n_traj     : number of trajectories
+    n_traj     : number of trajectories for this split
     seed       : random seed used in initial condition sampling
     ...        : system-specific parameters (e.g. mu for Van der Pol)
 """
@@ -154,30 +163,39 @@ def sample_elliptic_annulus_ic(n_traj, rng, *, a=1.0, b=1.0, r_min=0.2, r_max=1.
     y = b * r * np.sin(theta)
     return np.stack([x, y], axis=1)
 
+
+def resolve_n_traj(args, default=1):
+    """Resolve active trajectory count without relying on legacy args.n_traj."""
+    if hasattr(args, "n_traj_current"):
+        return int(args.n_traj_current)
+    return int(default)
+
 def sample_ic(args, rng, *, kind, x0_single,
               lows=None, highs=None,
               r_min=None, r_max=None,
               a=None, b=None):
 
-    if args.n_traj == 1:
+    n_traj = resolve_n_traj(args)
+
+    if n_traj == 1:
         return np.asarray(x0_single, dtype=float)
 
     if kind == "annulus":
         return sample_annulus_ic(
-            args.n_traj, rng,
+            n_traj, rng,
             r_min=r_min, r_max=r_max
         )
 
     if kind == "elliptic_annulus":
         return sample_elliptic_annulus_ic(
-            args.n_traj, rng,
+            n_traj, rng,
             a=a, b=b,
             r_min=r_min, r_max=r_max
         )
 
     if kind == "box":
         return sample_box_ic(
-            args.n_traj, rng,
+            n_traj, rng,
             lows=lows, highs=highs
         )
 
@@ -215,7 +233,7 @@ def build_inward_spiral(args, rng):
 
     x0 = sample_ic(args, rng,
                    kind="annulus",
-                   r_min=0.2, r_max=1.5,
+                   r_min=0.0, r_max=1.5,
                    x0_single=[1.0, 0.0])
 
     return f, x0, {"A": A}
@@ -228,7 +246,7 @@ def build_harmonic_oscillator(args, rng):
 
     x0 = sample_ic(args, rng,
                    kind="annulus",
-                   r_min=0.2, r_max=1.5,
+                   r_min=0.0, r_max=1.5,
                    x0_single=[1.0, 0.0])
 
     return f, x0, {"A": A}
@@ -239,14 +257,16 @@ def build_saddle_point(args, rng):
                   [0, -0.2]], dtype=float)
     f = linear_system(A)
 
-    if args.n_traj == 1:
+    n_traj = resolve_n_traj(args)
+
+    if n_traj == 1:
         x0 = np.array([1.0, 0.0], dtype=float)
     else:
         x0 = sample_elliptic_annulus_ic(
-            args.n_traj, rng,
+            n_traj, rng,
             a=0.5,   # compress x
             b=1.5,    # full y range
-            r_min=0.1, r_max=1.1
+            r_min=0.0, r_max=1.1
         )
 
     return f, x0, {"A": A}
@@ -259,7 +279,7 @@ def build_degenerate_node(args, rng):
 
     x0 = sample_ic(args, rng,
                    kind="annulus",
-                   r_min=0.2, r_max=1.5,
+                   r_min=0.0, r_max=1.5,
                    x0_single=[1.0, 0.0])
 
     return f, x0, {"A": A}
@@ -270,7 +290,7 @@ def build_vanderpol(args, rng):
 
     x0 = sample_ic(args, rng,
                    kind="annulus",
-                   r_min=0.2, r_max=3.5,
+                   r_min=0.0, r_max=3.5,
                    x0_single=[1.0, 0.0])
 
     return f, x0, {"mu": args.mu}
@@ -287,16 +307,18 @@ def build_lotka_volterra(args, rng):
     x_star = args.gamma_LV / args.delta_LV
     y_star = args.alpha_LV / args.beta_LV
 
-    if args.n_traj == 1:
+    n_traj = resolve_n_traj(args)
+
+    if n_traj == 1:
         x0 = np.array([x_star + 1.0, y_star], dtype=float)
     else:
-        # sample annulus around origin
-        pts = sample_annulus_ic(
-            n_traj=args.n_traj,
-            rng=rng,
-            r_min=0.2,
-            r_max=3.0
-        )
+        # sample elliptic annulus around origin
+        pts = sample_elliptic_annulus_ic(
+                n_traj, rng,
+                a=1.5,   # compress x
+                b=0.5,    # full y range
+                r_min=0.0, r_max=3.5
+            )
 
         # shift to equilibrium
         x0 = pts + np.array([x_star, y_star])
@@ -319,7 +341,7 @@ def build_pendulum(args, rng):
         args, rng,
         kind="elliptic_annulus",
         a=2.8, b=3.5,
-        r_min=0.1, r_max=1.0,
+        r_min=0.0, r_max=1.0,
         x0_single=[0.5, 0.0]
     )
 
@@ -334,28 +356,37 @@ def build_duffing(args, rng):
         omega=args.omega_DUF
     )
 
-    if args.n_traj == 1:
+    n_traj = resolve_n_traj(args)
+
+    if n_traj == 1:
         x0 = np.array([0.5, 0.0], dtype=float)
     else:
-        # double-well centers (requires alpha < 0, beta > 0)
         x_eq = np.sqrt(-args.alpha_DUF / args.beta_DUF)
 
-        n1 = args.n_traj // 2
-        n2 = args.n_traj - n1
+        n_center = n_traj // 3
+        n_side = (n_traj - n_center) // 2
+        n_right = n_side
+        n_left = n_traj - n_center - n_right
 
-        blob1 = sample_elliptic_annulus_ic(
-            n1, rng,
-            a=0.6, b=1.2,
+        blob_center = sample_elliptic_annulus_ic(
+            n_center, rng,
+            a=0.7, b=1.0,
+            r_min=0.0, r_max=0.7
+        ) + np.array([0.0, 0.0])
+
+        blob_right = sample_elliptic_annulus_ic(
+            n_right, rng,
+            a=0.5, b=0.95,
             r_min=0.0, r_max=1.0
         ) + np.array([+x_eq, 0.0])
 
-        blob2 = sample_elliptic_annulus_ic(
-            n2, rng,
-            a=0.6, b=1.2,
+        blob_left = sample_elliptic_annulus_ic(
+            n_left, rng,
+            a=0.5, b=0.95,
             r_min=0.0, r_max=1.0
         ) + np.array([-x_eq, 0.0])
 
-        x0 = np.vstack([blob1, blob2])
+        x0 = np.vstack([blob_left, blob_right, blob_center])
         rng.shuffle(x0)
 
     meta = {
@@ -371,11 +402,13 @@ def build_duffing(args, rng):
 def build_lorenz(args, rng):
     f = lorenz_system(sigma=args.sigma, rho=args.rho, beta=args.beta_LZ)
 
-    if args.n_traj == 1:
+    n_traj = resolve_n_traj(args)
+
+    if n_traj == 1:
         x0 = np.array([1.0, 1.0, 25.0], dtype=float)
     else:
         x0 = sample_lorenz_ic(
-            args.n_traj,
+            n_traj,
             rng,
             rho=args.rho,
             beta=args.beta_LZ,
@@ -388,11 +421,13 @@ def build_lorenz(args, rng):
 def build_koopman_poly(args, rng):
     f = koopman_poly_system(mu=args.mu_KP, alpha=args.alpha_KP)
 
-    if args.n_traj == 1:
+    n_traj = resolve_n_traj(args)
+
+    if n_traj == 1:
         x0 = np.array([0.8, 0.4], dtype=float)
     else:
-        x_init = rng.uniform(-1.0, 1.0, size=args.n_traj)
-        y_init = rng.uniform(-1.0, 1.5, size=args.n_traj)
+        x_init = rng.uniform(-1.0, 1.0, size=n_traj)
+        y_init = rng.uniform(-1.0, 1.5, size=n_traj)
         x0 = np.stack([x_init, y_init], axis=1)
 
     A_lift = np.array([
@@ -416,12 +451,14 @@ def build_koopman_poly_large(args, rng):
         delta=args.delta_K234,
     )
 
-    if args.n_traj == 1:
+    n_traj = resolve_n_traj(args)
+
+    if n_traj == 1:
         x0 = np.array([0.8, 0.1], dtype=float)
     else:
         # Keep x moderate so x^2, x^3, x^4 stay well-behaved
-        x_init = rng.uniform(-1.0, 1.0, size=args.n_traj)
-        y_init = rng.uniform(-1.0, 1.0, size=args.n_traj)
+        x_init = rng.uniform(-1.0, 1.0, size=n_traj)
+        y_init = rng.uniform(-1.0, 1.0, size=n_traj)
         x0 = np.stack([x_init, y_init], axis=1)
 
     A_lift = np.array([
@@ -455,13 +492,15 @@ def build_koopman_poly_trig(args, rng):
         beta_x2=args.beta_x2_KPT,
     )
 
-    if args.n_traj == 1:
+    n_traj = resolve_n_traj(args)
+
+    if n_traj == 1:
         x0 = np.array([0.0, 0.0], dtype=float)
     else:
         # Keep x in a moderate interval initially; since x' = omega,
         # x will drift linearly in time.
-        x_init = rng.uniform(-2.0, 2.0, size=args.n_traj)
-        y_init = rng.uniform(-1.0, 1.0, size=args.n_traj)
+        x_init = rng.uniform(-2.0, 2.0, size=n_traj)
+        y_init = rng.uniform(-1.0, 1.0, size=n_traj)
         x0 = np.stack([x_init, y_init], axis=1)
 
     return f, x0, {
@@ -515,12 +554,15 @@ def main():
     parser.add_argument("--name", type=str, default=None, help="Optional suffix added to the dataset filename")
 
     parser.add_argument("--dt", type=float, default=1e-2)
-    parser.add_argument("--T", type=float, default=20.0)
+    parser.add_argument("--T_train", type=float, default=3.0)
+    parser.add_argument("--T_val", type=float, default=5.0)
+    parser.add_argument("--T_test", type=float, default=20.0)
     parser.add_argument("--method", type=str, default="rk4")
-    parser.add_argument("--n_traj", type=int, default=1)
-    parser.add_argument("--train_frac", type=float, default=0.7)
-    parser.add_argument("--val_frac", type=float, default=0.2)
-    parser.add_argument("--test_frac", type=float, default=0.1)
+    parser.add_argument("--n_traj_train", type=int, default=1)
+    parser.add_argument("--n_traj_val", type=int, default=1)
+    parser.add_argument("--n_traj_test", type=int, default=1)
+    parser.add_argument("--n_debug_traj", type=int, default=100)
+    parser.add_argument("--plot_splits", action="store_true", help="Save train/val/test trajectory plots under data/figures/trajectories/<system>")
     parser.add_argument("--seed", type=int, default=0)
 
     # System-specific params
@@ -580,14 +622,14 @@ def main():
 
     rng = np.random.default_rng(args.seed)
 
-    if args.train_frac + args.val_frac + args.test_frac >= 1.0:
-        raise ValueError("train_frac + val_frac + test_frac must be < 1.0")
-
     # Build system
-    f, x0, meta = SYSTEMS[args.system](args, rng)
+    f, _, meta = SYSTEMS[args.system](args, rng)
 
     # Plot initial conditions and simulate trajectories for 4 corners
     if args.debug == "init_conditions":
+        args.n_traj_current = args.n_debug_traj
+        _, x0, _ = SYSTEMS[args.system](args, rng)
+        
         # 2D systems
         p1 = x0[np.argmax(+x0[:, 0] + x0[:, 1])]
         p2 = x0[np.argmax(+x0[:, 0] - x0[:, 1])]
@@ -607,27 +649,47 @@ def main():
             p8 = x0[np.argmax(- x0[:, 0] - x0[:, 1] - x0[:, 2])]
             ps = np.array([p1, p2, p3, p4, p5, p6, p7, p8])
         
-        t, X = simulate(f, x0=ps, dt=args.dt, T=args.T, method=args.method)
+        t, X = simulate(f, x0=ps, dt=args.dt, T=args.T_test, method=args.method)
         plot_init_conditions(x0s=x0, corner_points=ps, corner_trajs=X, system_name=args.system)
         return
     
     if args.debug == "phase_portrait":
+        debug_outdir = os.path.join("data", "figures", args.system, "phase_portrait")
+        os.makedirs(debug_outdir, exist_ok=True)
 
-        if x0.ndim == 1:
-            x0s = x0[None, :]
-        else:
-            x0s = x0
+        debug_splits = [
+            ("train", "train", args.n_traj_train, args.T_train),
+            ("val", "eval", args.n_traj_val, args.T_val),
+            ("test", "test", args.n_traj_test, args.T_test),
+        ]
 
-        # Get state dimension
-        state_dim = x0s.shape[1]
+        state_dim = None
+        for split_name, plot_label, n_traj, T_split in debug_splits:
+            if n_traj <= 0:
+                print(f"Skipping {split_name} debug plot (n_traj={n_traj})")
+                continue
 
-        plot_trajectories_only(
-            f=f,
-            x0s=x0s,
-            dt=args.dt,
-            T=args.T,
-            system_name=args.system
-        )
+            temp_args = argparse.Namespace(**vars(args))
+            temp_args.n_traj_current = n_traj
+            _, x0_split, _ = SYSTEMS[args.system](temp_args, rng)
+            _, X_split = simulate(f, x0=x0_split, dt=args.dt, T=T_split, method=args.method)
+
+            if state_dim is None:
+                state_dim = X_split.shape[-1]
+
+            plot_trajectories_from_array(
+                X=X_split,
+                x0s=x0_split,
+                system_name=args.system,
+                max_trajs_to_plot=None,
+                outdir=debug_outdir,
+                split_name=plot_label,
+            )
+            print(f"Saved {plot_label} trajectories plot to {debug_outdir}")
+
+        if state_dim is None:
+            raise ValueError("No debug plots generated. Set at least one of n_traj_train/n_traj_val/n_traj_test > 0.")
+
         if args.system in ["inward_spiral", "harmonic_oscillator", "saddle_point", "degenerate_node"]:
 
             plot_flow_map_displacement(
@@ -635,6 +697,7 @@ def main():
                 state_dim=state_dim,
                 system_name=args.system,
                 grid_lim=1.5,
+                outdir=debug_outdir,
             )
 
         if args.system in ["vanderpol"]:
@@ -643,6 +706,7 @@ def main():
                 state_dim=state_dim,
                 system_name=args.system,
                 grid_lim=5.0,
+                outdir=debug_outdir,
             )
 
         if args.system in ["lotka_volterra"]:
@@ -651,7 +715,8 @@ def main():
                 state_dim=state_dim,
                 system_name=args.system,
                 xlim=(0, 27),
-                ylim=(0, 11)
+                ylim=(0, 11),
+                outdir=debug_outdir,
             )
 
         if args.system in ["pendulum"]:
@@ -660,7 +725,8 @@ def main():
                 state_dim=state_dim,
                 system_name=args.system,
                 xlim=(-3, 3),
-                ylim=(-6, 6)
+                ylim=(-6, 6),
+                outdir=debug_outdir,
             )
         
         if args.system in ["duffing"]:
@@ -669,6 +735,7 @@ def main():
                 state_dim=state_dim,
                 system_name=args.system,
                 grid_lim=2.0,
+                outdir=debug_outdir,
             )
         
         if args.system in ["lorenz"]:
@@ -678,7 +745,8 @@ def main():
                 system_name=args.system,
                 xlim=(-25, 25),
                 ylim=(-30, 30),
-                zlim=(0, 50)
+                zlim=(0, 50),
+                outdir=debug_outdir,
             )
         if args.system in ["koopman_poly", "koopman_poly_large"]:
             plot_flow_map_displacement(
@@ -687,6 +755,7 @@ def main():
                 system_name=args.system,
                 xlim=(-1.5, 1.5),
                 ylim=(-1.5, 1.5),
+                outdir=debug_outdir,
             )
 
 
@@ -697,64 +766,68 @@ def main():
                 system_name=args.system,
                 xlim=(-2.5, 2.5),
                 ylim=(-2.0, 2.0),
+                outdir=debug_outdir,
             )    
+        print(f"Saved vector field plot(s) to {debug_outdir}")
         return
     
-    t, X = simulate(f, x0=x0, dt=args.dt, T=args.T, method=args.method)
+    # Simulate and save train, val, test separately
+    splits = [
+        ("train", args.n_traj_train, args.T_train),
+        ("val", args.n_traj_val, args.T_val),
+        ("test", args.n_traj_test, args.T_test),
+    ]
+    
+    for split_name, n_traj, T in splits:
+        if n_traj == 0:
+            print(f"Skipping {split_name} split (n_traj=0)")
+            continue
+        
+        # Create a temporary args object with the correct n_traj for the system builder
+        temp_args = argparse.Namespace(**vars(args))
+        temp_args.n_traj_current = n_traj
+        
+        # Sample initial conditions for this split
+        _, x0_split, _ = SYSTEMS[args.system](temp_args, rng)
+        
+        # Simulate for this split's time period
+        t_split, X_split = simulate(f, x0=x0_split, dt=args.dt, T=T, method=args.method)
+        
+        # Save using clean dataset directory layout with linear/nonlinear categorization.
+        category = "linear" if args.system in LINEAR_SYSTEMS else "nonlinear"
+        save_dir = os.path.join(args.outdir, category, args.system)
+        if args.name is not None:
+            save_dir = os.path.join(save_dir, args.name)
+        os.makedirs(save_dir, exist_ok=True)
 
-    # Train / validation split by trajectory
-    if args.n_traj == 1:
-        train_idx = np.array([0], dtype=int)
-        val_idx   = np.array([], dtype=int)
-        test_idx  = np.array([], dtype=int)
-    else:
-        indices = np.arange(args.n_traj)
-        rng.shuffle(indices)
+        outpath = os.path.join(save_dir, f"{split_name}.npz")
 
-        n_train = int(args.train_frac * args.n_traj)
-        n_val  = int(args.val_frac  * args.n_traj)
-        n_test = int(args.test_frac * args.n_traj)
+        np.savez(
+            outpath,
+            t=t_split,
+            X=X_split,
+            x0=x0_split,
+            dt=args.dt,
+            T=T,
+            system=args.system,
+            n_traj=n_traj,
+            seed=args.seed,
+            **meta,
+        )
 
-        train_idx = indices[:n_train]
-        val_idx   = indices[n_train:n_train+n_val]
-        test_idx  = indices[n_train+n_val:n_train+n_val+n_test]
+        if args.plot_splits:
+            plot_dir = os.path.join("data", "figures", "trajectories", args.system)
+            plot_trajectories_from_array(
+                X=X_split,
+                x0s=x0_split,
+                system_name=args.system,
+                max_trajs_to_plot=100,
+                outdir=plot_dir,
+                split_name=split_name,
+            )
+            print(f"Saved {split_name} plot to {plot_dir}")
 
-    # Save
-    base = f"{args.system}_trajectory"
-    if args.name is not None:
-        filename = f"{base}_{args.name}.npz"
-    else:
-        filename = f"{base}.npz"
-
-    if args.system in LINEAR_SYSTEMS:
-        subfolder = "linear"
-    elif args.system in SYSTEMS and args.system not in LINEAR_SYSTEMS:
-        subfolder = "nonlinear"
-    else:
-        raise ValueError(f"System '{args.system}' is not assigned to a save category.")
-
-    save_dir = os.path.join(args.outdir, subfolder)
-    os.makedirs(save_dir, exist_ok=True)
-
-    outpath = os.path.join(save_dir, filename)
-
-    np.savez(
-        outpath,
-        t=t,
-        X=X,
-        x0=x0,
-        train_idx=train_idx,
-        val_idx=val_idx,
-        test_idx=test_idx,
-        dt=args.dt,
-        T=args.T,
-        system=args.system,
-        n_traj=args.n_traj,
-        seed=args.seed,
-        **meta,
-    )
-
-    print(f"Saved trajectory to {outpath}")
+        print(f"Saved {split_name} trajectory to {outpath}")
 
 
 if __name__ == "__main__":

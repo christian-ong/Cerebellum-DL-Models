@@ -72,11 +72,33 @@ def plot_trajectories_only(
     system_name="system",
     max_trajs_to_plot=100,
     outdir="data/figures/trajectories/",
+    split_name=None,
 ):
 
     os.makedirs(outdir, exist_ok=True)
 
     t, X = simulate(f, x0=x0s, dt=dt, T=T, method="rk4")
+
+    plot_trajectories_from_array(
+        X=X,
+        x0s=x0s,
+        system_name=system_name,
+        max_trajs_to_plot=max_trajs_to_plot,
+        outdir=outdir,
+        split_name=split_name,
+    )
+
+
+def plot_trajectories_from_array(
+    X,
+    x0s,
+    system_name="system",
+    max_trajs_to_plot=100,
+    outdir="data/figures/trajectories/",
+    split_name=None,
+):
+
+    os.makedirs(outdir, exist_ok=True)
 
     if X.ndim == 2:
         X = X[:, None, :]
@@ -85,11 +107,17 @@ def plot_trajectories_only(
         x0s = np.asarray(x0s)
 
     n_traj = X.shape[1]
-    if n_traj > max_trajs_to_plot:
+    if max_trajs_to_plot is not None and n_traj > max_trajs_to_plot:
         idx = np.linspace(0, n_traj - 1, max_trajs_to_plot, dtype=int)
         X = X[:, idx, :]
         x0s = x0s[idx]
         n_traj = max_trajs_to_plot
+
+    split_suffix = ""
+    split_title = ""
+    if split_name is not None:
+        split_suffix = f"_{split_name}"
+        split_title = f" ({split_name})"
 
     state_dim = X.shape[2]
     colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
@@ -104,24 +132,27 @@ def plot_trajectories_only(
         for i in range(n_traj):
             color = colors[i % len(colors)]
             plt.plot(X[:, i, 0], X[:, i, 1], lw=1.2, color=color)
-            plt.scatter(
-                x0s[i, 0], x0s[i, 1],
-                color=color,
-                s=35,
-                edgecolor="black",
-                linewidth=0.5,
-                zorder=3,
-            )
+            # plt.scatter(
+            #     x0s[i, 0], x0s[i, 1],
+            #     color=color,
+            #     s=35,
+            #     edgecolor="black",
+            #     linewidth=0.5,
+            #     zorder=3,
+            # )
 
         plt.xlabel("x", fontsize=12)
         plt.ylabel("y", fontsize=12)
         plt.xticks(fontsize=12)
         plt.yticks(fontsize=12)
-        plt.title(f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories", fontsize=16)
-        # plt.axis("equal")
+        plt.title(
+            f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories{split_title}",
+            fontsize=16,
+        )
+        plt.axis("equal")
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig(f"{outdir}/{system_name}_trajectories.png", dpi=300)
+        plt.savefig(f"{outdir}/{system_name}{split_suffix}_trajectories.png", dpi=300)
         plt.close()
 
     # ============================================================
@@ -149,29 +180,29 @@ def plot_trajectories_only(
                     color=color,
                 )
 
-                plt.scatter(
-                    x0s[i, dim1],
-                    x0s[i, dim2],
-                    color=color,
-                    s=35,
-                    edgecolor="black",
-                    linewidth=0.5,
-                    zorder=3,
-                )
+                # plt.scatter(
+                #     x0s[i, dim1],
+                #     x0s[i, dim2],
+                #     color=color,
+                #     s=35,
+                #     edgecolor="black",
+                #     linewidth=0.5,
+                #     zorder=3,
+                # )
 
             plt.xlabel(label1, fontsize=12)
             plt.ylabel(label2, fontsize=12)
             plt.xticks(fontsize=12)
             plt.yticks(fontsize=12)
             plt.title(
-                f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories {label1}-{label2}", fontsize=16
+                f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories {label1}-{label2}{split_title}", fontsize=16
             )
 
             # plt.axis("equal")
             plt.grid(True, alpha=0.3)
             plt.tight_layout()
             plt.savefig(
-                f"{outdir}/{system_name}_{label1}{label2}.png",
+                f"{outdir}/{system_name}_{label1}{label2}{split_suffix}.png",
                 dpi=300,
             )
             plt.close()

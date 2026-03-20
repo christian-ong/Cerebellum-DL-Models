@@ -13,7 +13,7 @@ from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
 from src.models.manual_expansion_manual_dmd import ManualExpansion_ManualDMD
 from src.models.manual_expansion_eigen_dmd import ManualExpansion_EigenDMD
 from src.models.sindy_baseline import SINDyBaseline
-from src.data_generation.load_data import OneStepTrajectoryDataset
+from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
 
 
 def infer_system_name_from_data_path(data_path: str) -> str:
@@ -92,11 +92,10 @@ def _fit_sindy_from_saved_config(model_path: str, data_path: str) -> SINDyBaseli
         y_train = np.vstack(y_list)
         model.fit_discrete_pairs(x_train, y_train)
     else:
-        meta = np.load(data_path)
-        x_all = meta["X"]
-        train_idx = meta["train_idx"]
+        train_split_path = resolve_split_npz_path(data_path, "train")
+        meta = np.load(train_split_path)
+        x_train = meta["X"]
         dt = float(meta["dt"])
-        x_train = x_all[:, train_idx, :]
         model.fit_continuous_trajectories(x_train, dt=dt)
 
     return model

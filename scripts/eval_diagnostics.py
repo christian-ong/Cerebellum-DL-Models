@@ -17,6 +17,7 @@ from src.eval.metrics import (
     get_state_scale_from_train_split,
     save_summary_npz,
 )
+from src.data_generation.load_data import resolve_split_npz_path
 from src.eval.model_io import (
     infer_run_name,
     load_model,
@@ -431,22 +432,21 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    data = np.load(args.data_path)
+    val_data_path = resolve_split_npz_path(args.data_path, "val")
+
+    data = np.load(val_data_path)
     X = data["X"]
     T, _, state_dim = X.shape
-
-    if "val_idx" not in data:
-        raise ValueError("Dataset does not contain val_idx. Please regenerate it using simulate_data.py.")
-
-    val_idx = data["val_idx"]
 
     if X.ndim != 3:
         raise ValueError("Diagnostics expect multiple trajectories (X must be 3D).")
 
-    if len(val_idx) == 0:
+    if X.shape[1] == 0:
         raise ValueError("No validation trajectories available.")
 
-    system = os.path.basename(args.data_path).replace("_trajectory.npz", "")
+    val_idx = np.arange(X.shape[1])
+
+    system = str(data["system"])
     run_name = infer_run_name(args.model_path, args.name)
 
     figdir = os.path.join("data", "figures", args.model, system, run_name, "diagnostics")

@@ -2,6 +2,7 @@ import os
 from typing import Dict, List, Optional
 
 import numpy as np
+from src.data_generation.load_data import resolve_split_npz_path
 
 from src.eval.model_io import predict_rollout_from_x0
 
@@ -38,17 +39,17 @@ EPS = 1e-12
 def get_state_scale_from_train_split(data_path: str) -> Dict[str, np.ndarray]:
     """
     Compute state-wise scale statistics from the TRAIN trajectories only.
+    
+    data_path should be the base path (without _train, _val, _test suffix).
+    The function will load from {data_path}_train.npz
     """
-    data = np.load(data_path)
+    train_data_path = resolve_split_npz_path(data_path, "train")
+    data = np.load(train_data_path)
     X = data["X"]
 
-    if "train_idx" not in data:
-        raise ValueError("Dataset must contain train_idx to compute normalization scales.")
-
-    train_idx = data["train_idx"]
-    X_train = X[:, train_idx, :]  # (T, Ntrain, d)
-
-    flat = X_train.reshape(-1, X_train.shape[-1])
+    # In the new format, X contains only the train trajectories
+    # All trajectories in this file are training data
+    flat = X.reshape(-1, X.shape[-1])  # (T*N, d)
 
     std = np.std(flat, axis=0)
     data_min = np.min(flat, axis=0)

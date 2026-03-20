@@ -6,7 +6,7 @@ import wandb
 
 from torch.utils.data import DataLoader
 
-from src.data_generation.load_data import OneStepTrajectoryDataset
+from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
 from src.eval.sweep_utils import (
     maybe_set_z_scale,
     build_run_name,
@@ -67,19 +67,27 @@ def main():
     # --------------------------------------------------
     # Load metadata
     # --------------------------------------------------
-    meta = np.load(args.data_path, allow_pickle=True)
+    # Load from train split file (all split files contain metadata)
+    train_meta_path = resolve_split_npz_path(args.data_path, "train")
+    
+    meta = np.load(train_meta_path, allow_pickle=True)
     system_name = str(meta["system"])
     X = meta["X"]
     state_dim = X.shape[-1]
 
     if X.ndim != 3:
         raise ValueError("Expected X to have shape (T, n_traj, d).")
-
-    if "val_idx" not in meta or "test_idx" not in meta:
-        raise ValueError("Dataset must contain val_idx and test_idx.")
-
-    val_idx = meta["val_idx"]
-    test_idx = meta["test_idx"]
+    
+    # In the new format, we need to load val and test data to get their trajectory counts
+    val_data_path = resolve_split_npz_path(args.data_path, "val")
+    test_data_path = resolve_split_npz_path(args.data_path, "test")
+    
+    val_data = np.load(val_data_path)
+    test_data = np.load(test_data_path)
+    
+    # In the new format, all trajectories in each split file are part of that split
+    val_idx = np.arange(val_data["X"].shape[1])
+    test_idx = np.arange(test_data["X"].shape[1])
 
     print(f"System: {system_name}")
     print(f"State dim: {state_dim}")
