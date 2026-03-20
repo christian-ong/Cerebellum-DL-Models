@@ -748,6 +748,7 @@ def main():
         test_idx=test_idx,
         dt=args.dt,
         T=args.T,
+        method=args.method,
         system=args.system,
         n_traj=args.n_traj,
         seed=args.seed,

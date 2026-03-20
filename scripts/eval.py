@@ -138,7 +138,38 @@ Global options (defaults):
     python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
     python -m scripts.eval --model sindy_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/sindy_baseline/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
 --------------------------------------------------------------------------------------------
+# Additional diagnostics examples
+# --------------------------------
+# --run_diagnostics generates the standard test-split diagnostics:
+#    * error-vs-horizon plot
+#    * phase-space error map(s)
+#    * rollout error summary
+#
+# --run_true_grid_heatmap adds a dense error heatmap over a regular grid of initial states.
+# This is a "true simulator vs trained model" comparison, so it is more global than the
+# sampled-start initial-condition error map. When enabled, it is the main state-space heatmap.
+#
+# Useful flags:
+#   --heatmap_horizon H      terminal prediction horizon used in the heatmap
+#   --grid_resolution N      grid size per axis (N=100 -> 100x100 grid)
+#   --phase_horizons ...     horizons shown in the phase-space error maps
+#
+# Van der Pol example: standard diagnostics + dense true-grid heatmap
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/vanderpol/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,10,50 --heatmap_horizon 1 --run_true_grid_heatmap
 
+# Same as above, but with denser grid (slower, prettier figure)
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/vanderpol/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,10,50 --heatmap_horizon 1 --run_true_grid_heatmap --grid_resolution 150
+
+# Saddle-point example with true-grid heatmap
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5,10 --heatmap_horizon 1 --run_true_grid_heatmap
+
+# The dense true-grid heatmap works for other evaluated models too, as long as they support
+# rollout from an initial condition through the normal eval/model_io pipeline.
+# Example with manual_expansion_eigen_dmd:
+    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/vanderpol/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,10,50 --heatmap_horizon 1 --run_true_grid_heatmap
+
+# Quick debug version (faster, lower-resolution heatmap)
+    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/vanderpol/default/model.npz --horizons 1,2 --rollout_horizons 5 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 1 --run_true_grid_heatmap --grid_resolution 50
 Output:
     data/figures/{model}/{system}/{name}/time_series_idx{traj_index}.png
     data/figures/{model}/{system}/{name}/rollout_idx{traj_index}.png
@@ -192,16 +223,19 @@ def main():
     parser.add_argument("--name", type=str, help="Optional suffix for saved figure")
     parser.add_argument("--print_validation_summary",action="store_true",help="Print saved validation diagnostics summary for the same run if available.")
     parser.add_argument("--summary_path",type=str,default=None,help="Optional explicit path to diagnostics_summary.npz. If omitted, the default run-matched path is used.")
-    parser.add_argument("--horizons",type=str,default="1,2,5,10,20,50,100",help="Comma-separated terminal horizons for test metrics.")
-    parser.add_argument("--rollout_horizons",type=str,default="5,10,20,50,100",help="Comma-separated rollout horizons from x(0) for test metrics.")
-    parser.add_argument("--max_one_step_pairs_per_traj",type=int,default=None, help="Optional cap on one-step pairs per test trajectory. Ignored when shared rollout cache is used.")
-    parser.add_argument("--max_horizon_starts_per_traj",type=int,default=None,help="Optional cap on number of start points per test trajectory for horizon metrics." )
-    
+    parser.add_argument("--horizons",type=str,default="1,5,20",help="Comma-separated terminal horizons for test metrics.")
+    parser.add_argument("--rollout_horizons",type=str,default="5,20",help="Comma-separated rollout horizons from x(0) for test metrics.")
+    parser.add_argument("--max_one_step_pairs_per_traj",type=int,default=256, help="Cap on one-step pairs per test trajectory. Use 0 for all.")
+    parser.add_argument("--max_horizon_starts_per_traj",type=int,default=256,help="Cap on number of horizon-metric start points per test trajectory. Use 0 for all." )
+    parser.add_argument("--shared_rollout_cache",action="store_true",help="Reuse cached rollouts across metrics. Auto-used with --run_diagnostics.")
     parser.add_argument("--run_diagnostics",action="store_true",help="Run deeper diagnostic plots on the test split.")
+
     parser.add_argument("--phase_horizons",type=str,default="1,10,50",help="Comma-separated horizons for phase-space error maps.")
     parser.add_argument("--heatmap_horizon",type=int, default=50,help="Horizon for initial-condition error map.")
     parser.add_argument("--heatmap_mode",type=str, default="traj_initials",choices=["traj_initials", "all_valid_starts"],help="Use only test trajectory initials or all valid start points for the error heatmap.")
     parser.add_argument("--linear_error_scale",action="store_true", help="Use linear instead of log scale on the horizon-error plot when diagnostics are enabled.")
+    parser.add_argument("--run_true_grid_heatmap",action="store_true",help="Compute a dense regular-grid heatmap using the true simulator and the trained model.")
+    parser.add_argument("--grid_resolution",type=int,default=100,help="Grid size per axis for true-grid heatmap. 100 -> 100x100 = 10,000 points.")
 
     args = parser.parse_args()
 
@@ -274,14 +308,14 @@ def main():
 
     traj_id = test_idx[args.traj_index]
 
-    X_true, X_hat = compute_single_rollout(
-        X=X,
-        traj_id=traj_id,
-        steps=args.steps,
-        model_name=args.model,
-        model=model,
-        extras=extras,
-    )
+    # X_true, X_hat = compute_single_rollout(
+    #     X=X,
+    #     traj_id=traj_id,
+    #     steps=args.steps,
+    #     model_name=args.model,
+    #     model=model,
+    #     extras=extras,
+    # )
 
     # --------------------------------------------------
     # Figure directory
@@ -325,16 +359,23 @@ def main():
         diag_max_horizon,
     )
 
-    rollout_cache = build_rollout_cache(
-        X=X,
-        traj_indices=test_idx,
-        model_name=args.model,
-        model=model,
-        extras=extras,
-        max_horizon=metric_max_horizon,
-        start_stride=1,
-        max_starts_per_traj=args.max_horizon_starts_per_traj,
-    )
+    max_one_step_pairs = None if args.max_one_step_pairs_per_traj == 0 else args.max_one_step_pairs_per_traj
+    max_horizon_starts = None if args.max_horizon_starts_per_traj == 0 else args.max_horizon_starts_per_traj
+
+    use_shared_rollout_cache = args.run_diagnostics or args.shared_rollout_cache
+    rollout_cache = None
+
+    if use_shared_rollout_cache:
+        rollout_cache = build_rollout_cache(
+            X=X,
+            traj_indices=test_idx,
+            model_name=args.model,
+            model=model,
+            extras=extras,
+            max_horizon=metric_max_horizon,
+            start_stride=1,
+            max_starts_per_traj=max_horizon_starts,
+        )
 
     one_step_metrics = compute_one_step_metrics(
         X=X,
@@ -343,7 +384,7 @@ def main():
         model=model,
         extras=extras,
         scale_std=scale_std,
-        max_pairs_per_traj=None,
+        max_pairs_per_traj=max_one_step_pairs,
         rollout_cache=rollout_cache,
     )
 
@@ -355,7 +396,7 @@ def main():
         model=model,
         extras=extras,
         scale_std=scale_std,
-        max_starts_per_traj=args.max_horizon_starts_per_traj,
+        max_starts_per_traj=max_horizon_starts,
         rollout_cache=rollout_cache,
     )
 
@@ -402,6 +443,9 @@ def main():
             heatmap_mode=args.heatmap_mode,
             linear_error_scale=args.linear_error_scale,
             rollout_cache=rollout_cache,
+            data_path=args.data_path,
+            run_true_grid_heatmap=args.run_true_grid_heatmap,
+            grid_resolution=args.grid_resolution,
         )
 
         print(f"Saved test diagnostics     : {diagnostics_figdir}")
@@ -409,10 +453,25 @@ def main():
     print(f"One-step MSE              : {float(one_step_metrics['one_step_mse']):.6e}")
     print(f"One-step RMSE             : {float(one_step_metrics['one_step_rmse']):.6e}")
     print(f"One-step NRMSE            : {float(one_step_metrics['one_step_nrmse']):.6e}")
+
     print(f"Mean horizon RMSE         : {float(np.mean(horizon_metrics['horizon_rmse'])):.6e}")
     print(f"Mean horizon NRMSE        : {float(np.mean(horizon_metrics['horizon_nrmse'])):.6e}")
+    for h, rmse, nrmse in zip(
+        horizon_metrics["horizons"],
+        horizon_metrics["horizon_rmse"],
+        horizon_metrics["horizon_nrmse"],
+    ):
+        print(f"  Horizon h={int(h):>3d}        : RMSE={float(rmse):.6e}, NRMSE={float(nrmse):.6e}")
+
     print(f"Mean rollout RMSE         : {float(np.mean(rollout_metrics['rollout_rmse'])):.6e}")
     print(f"Mean rollout NRMSE        : {float(np.mean(rollout_metrics['rollout_nrmse'])):.6e}")
+    for h, rmse, nrmse in zip(
+        rollout_metrics["rollout_horizons"],
+        rollout_metrics["rollout_rmse"],
+        rollout_metrics["rollout_nrmse"],
+    ):
+        print(f"  Rollout h={int(h):>3d}        : RMSE={float(rmse):.6e}, NRMSE={float(nrmse):.6e}")
+
     print(f"Composite test score      : {test_composite_score:.6e}  (reporting only)")
 
     test_summary_path = os.path.join(figdir, "test_summary.npz")
@@ -431,6 +490,14 @@ def main():
     save_summary_npz(test_summary_path, test_summary_payload)
     print(f"Saved test summary        : {test_summary_path}")
 
+    X_true, X_hat = compute_single_rollout(
+        X=X,
+        traj_id=traj_id,
+        steps=args.steps,
+        model_name=args.model,
+        model=model,
+        extras=extras,
+    )
     # --------------------------------------------------
     # Save trajectory plots
     # --------------------------------------------------
@@ -588,3 +655,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --heatmap_horizon 1 --run_true_grid_heatmap
+
