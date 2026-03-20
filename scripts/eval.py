@@ -25,9 +25,9 @@ Global options (defaults):
         linear_baseline,
         dmd_baseline,
         ml_dmd,
-        manual_expansion_ml_dmd,
-        manual_expansion_manual_dmd,
-        manual_expansion_eigen_dmd}
+        ml_lineardynamics,
+        regression_dmd,
+        ml_dmd}
     --data_path data/trajectories/{system}_trajectory.npz
     --model_path data/models/{model}_{system}.pt
     --steps 5000
@@ -42,74 +42,57 @@ Global options (defaults):
     python -m scripts.eval --model linear_baseline --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/linear_baseline/inward_spiral/default/model.npz
     python -m scripts.eval --model linear_baseline --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/linear_baseline/harmonic_oscillator/default/model.npz
 
-# DMD baseline
-    python -m scripts.eval --model dmd_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/dmd_baseline/saddle_point/default/model.npz
-    python -m scripts.eval --model dmd_baseline --data_path data/trajectories/linear/degenerate_node_trajectory.npz --model_path data/models/dmd_baseline/degenerate_node/default/model.npz
-    python -m scripts.eval --model dmd_baseline --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/dmd_baseline/inward_spiral/default/model.npz
-    python -m scripts.eval --model dmd_baseline --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/dmd_baseline/harmonic_oscillator/default/model.npz
+---------------------------------------------------------------------------------------------
 
-# ML DMD
+# Manual expansion + Regression DMD
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/regression_dmd/saddle_point/default/model.npz
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --model_path data/models/regression_dmd/degenerate_node/default/model.npz
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/regression_dmd/inward_spiral/default/model.npz
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/regression_dmd/harmonic_oscillator/default/model.npz
+
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/regression_dmd/vanderpol/default/model.npz
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --model_path data/models/regression_dmd/lotka_volterra/default/model.npz
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --model_path data/models/regression_dmd/pendulum/default/model.npz
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --model_path data/models/regression_dmd/duffing/default/model.npz
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --model_path data/models/regression_dmd/lorenz/default/model.npz
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --model_path data/models/regression_dmd/koopman_poly/default/model.npz
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --model_path data/models/regression_dmd/koopman_poly_large/default/model.npz
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --model_path data/models/regression_dmd/koopman_poly_trig/default/model.npz
+    
+    # Final test evaluation + also print the saved validation diagnostics summary for the same run
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/regression_dmd/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
+
+# Manual expansion + ML Linear Dynamics
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_lineardynamics/saddle_point/default/model.pt
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/linear/degenerate_node_trajectory.npz --model_path data/models/ml_lineardynamics/degenerate_node/default/model.pt
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/ml_lineardynamics/inward_spiral/default/model.pt
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/ml_lineardynamics/harmonic_oscillator/default/model.pt
+
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --model_path data/models/ml_lineardynamics/koopman_poly/default/model.pt
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --model_path data/models/ml_lineardynamics/koopman_poly_large/default/model.pt
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --model_path data/models/ml_lineardynamics/koopman_poly_trig/default/model.pt
+
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/ml_lineardynamics/vanderpol/default/model.pt
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --model_path data/models/ml_lineardynamics/lotka_volterra/default/model.pt
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --model_path data/models/ml_lineardynamics/pendulum/default/model.pt
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/duffing_trajectory.npz --model_path data/models/ml_lineardynamics/duffing/default/model.pt
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --model_path data/models/ml_lineardynamics/lorenz/default/model.pt
+
+# Manual expansion + ML DMD
     python -m scripts.eval --model ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_dmd/saddle_point/default/model.pt
     python -m scripts.eval --model ml_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --model_path data/models/ml_dmd/degenerate_node/default/model.pt
     python -m scripts.eval --model ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/ml_dmd/inward_spiral/default/model.pt
     python -m scripts.eval --model ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/ml_dmd/harmonic_oscillator/default/model.pt
 
-# ML Eigen DMD
-    python -m scripts.eval --model ml_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_eigen_dmd/saddle_point/default/model.pt
-    python -m scripts.eval --model ml_eigen_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --model_path data/models/ml_eigen_dmd/degenerate_node/default/model.pt
-    python -m scripts.eval --model ml_eigen_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/ml_eigen_dmd/inward_spiral/default/model.pt
-    python -m scripts.eval --model ml_eigen_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/ml_eigen_dmd/harmonic_oscillator/default/model.pt
----------------------------------------------------------------------------------------------
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --model_path data/models/ml_dmd/koopman_poly/default/model.pt
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --model_path data/models/ml_dmd/koopman_poly_large/default/model.pt
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --model_path data/models/ml_dmd/koopman_poly_trig/default/model.pt
 
-# Manual expansion + Manual DMD
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/saddle_point/default/model.npz
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/degenerate_node/default/model.npz
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/inward_spiral/default/model.npz
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/harmonic_oscillator/default/model.npz
-
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/vanderpol/default/model.npz
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/lotka_volterra/default/model.npz
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/pendulum/default/model.npz
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/duffing/default/model.npz
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/lorenz/default/model.npz
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/koopman_poly/default/model.npz
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/koopman_poly_large/default/model.npz
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/koopman_poly_trig/default/model.npz
-    
-    # Final test evaluation + also print the saved validation diagnostics summary for the same run
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10
-
-# Manual expansion + ML DMD
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/saddle_point/default/model.pt
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/degenerate_node/default/model.pt
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/inward_spiral/default/model.pt
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/harmonic_oscillator/default/model.pt
-
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/koopman_poly/default/model.pt
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/koopman_poly_large/default/model.pt
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/koopman_poly_trig/default/model.pt
-
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/vanderpol/default/model.pt
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/lotka_volterra/default/model.pt
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/pendulum/default/model.pt
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/duffing/default/model.pt
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/lorenz/default/model.pt
-
-# Manual expansion + Eigen DMD
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/saddle_point/default/model.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/degenerate_node/default/model.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/inward_spiral/default/model.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/harmonic_oscillator/default/model.pt
-
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/koopman_poly/default/model.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/koopman_poly_large/default/model.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/koopman_poly_trig/default/model.pt
-
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/vanderpol/default/model.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/lotka_volterra/default/model.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/pendulum/default/model.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/duffing/default/model.pt
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/lorenz/default/model.pt
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --model_path data/models/ml_dmd/vanderpol/default/model.pt
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --model_path data/models/ml_dmd/lotka_volterra/default/model.pt
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --model_path data/models/ml_dmd/pendulum/default/model.pt
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --model_path data/models/ml_dmd/duffing/default/model.pt
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --model_path data/models/ml_dmd/lorenz/default/model.pt
 
 # SINDy baseline
     python -m scripts.eval --model sindy_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/sindy_baseline/saddle_point/default/model.npz
@@ -133,9 +116,9 @@ Global options (defaults):
     python -m scripts.eval --model dmd_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/dmd_baseline/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
     python -m scripts.eval --model ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
     python -m scripts.eval --model ml_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_eigen_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
-    python -m scripts.eval --model manual_expansion_manual_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_manual_dmd/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
-    python -m scripts.eval --model manual_expansion_ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_ml_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
-    python -m scripts.eval --model manual_expansion_eigen_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/manual_expansion_eigen_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
+    python -m scripts.eval --model regression_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/regression_dmd/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_lineardynamics/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
+    python -m scripts.eval --model ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/ml_dmd/saddle_point/default/model.pt --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
     python -m scripts.eval --model sindy_baseline --data_path data/trajectories/linear/saddle_point_trajectory.npz --model_path data/models/sindy_baseline/saddle_point/default/model.npz --print_validation_summary --horizons 1,2,5,10 --rollout_horizons 5,10 --run_diagnostics --phase_horizons 1,5 --heatmap_horizon 5
 --------------------------------------------------------------------------------------------
 
@@ -178,11 +161,11 @@ def main():
                         choices=[
                             "linear_baseline",
                             "dmd_baseline",
+                            # "ml_dmd",
+                            # "ml_eigen_dmd",
+                            "regression_dmd",
+                            "ml_lineardynamics",
                             "ml_dmd",
-                            "ml_eigen_dmd",
-                            "manual_expansion_ml_dmd",
-                            "manual_expansion_manual_dmd",
-                            "manual_expansion_eigen_dmd",
                             "sindy_baseline",
                         ])
     parser.add_argument("--data_path", type=str, required=True)
@@ -463,7 +446,7 @@ def main():
     elif args.model == "dmd_baseline":
         eigvals = extras["Lambda"]
 
-    elif args.model == "manual_expansion_manual_dmd":
+    elif args.model == "regression_dmd":
         eigvals = np.linalg.eigvals(extras["K"])
 
     elif model is not None and hasattr(model, "Lambda"):
@@ -498,7 +481,7 @@ def main():
     expand_names = None
     matrix_to_plot = None
 
-    if args.model == "manual_expansion_manual_dmd":
+    if args.model == "regression_dmd":
         matrix_to_plot = extras["K"]
         expand_names = model.expand_names if hasattr(model, "expand_names") else None
 
@@ -546,7 +529,7 @@ def main():
         print(K_xx)
 
         # If linear system, also print true A_d if available
-        if args.model in ["manual_expansion_eigen_dmd"] and system in [
+        if args.model in ["ml_dmd"] and system in [
             "saddle_point",
             "degenerate_node",
             "inward_spiral",

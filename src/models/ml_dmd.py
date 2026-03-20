@@ -1,68 +1,252 @@
 import torch
 import torch.nn as nn
 
+from src.models.expander import ManualExpansion
 
-class ML_DMD(nn.Module):
+
+class ML_DMD(ManualExpansion):
     """
-    Linear dynamics model.
+    Manual expansion + learned Koopman eigendecomposition.
 
-    This model is EXACTLY linear end-to-end.
+    Instead of learning the lifted linear operator K directly, we learn
 
-    Mathematical form:
-        x_{t+1} = K x_t
+        K = Phi Λ Phi^{-1}
 
-    where:
-        K ∈ R^{state_dim x state_dim}
-    
+    but we NEVER explicitly construct K.
+
+    The lifted dynamics are applied as
+
+        z_{t+1} = Phi Λ Phi^{-1} z_t
+
+    which corresponds to:
+
+        z_norm -> modal coordinates -> modal evolution -> lifted coordinates
+
+    Pipeline:
+
+        x  --expand-->  z
+        z  --scale-->   z_norm
+        z_norm --Phi^{-1}--> modal coordinates b
+        b --Lambda--> modal_next
+        modal_next --Phi--> z_norm_next
+        z_norm_next --descale--> z_next
+        z_next --de_expand--> x_next
+
+    Important design choices
+    ------------------------
+    • Polynomial / manual basis expansion
+    • Fixed feature normalization (z_scale)
+    • Degree-weighted lifted loss
+    • Regularization for Phi conditioning
+    • Eigenvalue stability regularization
     """
 
-    def __init__(self, state_dim=2):
-        super().__init__()
+    def __init__(
+        self,
+        state_dim=2,
+        expansion_degree=2,
+        bias=True,
+        sine_cosine_expansion=False,
+        expansion_type="general",
+        system=None,
+    ):
 
-        # --------------------------------------------------
-        # Latent dynamics: x_t -> x_{t+1}
-        # --------------------------------------------------
-        # Linear Koopman operator in latent space
-        #
-        # x_{t+1} = K x_t
-        #
-        # No bias:
-        # - represents a pure linear operator
-        # - matches the true linear system structure
-        # --------------------------------------------------
-
-        self.K = nn.Linear(
-            in_features=state_dim,
-            out_features=state_dim,
-            bias=False,
+        # ------------------------------------------------
+        # Initialize manual basis expansion
+        # ------------------------------------------------
+        super().__init__(
+            state_dim=state_dim,
+            expansion_degree=expansion_degree,
+            bias=bias,
+            sine_cosine_expansion=sine_cosine_expansion,
+            expansion_type=expansion_type,
+            system=system,
         )
+
+        self.latent_dim = self.expanded_dim
+
+        # ------------------------------------------------
+        # Eigenvector matrix Φ
+        # ------------------------------------------------
+        # Columns correspond to Koopman modes.
+        # Initialized close to identity for stability.
+        self.Phi = nn.Parameter(
+            torch.eye(self.latent_dim)
+            + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
+        )
+
+        # ------------------------------------------------
+        # Eigenvalue matrix Λ
+        # ------------------------------------------------
+        # We allow Λ to be a full matrix instead of diagonal.
+        # This allows the model to represent complex eigenvalue
+        # pairs using real-valued 2×2 blocks.
+        self.Lambda = nn.Parameter(
+            torch.eye(self.latent_dim)
+            + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
+        )
+
+        # ------------------------------------------------
+        # Feature scaling buffer
+        # ------------------------------------------------
+        # z_scale normalizes lifted observables
+        # (computed from training data).
+        self.register_buffer("z_scale", torch.ones(self.latent_dim))
+
+        # ------------------------------------------------
+        # Degree-based lifted loss weighting
+        # ------------------------------------------------
+        # High-degree monomials can dominate the loss.
+        # We therefore downweight them.
+        degrees = []
+
+        for name in self.expand_names:
+            deg = name.count("^") + name.count("*")
+            degrees.append(deg)
+
+        degrees = torch.tensor(degrees, dtype=torch.float32)
+        weights = 1.0 / (degrees + 1.0)
+        self.register_buffer("lift_weights", weights)
+
+    # ------------------------------------------------
+    # Set lifted scaling
+    # ------------------------------------------------
+
+    def set_z_scale(self, z_scale):
+        """
+        Store lifted feature scaling computed from training data.
+
+        z_scale_i ≈ mean(|z_i|)
+
+        This ensures the lifted coordinate system stays fixed
+        across training, validation, and rollout.
+        """
+
+        if not torch.is_tensor(z_scale):
+            z_scale = torch.tensor(z_scale, dtype=self.Phi.dtype)
+
+        self.z_scale.copy_(z_scale.to(self.z_scale.device))
+
+    # ------------------------------------------------
+    # Forward pass
+    # ------------------------------------------------
 
     def forward(self, x):
         """
-        One-step prediction.
+        One-step prediction
 
-        Args:
-            x: tensor of shape (batch_size, state_dim)
+            x_t → x_{t+1}
 
-        Returns:
-            x_next: predicted next state, shape (batch_size, state_dim)
+        using the Koopman eigendecomposition.
         """
 
-        # Apply linear latent dynamics
-        x_next = self.K(x)
+        # Lift state into observable space
+        z_raw = self.expand(x)
+
+        # Normalize lifted coordinates
+        z = z_raw / self.z_scale
+
+        # Compute pseudo-inverse of Phi
+        Phi_inv = torch.linalg.pinv(self.Phi, rcond=1e-6)
+
+        # Convert to modal coordinates
+        b = z @ Phi_inv.mT
+
+        # Modal evolution
+        b_next = b @ self.Lambda.mT
+
+        # Convert back to lifted coordinates
+        z_next = b_next @ self.Phi.mT
+
+        # De-normalize lifted observables
+        z_next_raw = z_next * self.z_scale
+
+        # Recover original state
+        x_next = self.de_expand(z_next_raw)
 
         return x_next
 
+    # ------------------------------------------------
+    # Training loss
+    # ------------------------------------------------
+
+    def compute_loss(self, x, x_next_true):
+
+        # Expand states
+        z_raw = self.expand(x)
+        z_next_true_raw = self.expand(x_next_true)
+
+        # Normalize lifted coordinates
+        z = z_raw / self.z_scale
+        z_next_true = z_next_true_raw / self.z_scale
+
+        Phi_inv = torch.linalg.pinv(self.Phi, rcond=1e-6)
+
+        # Convert to modal coordinates
+        b = z @ Phi_inv.mT
+
+        # Modal evolution
+        b_next = b @ self.Lambda.mT
+
+        # Convert back to lifted coordinates
+        z_next_pred = b_next @ self.Phi.mT
+
+        # --------------------------------------------------
+        # 1) Weighted lifted loss
+        # --------------------------------------------------
+
+        diff = z_next_pred - z_next_true
+        loss_lift = torch.mean(self.lift_weights * diff**2)
+
+        # --------------------------------------------------
+        # 2) State prediction loss
+        # --------------------------------------------------
+
+        z_next_pred_raw = z_next_pred * self.z_scale
+        x_next_pred = self.de_expand(z_next_pred_raw)
+        loss_state = nn.MSELoss()(x_next_pred, x_next_true)
+
+        # --------------------------------------------------
+        # 3) Φ conditioning regularization
+        # --------------------------------------------------
+
+        col_norms = torch.linalg.norm(self.Phi, dim=0)
+        loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
+
+        # --------------------------------------------------
+        # 4) Stability regularization on effective operator
+        # --------------------------------------------------
+
+        K_eff = self.Phi @ self.Lambda @ Phi_inv
+        eigvals = torch.linalg.eigvals(K_eff)
+
+        loss_stability = torch.mean(
+            torch.relu(torch.abs(eigvals) - 1.0) ** 2
+        )
+
+        # --------------------------------------------------
+        # Total loss
+        # --------------------------------------------------
+
+        loss = (
+            loss_lift
+            + 0.1 * loss_state
+            + 1e-3 * loss_unit_length
+            + 1e-3 * loss_stability
+        )
+        return (loss,)
+
+    # ------------------------------------------------
+    # Rollout simulation
+    # ------------------------------------------------
+
     def rollout(self, x0, steps):
-        """
-        Rollout trajectory from initial state x0.
-        """
 
         if not torch.is_tensor(x0):
             x0 = torch.tensor(
                 x0,
                 dtype=next(self.parameters()).dtype,
-                device=next(self.parameters()).device
+                device=next(self.parameters()).device,
             )
 
         if x0.ndim == 1:
