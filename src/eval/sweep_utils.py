@@ -1,10 +1,10 @@
 import numpy as np
 import torch
 
+# from src.models.deprecated.ml_dmd import ML_DMD
+# from src.models.deprecated.ml_eigen_dmd import MLEigenDMD
+from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.ml_dmd import ML_DMD
-from src.models.ml_eigen_dmd import MLEigenDMD
-from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
-from src.models.manual_expansion_eigen_dmd import ManualExpansion_EigenDMD
 
 
 def maybe_set_z_scale(model, train_loader, device):
@@ -41,18 +41,18 @@ def build_run_name(args, system_name, run_id=None):
 
 
 def build_model(args, state_dim, system_name, device):
-    if args.model == "ml_dmd":
-        model = ML_DMD(
-            state_dim=state_dim,
-        ).to(device)
+    # if args.model == "ml_dmd":
+    #     model = ML_DMD(
+    #         state_dim=state_dim,
+    #     ).to(device)
 
-    elif args.model == "ml_eigen_dmd":
-        model = MLEigenDMD(
-            state_dim=state_dim,
-        ).to(device)
+    # elif args.model == "ml_eigen_dmd":
+    #     model = MLEigenDMD(
+    #         state_dim=state_dim,
+    #     ).to(device)
 
-    elif args.model == "manual_expansion_ml_dmd":
-        model = ManualExpansion_MLDMD(
+    if args.model == "ml_lineardynamics":
+        model = ML_LinearDynamics(
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
             expansion_type=args.expansion_type,
@@ -61,8 +61,8 @@ def build_model(args, state_dim, system_name, device):
             system=system_name,
         ).to(device)
 
-    elif args.model == "manual_expansion_eigen_dmd":
-        model = ManualExpansion_EigenDMD(
+    elif args.model == "ml_dmd":
+        model = ML_DMD(
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
             bias=args.bias == "true",

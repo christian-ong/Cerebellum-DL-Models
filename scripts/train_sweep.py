@@ -24,10 +24,10 @@ def main():
         type=str,
         required=True,
         choices=[
-            "ml_dmd",
-            "ml_eigen_dmd",
+            # "ml_dmd",
+            # "ml_eigen_dmd",
             "manual_expansion_ml_dmd",
-            "manual_expansion_eigen_dmd",
+            "ml_dmd",
         ],
     )
     parser.add_argument("--data_path", type=str, required=True)

@@ -6,12 +6,12 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.models.linear_baseline import rollout_linear_map
-from src.models.dmd_baseline import rollout_dmd_eig
+# from src.models.deprecated.dmd_baseline import rollout_dmd_eig
+# from src.models.deprecated.ml_dmd import ML_DMD
+# from src.models.deprecated.ml_eigen_dmd import MLEigenDMD
+from src.models.regression_dmd import Regression_DMD
+from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.ml_dmd import ML_DMD
-from src.models.ml_eigen_dmd import MLEigenDMD
-from src.models.manual_expansion_ml_dmd import ManualExpansion_MLDMD
-from src.models.manual_expansion_manual_dmd import ManualExpansion_ManualDMD
-from src.models.manual_expansion_eigen_dmd import ManualExpansion_EigenDMD
 from src.models.sindy_baseline import SINDyBaseline
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
 
@@ -132,21 +132,19 @@ def load_model(
         extras["Phi"] = model_data["Phi"]
         return model, extras
 
-    if model_name == "manual_expansion_manual_dmd":
+    if model_name == "regression_dmd":
         model_data = np.load(model_path, allow_pickle=True)
         extras["K"] = model_data["K"]
 
         if "C" not in model_data:
             raise ValueError(
                 "Checkpoint is missing decoder matrix C. "
-                "Please retrain manual_expansion_manual_dmd with the updated EDMD-style implementation."
+                "Please retrain regression_dmd with the updated EDMD-style implementation."
             )
         extras["C"] = model_data["C"]
 
         degree = int(model_data["expansion_degree"]) if "expansion_degree" in model_data else 3
 
-        # Backward-compatible handling:
-        # prefer current training-side naming "bias"
         if "bias" in model_data:
             bias = _to_bool(model_data["bias"], default=True)
         elif "include_bias" in model_data:
@@ -156,10 +154,10 @@ def load_model(
         else:
             bias = True
 
-        if "sine_cosine_expansion" in model_data:
-            sine_cosine_expansion = _to_bool(model_data["sine_cosine_expansion"], default=False)
-        else:
-            sine_cosine_expansion = False
+        sine_cosine_expansion = (
+            _to_bool(model_data["sine_cosine_expansion"], default=False)
+            if "sine_cosine_expansion" in model_data else False
+        )
 
         expansion_type = str(model_data["expansion_type"]) if "expansion_type" in model_data else "general"
 
@@ -168,38 +166,99 @@ def load_model(
         else:
             system_basis = system if expansion_type == "specific" else None
 
-        model = ManualExpansion_ManualDMD(
+        # IMPORTANT: restore inference behavior from checkpoint when available
+        decoder_mode = str(model_data["decoder_mode"]) if "decoder_mode" in model_data else "fixed"
+
+        # These were training defaults in train.py, so use those as fallback for old checkpoints
+        normalize_state = (
+            _to_bool(model_data["normalize_state"], default=True)
+            if "normalize_state" in model_data else True
+        )
+        normalize_lifted = (
+            _to_bool(model_data["normalize_lifted"], default=True)
+            if "normalize_lifted" in model_data else True
+        )
+        residual_decode = (
+            _to_bool(model_data["residual_decode"], default=True)
+            if "residual_decode" in model_data else True
+        )
+
+        max_spectral_radius = None
+        if "max_spectral_radius" in model_data:
+            val = np.asarray(model_data["max_spectral_radius"]).item()
+            if not np.isnan(val):
+                max_spectral_radius = float(val)
+
+        model = Regression_DMD(
             state_dim=state_dim,
             expansion_degree=degree,
             bias=bias,
             sine_cosine_expansion=sine_cosine_expansion,
             expansion_type=expansion_type,
             system=system_basis,
+            decoder_mode=decoder_mode,
+            normalize_state=normalize_state,
+            normalize_lifted=normalize_lifted,
+            residual_decode=residual_decode,
+            max_spectral_radius=max_spectral_radius,
         ).to(device)
+
+        # Prefer exact saved scalers if present
+        if all(k in model_data for k in ["x_mean", "x_scale", "psi_scale"]):
+            model.x_mean = torch.tensor(model_data["x_mean"], dtype=torch.float64)
+            model.x_scale = torch.tensor(model_data["x_scale"], dtype=torch.float64)
+            model.psi_scale = torch.tensor(model_data["psi_scale"], dtype=torch.float64)
+        else:
+            # Backward-compatible fallback: recompute scalers from the training split
+            train_ds = OneStepTrajectoryDataset(data_path, split="train")
+            if len(train_ds) == 0:
+                raise ValueError("Training split is empty; cannot reconstruct normalization stats.")
+
+            x_train = train_ds.x.to(dtype=torch.float64)
+
+            if model.normalize_state:
+                model.x_mean = torch.mean(x_train, dim=0)
+                model.x_scale = model._safe_scale(x_train, dim=0)
+                x_train_n = model._normalize_x(x_train)
+            else:
+                model.x_mean = torch.zeros(state_dim, dtype=torch.float64)
+                model.x_scale = torch.ones(state_dim, dtype=torch.float64)
+                x_train_n = x_train
+
+            psi_train = model.expand(x_train_n)
+
+            if model.normalize_lifted:
+                model.psi_scale = model._safe_scale(psi_train, dim=0)
+            else:
+                model.psi_scale = torch.ones(psi_train.shape[1], dtype=torch.float64)
+
+        model.K_fitted = torch.tensor(extras["K"], dtype=torch.float64)
+        model.C_fitted = torch.tensor(extras["C"], dtype=torch.float64)
+
         model.eval()
         return model, extras
 
-    if model_name == "ml_dmd":
-        ckpt = torch.load(model_path, map_location=device)
-        model = ML_DMD(state_dim=ckpt["state_dim"]).to(device)
-        model.load_state_dict(ckpt["model_state_dict"])
-        model.eval()
-        extras["ckpt"] = ckpt
-        return model, extras
+    # if model_name == "ml_dmd":
+    #     ckpt = torch.load(model_path, map_location=device)
+    #     model = ML_DMD(state_dim=ckpt["state_dim"]).to(device)
+    #     model.load_state_dict(ckpt["model_state_dict"])
+    #     model.eval()
+    #     extras["ckpt"] = ckpt
+    #     return model, extras
 
-    if model_name == "ml_eigen_dmd":
-        ckpt = torch.load(model_path, map_location=device)
-        model = MLEigenDMD(state_dim=ckpt["state_dim"]).to(device)
-        model.load_state_dict(ckpt["model_state_dict"])
-        model.eval()
-        extras["ckpt"] = ckpt
-        return model, extras
+    # if model_name == "ml_eigen_dmd":
+    #     ckpt = torch.load(model_path, map_location=device)
+    #     model = MLEigenDMD(state_dim=ckpt["state_dim"]).to(device)
+    #     model.load_state_dict(ckpt["model_state_dict"])
+    #     model.eval()
+    #     extras["ckpt"] = ckpt
+    #     return model, extras
 
-    if model_name == "manual_expansion_ml_dmd":
+    if model_name == "ml_lineardynamics":
         ckpt = torch.load(model_path, map_location=device)
         train_args = ckpt["train_args"]
 
-        model = ManualExpansion_MLDMD(
+        model = ML_LinearDynamics(
             state_dim=ckpt["state_dim"],
             expansion_degree=train_args["expansion_degree"],
             expansion_type=train_args["expansion_type"],
@@ -212,11 +271,11 @@ def load_model(
         extras["ckpt"] = ckpt
         return model, extras
 
-    if model_name == "manual_expansion_eigen_dmd":
+    if model_name == "ml_dmd":
         ckpt = torch.load(model_path, map_location=device)
         train_args = ckpt["train_args"]
 
-        model = ManualExpansion_EigenDMD(
+        model = ML_DMD(
             state_dim=ckpt["state_dim"],
             expansion_degree=train_args["expansion_degree"],
             bias=_to_bool(train_args.get("bias", "true"), default=True),
@@ -251,7 +310,7 @@ def predict_rollout_from_x0(
     if model_name == "dmd_baseline":
         return rollout_dmd_eig(extras["Lambda"], extras["Phi"], x0=x0, steps=steps)
 
-    if model_name == "manual_expansion_manual_dmd":
+    if model_name == "regression_dmd":
         return model.rollout(
             K=extras["K"],
             C=extras["C"],
