@@ -16,7 +16,6 @@ from src.data_generation.data_simulation import (
 )
 from src.data_generation.plot_data import (
     plot_init_conditions,
-    plot_trajectories_only,
     plot_flow_map_displacement,
     plot_trajectories_from_array,
 )
@@ -103,27 +102,6 @@ Each .npz file contains:
 # --------------------------------------------------
 # Initial condition samplers
 # --------------------------------------------------
-
-# def sample_linear_ic(n_traj, rng):
-#     theta = rng.uniform(0, 2 * np.pi, size=n_traj)
-#     r = rng.uniform(0.5, 1.5, size=n_traj)
-#     return np.stack([r * np.cos(theta), r * np.sin(theta)], axis=1)
-
-
-# def sample_generic_ic(x0, n_traj, rng, noise_scale=0.1):
-#     if n_traj == 1:
-#         return x0
-#     d = x0.shape[0]
-#     noise = noise_scale * rng.standard_normal(size=(n_traj, d))
-#     return x0[None, :] + noise
-
-
-# def sample_uniform_ic(n_traj, rng, lows=np.array([-1.5, -1.5]), highs=np.array([1.5, 1.5])):
-#     d = lows.shape[0]
-#     x0s = np.zeros((n_traj, d), dtype=float)
-#     for i in range(d):
-#         x0s[:, i] = rng.uniform(lows[i], highs[i], size=n_traj)
-#     return x0s
 
 def sample_annulus_ic(n_traj, rng, r_min=0.2, r_max=1.5):
     """

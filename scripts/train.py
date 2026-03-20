@@ -6,9 +6,7 @@ from torch.utils.data import DataLoader
 
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
 from src.models.linear_baseline import fit_linear_map
-# from src.models.deprecated.dmd_baseline import fit_dmd
-# from src.models.deprecated.ml_eigen_dmd import MLEigenDMD
-# from src.models.deprecated.ml_dmd import ML_DMD
+from src.models.dmd_baseline import fit_dmd
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.regression_dmd import Regression_DMD
 from src.models.ml_dmd import ML_DMD
@@ -20,17 +18,16 @@ Global options (defaults):
     --model {
         linear_baseline,
         dmd_baseline,
-        ml_lineardynamics,
         regression_dmd,
-        ml_dmd,}
-    --data_path data/trajectories/{system}_trajectory.npz
+        ml_lineardynamics,
+        ml_dmd,
+        sindy_baseline}
+    --data_path data/trajectories/{linear|nonlinear}/{system}
     --epochs 50
     --subset 1.0
     --batch_size 64
     --lr 1e-3
     --weight_decay 1e-6
-    --latent_dim 2
-    --hidden_dim 64
     --seed 0
     --outdir data/models
 
@@ -45,8 +42,24 @@ Global options (defaults):
     python -m scripts.train --model dmd_baseline --data_path data/trajectories/linear/degenerate_node
     python -m scripts.train --model dmd_baseline --data_path data/trajectories/linear/inward_spiral
     python -m scripts.train --model dmd_baseline --data_path data/trajectories/linear/harmonic_oscillator
- 
+
 ---------------------------------------------------------------------------------------------
+# ML Linear Dynamics
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/saddle_point --epochs 10
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/degenerate_node --epochs 10
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/inward_spiral --epochs 10
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/harmonic_oscillator --epochs 10
+
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly --epochs 10
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_large --epochs 10
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_trig --epochs 10
+
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/vanderpol --epochs 10
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lotka_volterra --epochs 10
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/pendulum --epochs 10
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/duffing --epochs 10
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz --epochs 10
+
 
 # ML DMD
     python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/saddle_point --epochs 10
@@ -54,62 +67,65 @@ Global options (defaults):
     python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/inward_spiral --epochs 10
     python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/harmonic_oscillator --epochs 10
 
-# ML Eigen DMD
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/linear/saddle_point --epochs 10
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/linear/degenerate_node --epochs 10
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/linear/inward_spiral --epochs 10
-    python -m scripts.train --model ml_eigen_dmd --data_path data/trajectories/linear/harmonic_oscillator --epochs 10
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly --epochs 10
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_large --epochs 10
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig --epochs 10
+
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol --epochs 10
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra --epochs 10
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/pendulum --epochs 10
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/duffing --epochs 10
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lorenz --epochs 10
+
 
 ---------------------------------------------------------------------------------------------
+# Regression DMD
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/saddle_point --expansion_type general --expansion_degree 3
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/degenerate_node --expansion_type general --expansion_degree 3
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/inward_spiral --expansion_type general --expansion_degree 3
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/harmonic_oscillator --expansion_type general --expansion_degree 3
 
-# Manual expansion + Regression DMD
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz 
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz 
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz 
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz 
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/vanderpol --expansion_type specific --expansion_degree 10
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/lotka_volterra --expansion_type specific --expansion_degree 10
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/pendulum --expansion_type specific --expansion_degree 10
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/duffing --expansion_type specific --expansion_degree 10
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/lorenz --expansion_type specific --expansion_degree 10
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/koopman_poly --expansion_type specific --expansion_degree 3
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/koopman_poly_large --expansion_type specific --expansion_degree 5
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig --expansion_type specific --expansion_degree 10
 
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --expansion_type specific --expansion_degree 10
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --expansion_type specific --expansion_degree 10
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --expansion_type specific --expansion_degree 10
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --expansion_type specific --expansion_degree 10
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --expansion_type specific --expansion_degree 10
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --expansion_type specific --expansion_degree 3
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --expansion_type specific --expansion_degree 5
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --expansion_type specific --expansion_degree 10
+# ML Linear Dynamics + Manual Expansion
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/saddle_point --epochs 10 --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/degenerate_node --epochs 10 --weight_decay 0.0 --expansion_degree 3 --bias true --sine_cosine_expansion false --lr 1e-5
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/inward_spiral --epochs 10 --weight_decay 0.0 --expansion_degree 3 --bias true --sine_cosine_expansion false --lr 1e-5
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/harmonic_oscillator --epochs 10 --weight_decay 0.0 --expansion_degree 3 --bias true --sine_cosine_expansion false --lr 1e-5
 
-# Manual expansion + ML Linear Dynamics
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 10 --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 10 --weight_decay 0.0 --expansion_degree 3 --bias true --sine_cosine_expansion false --lr 1e-5
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 10 --weight_decay 0.0 --expansion_degree 3 --bias true --sine_cosine_expansion false --lr 1e-5
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 10 --weight_decay 0.0 --expansion_degree 3 --bias true --sine_cosine_expansion false --lr 1e-5
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly --epochs 10 --expansion_type specific --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_large --epochs 10 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_trig --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5
 
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/vanderpol --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lotka_volterra --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/pendulum --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/duffing --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
 
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/duffing_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+# ML DMD + Manual Expansion
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/saddle_point --epochs 10 --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/degenerate_node --epochs 10 --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/inward_spiral --epochs 10 --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/harmonic_oscillator --epochs 10 --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
 
-# Manual expansion + ML DMD
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/saddle_point_trajectory.npz --epochs 10 --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/degenerate_node_trajectory.npz --epochs 10 --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/inward_spiral_trajectory.npz --epochs 10 --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/harmonic_oscillator_trajectory.npz --epochs 10 --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly --epochs 10 --expansion_type specific --expansion_degree 3 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_large --epochs 10 --expansion_type specific --expansion_degree 5 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5
 
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 3 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_large_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 5 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/pendulum --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/duffing --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lorenz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
 
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/pendulum_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/duffing_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lorenz_trajectory.npz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-
-    
 # SINDy baseline
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/linear/saddle_point --sindy_discrete_time true --sindy_poly_order 1 --sindy_threshold 0.0 --sindy_alpha 0.0
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/linear/degenerate_node --sindy_discrete_time true --sindy_poly_order 1 --sindy_threshold 0.0 --sindy_alpha 0.0
@@ -128,8 +144,7 @@ Global options (defaults):
 ---------------------------------------------------------------------------------------------
 
 Output:
-    data/models/{model}.pt
-    data/models/linear_baseline.npz
+    data/models/{model}/{system}/{run_name}/model.{npz|pt}
 """
 
 # --------------------------------------------------
@@ -143,38 +158,6 @@ def dataloader_to_numpy(loader):
         xs.append(x.numpy())
         ys.append(y.numpy())
     return np.vstack(xs), np.vstack(ys)
-
-
-def build_model(args, state_dim, system_name, device):
-    """Build the specified model."""
-    if args.model == "ml_dmd":
-        return ML_DMD(state_dim=state_dim).to(device)
-    
-    elif args.model == "ml_eigen_dmd":
-        return MLEigenDMD(state_dim=state_dim).to(device)
-    
-    elif args.model == "manual_expansion_ml_dmd":
-        return ManualExpansion_MLDMD(
-            state_dim=state_dim,
-            expansion_degree=args.expansion_degree,
-            expansion_type=args.expansion_type,
-            bias=args.bias == "true",
-            sine_cosine_expansion=args.sine_cosine_expansion == "true",
-            system=system_name,
-        ).to(device)
-    
-    elif args.model == "manual_expansion_eigen_dmd":
-        return ManualExpansion_EigenDMD(
-            state_dim=state_dim,
-            expansion_degree=args.expansion_degree,
-            bias=args.bias == "true",
-            sine_cosine_expansion=args.sine_cosine_expansion == "true",
-            expansion_type=args.expansion_type,
-            system=system_name if args.expansion_type == "specific" else None,
-        ).to(device)
-    
-    else:
-        raise ValueError(f"Unknown neural network model: {args.model}")
 
 
 # --------------------------------------------------
@@ -196,8 +179,6 @@ def main():
         choices=[
             "linear_baseline",
             "dmd_baseline",
-            # "ml_dmd",
-            # "ml_eigen_dmd",
             "regression_dmd",
             "ml_lineardynamics",
             "ml_dmd",
@@ -212,16 +193,10 @@ def main():
     # Training hyperparameters
     # --------------------------------------------------
     parser.add_argument("--subset", type=float, default=1.0, help="Fraction of data to use for training (for ML models only)")
-    parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--weight_decay", type=float, default=1e-6)
-
-    # --------------------------------------------------
-    # Model hyperparameters
-    # --------------------------------------------------
-    parser.add_argument("--latent_dim", type=int, default=2)
-    parser.add_argument("--hidden_dim", type=int, default=64)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--weight_decay", type=float, default=0.0)
 
     # --------------------------------------------------
     # DMD / EDMD hyperparameters
@@ -232,7 +207,7 @@ def main():
     parser.add_argument("--manual_decoder", type=str, choices=["regressed", "fixed"], default="fixed")
     parser.add_argument("--manual_regression_method", type=str, default="svd")
     parser.add_argument("--expansion_type", type=str, default="general", choices=["general", "specific"], help="Whether to use general polynomial expansion (all combinations up to degree) or specific expansion (e.g. only x^2, y^2, xy) for the manual expansion models")
-    parser.add_argument("--expansion_degree", type=int, default=3)
+    parser.add_argument("--expansion_degree", type=int, default=2)
     parser.add_argument("--sine_cosine_expansion", type=str.lower,choices=["true", "false"], default="true",help="Include sin(x_i) and cos(x_i) terms in the manual expansion basis")
     parser.add_argument("--decoder_ridge", type=float, default=None)
     parser.add_argument("--normalize_state", type=str.lower, choices=["true", "false"], default="true")
@@ -268,8 +243,6 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Using device:", device)
-
-    # suffix = f"_{args.name}" if args.name else ""
 
     # Load metadata from train split (all splits have it)
     train_meta_path = resolve_split_npz_path(args.data_path, "train")
@@ -337,7 +310,6 @@ def main():
             print("Saved DMD baseline to:", save_path)
             return
 
-        # manual expansion manual DMD
         elif args.model == "regression_dmd":
             model = Regression_DMD(
                 state_dim=state_dim,
@@ -455,15 +427,6 @@ def main():
     print("Training autoencoder model with one-step loss...")
     print(f"Model: {args.model}")
         
-    # if args.model == "ml_dmd":
-    #     model = ML_DMD(
-    #         state_dim=state_dim,
-    #     ).to(device)
-    # elif args.model == "ml_eigen_dmd":
-    #     model = MLEigenDMD(
-    #         state_dim=state_dim,
-    #     ).to(device)
-
     if args.model == "ml_lineardynamics":
         model = ML_LinearDynamics(
             state_dim=state_dim,
@@ -535,7 +498,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-# python -m scripts.train --model manual_expansion_manual_dmd  --data_path data/trajectories/nonlinear/vanderpol_trajectory.npz --expansion_type specific --expansion_degree 4  --manual_decoder regressed --ridge 1e-4 --decoder_ridge 1e-4 --normalize_state true --normalize_lifted true --residual_decode true --max_spectral_radius 0.999 --name yahni
