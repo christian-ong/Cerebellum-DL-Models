@@ -1,7 +1,7 @@
 method: grid
 
 metric:
-  name: val_rollout_rmse
+  name: val_weighted_cumulative_nrmse
   goal: minimize
 
 command:
@@ -20,15 +20,15 @@ command:
 parameters:
   model:
     values:
-      - manual_expansion_ml_dmd
-      - manual_expansion_eigen_dmd
+      - ml_dmd
+      - ml_linear_dynamics
 
   data_path:
     values:
-      - data/trajectories/nonlinear/vanderpol_trajectory.npz
-      - data/trajectories/nonlinear/lotka_volterra_trajectory.npz
-      - data/trajectories/nonlinear/duffing_trajectory.npz
-      - data/trajectories/nonlinear/lorenz_trajectory.npz
+      - data/trajectories/nonlinear/vanderpol
+      - data/trajectories/nonlinear/lotka_volterra
+      - data/trajectories/nonlinear/duffing
+      - data/trajectories/nonlinear/lorenz
 
   lr:
     values: [1e-4, 5e-4, 1e-3]
@@ -37,7 +37,7 @@ parameters:
     values: [0.0, 1e-6]
 
   batch_size:
-    values: [64]
+    values: [512]
 
   expansion_degree:
     values: [3, 5, 10]

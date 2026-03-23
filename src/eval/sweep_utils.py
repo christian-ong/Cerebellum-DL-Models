@@ -128,12 +128,8 @@ def compute_rollout_metrics(
     X expected shape: (T, N, d)
     rollout always starts from X[0] and compares predictions against X[t].
 
-    Returns dict with:
-      {
-        "rollout_rmse_h100": ...,
-        "rollout_nrmse_h100": ...,
-        "weighted_cumulative_nrmse_h100_g0.95": ...,
-      }
+    NRMSE is normalized per state dimension using the empirical standard
+    deviation of the target rollout window.
     """
     if X is None:
         return None
@@ -160,16 +156,19 @@ def compute_rollout_metrics(
 
     model.eval()
 
-    # denominator for NRMSE:
-    # root mean square magnitude of the ground truth over rollout horizon
-    target = X[1 : max_h + 1]  # (H, N, d)
-    target_sq_mean = torch.mean(target ** 2)
-    target_rms = torch.sqrt(torch.clamp(target_sq_mean, min=1e-12))
+    # Target rollout window used for normalization
+    target = X[1 : max_h + 1]  # shape (H, N, d)
 
-    x = X[0]  # (N, d)
+    # Per-dimension normalization for comparability across state dimensions
+    target_std = torch.std(target, dim=(0, 1), unbiased=False) + 1e-8  # shape (d,)
+
+    x = X[0]  # shape (N, d)
 
     total_sq_err = torch.tensor(0.0, device=device)
     total_numel = 0
+
+    total_norm_sq_err = torch.tensor(0.0, device=device)
+    total_norm_numel = 0
 
     weighted_num = torch.tensor(0.0, device=device)
     weight_sum = 0.0
@@ -177,21 +176,25 @@ def compute_rollout_metrics(
     with torch.no_grad():
         for h in range(1, max_h + 1):
             x = model(x)
-            diff = x - X[h]
+            diff = x - X[h]  # shape (N, d)
 
-            mse_h = torch.mean(diff ** 2)
-            rmse_h = torch.sqrt(torch.clamp(mse_h, min=1e-12))
-            nrmse_h = rmse_h / target_rms
+            # Plain RMSE
+            total_sq_err += torch.sum(diff ** 2)
+            total_numel += diff.numel()
+
+            # Per-dimension normalized NRMSE
+            diff_norm = diff / target_std
+            nrmse_h = torch.sqrt(torch.mean(diff_norm ** 2))
+
+            total_norm_sq_err += torch.sum(diff_norm ** 2)
+            total_norm_numel += diff_norm.numel()
 
             w = gamma ** h
             weighted_num += w * nrmse_h
             weight_sum += w
 
-            total_sq_err += torch.sum(diff ** 2)
-            total_numel += diff.numel()
-
     rollout_rmse = torch.sqrt(total_sq_err / max(total_numel, 1))
-    rollout_nrmse = rollout_rmse / target_rms
+    rollout_nrmse = torch.sqrt(total_norm_sq_err / max(total_norm_numel, 1))
     weighted_cumulative_nrmse = weighted_num / max(weight_sum, 1e-12)
 
     return {

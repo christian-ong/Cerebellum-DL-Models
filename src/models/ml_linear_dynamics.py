@@ -116,20 +116,6 @@ class ML_LinearDynamics(ManualExpansion):
         self.register_buffer("lift_weights", weights)
         
     def _feature_degree(self, name: str) -> int:
-        """
-        Compute polynomial/trig feature degree from expansion name.
-
-        Examples
-        --------
-        1        -> 0
-        x        -> 1
-        y        -> 1
-        x^2      -> 2
-        x*y      -> 2
-        x^2*y    -> 3
-        sin(x)   -> 1
-        cos(y)   -> 1
-        """
         name = name.strip()
 
         if name == "1":
@@ -150,6 +136,7 @@ class ML_LinearDynamics(ManualExpansion):
                 deg += 1
 
         return deg
+
     # ------------------------------------------------
     # Set scaling for lifted features
     # ------------------------------------------------

@@ -51,7 +51,7 @@ def main():
         type=str,
         required=True,
         choices=[
-            "manual_expansion_ml_dmd",
+            "ml_linear_dynamics",
             "ml_dmd",
         ],
     )
@@ -126,7 +126,7 @@ def main():
         project="koopman-operator-learning",
         config=vars(args),
         group=f"{system_name}_{args.model}",
-        tags=[system_name, args.model],
+        tags=[system_name, args.model, args.expansion_type]
     )
     wandb.define_metric("val_weighted_cumulative_nrmse", summary="min")
 

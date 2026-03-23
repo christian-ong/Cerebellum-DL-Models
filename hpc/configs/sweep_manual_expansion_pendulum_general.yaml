@@ -1,7 +1,7 @@
 method: grid
 
 metric:
-  name: val_rollout_rmse
+  name: val_weighted_cumulative_nrmse
   goal: minimize
 
 command:
@@ -20,11 +20,11 @@ command:
 parameters:
   model:
     values:
-      - manual_expansion_ml_dmd
-      - manual_expansion_eigen_dmd
+      - ml_dmd
+      - ml_linear_dynamics
 
   data_path:
-    - data/trajectories/nonlinear/pendulum_trajectory.npz
+    values: [data/trajectories/nonlinear/pendulum]
 
   lr:
     values: [1e-4, 5e-4, 1e-3]
@@ -33,10 +33,10 @@ parameters:
     values: [0.0, 1e-6]
 
   batch_size:
-    values: [64]
+    values: [512]
 
   expansion_degree:
-    values: [2, 7]
+    values: [3, 5, 10]
 
   expansion_type:
     values: ["general"]

@@ -173,7 +173,7 @@ class ManualExpansion(nn.Module):
                         var = f"x{i+1}"
                         name_parts.append(var if e == 1 else f"{var}^{e}")
 
-                    name = " ".join(name_parts) if name_parts else "1"
+                    name = "*".join(name_parts) if name_parts else "1"
                     self.expand_names.append(name)
 
             # --------------------------------------------------
