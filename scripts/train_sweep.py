@@ -12,8 +12,35 @@ from src.eval.sweep_utils import (
     build_run_name,
     build_model,
     compute_loader_loss_and_rmse,
-    compute_multi_horizon_rollout_rmse,
+    compute_rollout_metrics,
 )
+
+
+def get_rollout_metric_values(metrics_dict, X, horizon, gamma):
+    """
+    Safely extract rollout metrics using the ACTUAL available horizon.
+    """
+    if metrics_dict is None or X is None:
+        return None, None, None, None
+
+    actual_h = min(horizon, X.shape[0] - 1)
+    if actual_h < 1:
+        return None, None, None, None
+
+    rmse_key = f"rollout_rmse_h{actual_h}"
+    nrmse_key = f"rollout_nrmse_h{actual_h}"
+    weighted_key = f"weighted_cumulative_nrmse_h{actual_h}_g{gamma:.2f}"
+
+    return (
+        actual_h,
+        metrics_dict.get(rmse_key),
+        metrics_dict.get(nrmse_key),
+        metrics_dict.get(weighted_key),
+    )
+
+
+def fmt_metric(x):
+    return f"{x:.6e}" if x is not None else "None"
 
 
 def main():
@@ -24,8 +51,6 @@ def main():
         type=str,
         required=True,
         choices=[
-            # "ml_dmd",
-            # "ml_eigen_dmd",
             "manual_expansion_ml_dmd",
             "ml_dmd",
         ],
@@ -50,6 +75,8 @@ def main():
     parser.add_argument("--eval_every", type=int, default=1)
     parser.add_argument("--max_val_rollout_trajs", type=int, default=None)
     parser.add_argument("--max_test_rollout_trajs", type=int, default=None)
+    parser.add_argument("--rollout_horizon", type=int, default=100)
+    parser.add_argument("--rollout_gamma", type=float, default=0.95)
 
     # misc
     parser.add_argument("--num_workers", type=int, default=4)
@@ -67,31 +94,30 @@ def main():
     # --------------------------------------------------
     # Load metadata
     # --------------------------------------------------
-    # Load from train split file (all split files contain metadata)
     train_meta_path = resolve_split_npz_path(args.data_path, "train")
-    
+
     meta = np.load(train_meta_path, allow_pickle=True)
     system_name = str(meta["system"])
-    X = meta["X"]
-    state_dim = X.shape[-1]
+    train_X = meta["X"]
+    state_dim = train_X.shape[-1]
 
-    if X.ndim != 3:
+    if train_X.ndim != 3:
         raise ValueError("Expected X to have shape (T, n_traj, d).")
-    
-    # In the new format, we need to load val and test data to get their trajectory counts
+
     val_data_path = resolve_split_npz_path(args.data_path, "val")
     test_data_path = resolve_split_npz_path(args.data_path, "test")
-    
+
     val_data = np.load(val_data_path)
     test_data = np.load(test_data_path)
-    
-    # In the new format, all trajectories in each split file are part of that split
-    val_idx = np.arange(val_data["X"].shape[1])
-    test_idx = np.arange(test_data["X"].shape[1])
+
+    val_X = val_data["X"]
+    test_X = test_data["X"]
 
     print(f"System: {system_name}")
     print(f"State dim: {state_dim}")
-    print(f"Trajectory tensor shape: {X.shape}")
+    print(f"Train trajectory tensor shape: {train_X.shape}")
+    print(f"Val trajectory tensor shape:   {val_X.shape}")
+    print(f"Test trajectory tensor shape:  {test_X.shape}")
 
     # --------------------------------------------------
     # W&B init
@@ -102,8 +128,8 @@ def main():
         group=f"{system_name}_{args.model}",
         tags=[system_name, args.model],
     )
-    wandb.define_metric("val_rollout_rmse", summary="min")
-    
+    wandb.define_metric("val_weighted_cumulative_nrmse", summary="min")
+
     config = wandb.config
     for key, value in config.items():
         if hasattr(args, key):
@@ -235,42 +261,54 @@ def main():
         train_loss = train_loss_sum / max(n_train, 1)
         print(f"Train loss: {train_loss:.6e}")
 
-        # cheap validation every epoch
+        # one-step validation every epoch
         print("Computing validation one-step metrics...")
         val_loss, val_one_step_rmse = compute_loader_loss_and_rmse(model, val_loader, device)
 
-        if val_loss is not None:
-            print(f"Val loss:          {val_loss:.6e}")
-        if val_one_step_rmse is not None:
-            print(f"Val one-step RMSE: {val_one_step_rmse:.6e}")
+        print(f"Val loss:          {fmt_metric(val_loss)}")
+        print(f"Val one-step RMSE: {fmt_metric(val_one_step_rmse)}")
 
         # rollout validation
         do_rollout_eval = ((epoch + 1) % args.eval_every == 0) or (epoch == args.epochs - 1)
 
         if do_rollout_eval:
-            print("Computing validation rollout RMSE...")
+            print("Computing validation rollout metrics...")
             t0 = time.time()
 
-            val_rollout_dict = compute_multi_horizon_rollout_rmse(
+            val_rollout_metrics = compute_rollout_metrics(
                 model=model,
-                X=X,
-                traj_idx=val_idx,
+                X=val_X,
                 device=device,
+                horizon=args.rollout_horizon,
+                gamma=args.rollout_gamma,
                 max_trajs=args.max_val_rollout_trajs,
             )
 
-            val_rollout_rmse = val_rollout_dict[100]
+            actual_val_h, val_rollout_rmse, val_rollout_nrmse, val_weighted_cumulative_nrmse = (
+                get_rollout_metric_values(
+                    val_rollout_metrics,
+                    val_X,
+                    args.rollout_horizon,
+                    args.rollout_gamma,
+                )
+            )
 
-            print("Val rollout RMSEs:")
-            for pct in [25, 50, 75, 100]:
-                if pct in val_rollout_dict:
-                    print(f"  {pct:3d}%: {val_rollout_dict[pct]:.6e}")
+            print(f"Val rollout RMSE (h={actual_val_h}): {fmt_metric(val_rollout_rmse)}")
+            print(f"Val rollout NRMSE (h={actual_val_h}): {fmt_metric(val_rollout_nrmse)}")
+            print(
+                f"Val weighted cumulative NRMSE "
+                f"(h={actual_val_h}, gamma={args.rollout_gamma}): "
+                f"{fmt_metric(val_weighted_cumulative_nrmse)}"
+            )
 
             print(f"Rollout eval time: {time.time() - t0:.1f}s")
 
         else:
-            val_rollout_dict = None
+            val_rollout_metrics = None
+            actual_val_h = None
             val_rollout_rmse = None
+            val_rollout_nrmse = None
+            val_weighted_cumulative_nrmse = None
             print("Skipping rollout eval this epoch.")
 
         log_dict = {
@@ -285,15 +323,14 @@ def main():
         if val_one_step_rmse is not None:
             log_dict["val_one_step_rmse"] = val_one_step_rmse
 
-        if val_rollout_dict is not None:
-            for pct, rmse in val_rollout_dict.items():
-                log_dict[f"val_rollout_rmse_{pct}"] = rmse
-
+        if val_rollout_metrics is not None:
             log_dict["val_rollout_rmse"] = val_rollout_rmse
+            log_dict["val_rollout_nrmse"] = val_rollout_nrmse
+            log_dict["val_weighted_cumulative_nrmse"] = val_weighted_cumulative_nrmse
 
-            if val_rollout_rmse < best_metric:
-                print("New best model based on val_rollout_rmse.")
-                best_metric = val_rollout_rmse
+            if val_weighted_cumulative_nrmse is not None and val_weighted_cumulative_nrmse < best_metric:
+                print("New best model based on val_weighted_cumulative_nrmse.")
+                best_metric = val_weighted_cumulative_nrmse
                 best_epoch = epoch
                 best_state = {
                     k: v.detach().cpu().clone()
@@ -318,7 +355,7 @@ def main():
 
     wandb.log({
         "best_epoch": best_epoch,
-        "best_val_rollout_rmse": float(best_metric) if np.isfinite(best_metric) else None,
+        "best_val_weighted_cumulative_nrmse": float(best_metric) if np.isfinite(best_metric) else None,
     })
 
     # --------------------------------------------------
@@ -327,35 +364,37 @@ def main():
     print("\n===== FINAL VALIDATION =====")
     val_final_loss, val_final_one_step_rmse = compute_loader_loss_and_rmse(model, val_loader, device)
 
-    val_final_rollout_dict = compute_multi_horizon_rollout_rmse(
+    val_final_rollout_metrics = compute_rollout_metrics(
         model=model,
-        X=X,
-        traj_idx=val_idx,
+        X=val_X,
         device=device,
+        horizon=args.rollout_horizon,
+        gamma=args.rollout_gamma,
         max_trajs=args.max_val_rollout_trajs,
     )
 
-    val_final_rollout_rmse = val_final_rollout_dict[100] if val_final_rollout_dict is not None else None
+    actual_val_h, val_final_rollout_rmse, val_final_rollout_nrmse, val_final_weighted_cumulative_nrmse = (
+        get_rollout_metric_values(
+            val_final_rollout_metrics,
+            val_X,
+            args.rollout_horizon,
+            args.rollout_gamma,
+        )
+    )
 
-    print(f"val_final_loss:           {val_final_loss:.6e}" if val_final_loss is not None else "val_final_loss: None")
-    print(f"val_final_one_step_rmse:  {val_final_one_step_rmse:.6e}" if val_final_one_step_rmse is not None else "val_final_one_step_rmse: None")
-
-    if val_final_rollout_dict is not None:
-        print("val_final_rollout_rmse:")
-        for pct in [25, 50, 75, 100]:
-            if pct in val_final_rollout_dict:
-                print(f"  {pct:3d}%: {val_final_rollout_dict[pct]:.6e}")
+    print(f"val_final_loss:                       {fmt_metric(val_final_loss)}")
+    print(f"val_final_one_step_rmse:              {fmt_metric(val_final_one_step_rmse)}")
+    print(f"val_final_rollout_rmse:               {fmt_metric(val_final_rollout_rmse)}")
+    print(f"val_final_rollout_nrmse:              {fmt_metric(val_final_rollout_nrmse)}")
+    print(f"val_final_weighted_cumulative_nrmse:  {fmt_metric(val_final_weighted_cumulative_nrmse)}")
 
     val_final_log = {
         "val_final_loss": val_final_loss,
         "val_final_one_step_rmse": val_final_one_step_rmse,
+        "val_final_rollout_rmse": val_final_rollout_rmse,
+        "val_final_rollout_nrmse": val_final_rollout_nrmse,
+        "val_final_weighted_cumulative_nrmse": val_final_weighted_cumulative_nrmse,
     }
-
-    if val_final_rollout_dict is not None:
-        for pct, rmse in val_final_rollout_dict.items():
-            val_final_log[f"val_final_rollout_rmse_{pct}"] = rmse
-        val_final_log["val_final_rollout_rmse"] = val_final_rollout_rmse
-
     wandb.log(val_final_log)
 
     # --------------------------------------------------
@@ -364,70 +403,79 @@ def main():
     print("\n===== FINAL TEST =====")
     test_loss, test_one_step_rmse = compute_loader_loss_and_rmse(model, test_loader, device)
 
-    test_rollout_dict = compute_multi_horizon_rollout_rmse(
+    test_rollout_metrics = compute_rollout_metrics(
         model=model,
-        X=X,
-        traj_idx=test_idx,
+        X=test_X,
         device=device,
+        horizon=args.rollout_horizon,
+        gamma=args.rollout_gamma,
         max_trajs=args.max_test_rollout_trajs,
     )
 
-    test_rollout_rmse = test_rollout_dict[100] if test_rollout_dict is not None else None
+    actual_test_h, test_rollout_rmse, test_rollout_nrmse, test_weighted_cumulative_nrmse = (
+        get_rollout_metric_values(
+            test_rollout_metrics,
+            test_X,
+            args.rollout_horizon,
+            args.rollout_gamma,
+        )
+    )
 
-    print(f"test_loss:                {test_loss:.6e}" if test_loss is not None else "test_loss: None")
-    print(f"test_one_step_rmse:       {test_one_step_rmse:.6e}" if test_one_step_rmse is not None else "test_one_step_rmse: None")
-
-    if test_rollout_dict is not None:
-        print("test_rollout_rmse:")
-        for pct in [25, 50, 75, 100]:
-            if pct in test_rollout_dict:
-                print(f"  {pct:3d}%: {test_rollout_dict[pct]:.6e}")
+    print(f"test_loss:                            {fmt_metric(test_loss)}")
+    print(f"test_one_step_rmse:                   {fmt_metric(test_one_step_rmse)}")
+    print(f"test_rollout_rmse:                    {fmt_metric(test_rollout_rmse)}")
+    print(f"test_rollout_nrmse:                   {fmt_metric(test_rollout_nrmse)}")
+    print(f"test_weighted_cumulative_nrmse:       {fmt_metric(test_weighted_cumulative_nrmse)}")
 
     test_log = {
         "test_loss": test_loss,
         "test_one_step_rmse": test_one_step_rmse,
+        "test_rollout_rmse": test_rollout_rmse,
+        "test_rollout_nrmse": test_rollout_nrmse,
+        "test_weighted_cumulative_nrmse": test_weighted_cumulative_nrmse,
     }
-
-    if test_rollout_dict is not None:
-        for pct, rmse in test_rollout_dict.items():
-            test_log[f"test_rollout_rmse_{pct}"] = rmse
-        test_log["test_rollout_rmse"] = test_rollout_rmse
-
     wandb.log(test_log)
 
+    # --------------------------------------------------
+    # Summary
+    # --------------------------------------------------
     wandb.summary["best_epoch"] = best_epoch
-    wandb.summary["best_val_rollout_rmse"] = float(best_metric) if np.isfinite(best_metric) else None
+    wandb.summary["best_val_weighted_cumulative_nrmse"] = (
+        float(best_metric) if np.isfinite(best_metric) else None
+    )
+
     wandb.summary["val_final_one_step_rmse"] = val_final_one_step_rmse
     wandb.summary["val_final_rollout_rmse"] = val_final_rollout_rmse
+    wandb.summary["val_final_rollout_nrmse"] = val_final_rollout_nrmse
+    wandb.summary["val_final_weighted_cumulative_nrmse"] = val_final_weighted_cumulative_nrmse
+
     wandb.summary["test_one_step_rmse"] = test_one_step_rmse
     wandb.summary["test_rollout_rmse"] = test_rollout_rmse
-
-    if val_final_rollout_dict is not None:
-        for pct, rmse in val_final_rollout_dict.items():
-            wandb.summary[f"val_final_rollout_rmse_{pct}"] = rmse
-
-    if test_rollout_dict is not None:
-        for pct, rmse in test_rollout_dict.items():
-            wandb.summary[f"test_rollout_rmse_{pct}"] = rmse
+    wandb.summary["test_rollout_nrmse"] = test_rollout_nrmse
+    wandb.summary["test_weighted_cumulative_nrmse"] = test_weighted_cumulative_nrmse
 
     final_table = wandb.Table(
-        columns=["split", "one_step_rmse", "rollout_rmse_25", "rollout_rmse_50", "rollout_rmse_75", "rollout_rmse_100"],
+        columns=[
+            "split",
+            "one_step_rmse",
+            "rollout_rmse",
+            "rollout_nrmse",
+            "weighted_cumulative_nrmse",
+        ],
         data=[
             [
                 "val",
                 val_final_one_step_rmse,
-                val_final_rollout_dict.get(25) if val_final_rollout_dict is not None else None,
-                val_final_rollout_dict.get(50) if val_final_rollout_dict is not None else None,
-                val_final_rollout_dict.get(75) if val_final_rollout_dict is not None else None,
-                val_final_rollout_dict.get(100) if val_final_rollout_dict is not None else None,
+                val_final_rollout_rmse,
+                val_final_rollout_nrmse,
+                val_final_weighted_cumulative_nrmse,
             ],
             [
                 "test",
                 test_one_step_rmse,
-                test_rollout_dict.get(25) if test_rollout_dict is not None else None,
-                test_rollout_dict.get(50) if test_rollout_dict is not None else None,
-                test_rollout_dict.get(75) if test_rollout_dict is not None else None,
-                test_rollout_dict.get(100) if test_rollout_dict is not None else None,
+                test_rollout_rmse,
+                test_rollout_nrmse,
+                test_weighted_cumulative_nrmse,
             ],
         ],
     )

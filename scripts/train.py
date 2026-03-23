@@ -203,17 +203,17 @@ def main():
     # --------------------------------------------------
     parser.add_argument("--rank", type=int, default=None)
     parser.add_argument("--ridge", type=float, default=0.0)
-    parser.add_argument("--bias", type=str.lower, choices=["true", "false"], default="true", help="Include bias term in polynomial expansion")
+    parser.add_argument("--bias", type=str.lower, choices=["true", "false"], default="false", help="Include bias term in polynomial expansion")
     parser.add_argument("--manual_decoder", type=str, choices=["regressed", "fixed"], default="fixed")
     parser.add_argument("--manual_regression_method", type=str, default="svd")
     parser.add_argument("--expansion_type", type=str, default="general", choices=["general", "specific"], help="Whether to use general polynomial expansion (all combinations up to degree) or specific expansion (e.g. only x^2, y^2, xy) for the manual expansion models")
-    parser.add_argument("--expansion_degree", type=int, default=2)
-    parser.add_argument("--sine_cosine_expansion", type=str.lower,choices=["true", "false"], default="true",help="Include sin(x_i) and cos(x_i) terms in the manual expansion basis")
+    parser.add_argument("--expansion_degree", type=int, default=1)
+    parser.add_argument("--sine_cosine_expansion", type=str.lower,choices=["true", "false"], default="false",help="Include sin(x_i) and cos(x_i) terms in the manual expansion basis")
     parser.add_argument("--decoder_ridge", type=float, default=None)
-    parser.add_argument("--normalize_state", type=str.lower, choices=["true", "false"], default="true")
+    parser.add_argument("--normalize_state", type=str.lower, choices=["true", "false"], default="false")
     parser.add_argument("--normalize_lifted", type=str.lower, choices=["true", "false"], default="true")
     parser.add_argument("--residual_decode", type=str.lower, choices=["true", "false"], default="true")
-    parser.add_argument("--max_spectral_radius", type=float, default=0.999)
+    parser.add_argument("--max_spectral_radius", type=float, default=None)
 
     # --------------------------------------------------
     # SINDy
@@ -271,8 +271,10 @@ def main():
     # ==================================================
     if args.model == "linear_baseline":
         print("Fitting linear least-squares baseline...")
+        X = train_ds.x.numpy()
+        Y = train_ds.y.numpy()
         M = fit_linear_map(X, Y)
-        
+
         save_path = os.path.join(save_dir, "model.npz")
         np.savez(save_path, M=M, model="linear_baseline", system=system_name, data_path=args.data_path)
         print(f"Saved to {save_path}")
@@ -284,7 +286,8 @@ def main():
     if args.model in {"dmd_baseline", "regression_dmd"}:
         print(f"Fitting {args.model.upper()}...")
 
-        X, Y = dataloader_to_numpy(train_loader)
+        X = train_ds.x.numpy()
+        Y = train_ds.y.numpy()
 
         if args.model == "dmd_baseline":
             Lambda, Phi = fit_dmd(

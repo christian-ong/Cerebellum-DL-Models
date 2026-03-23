@@ -209,7 +209,7 @@ def main():
                         ])
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--model_path", type=str, required=True)
-    parser.add_argument("--steps", type=int, default=5000)
+    parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--traj_index", type=int, default=0, help="Which test trajectory to show")
     parser.add_argument("--name", type=str, help="Optional suffix for saved figure")
     parser.add_argument("--print_validation_summary",action="store_true",help="Print saved validation diagnostics summary for the same run if available.")
@@ -240,8 +240,11 @@ def main():
     system = str(data["system"])
     
     # Validate shape
-    if X.ndim != 3:
-        raise ValueError(f"Expected X to be 3D (T, n_traj, d), got {X.ndim}D")
+    if X.ndim == 2:
+        X = X[:, None, :]
+    elif X.ndim != 3:
+        raise ValueError(f"Expected X to be 2D or 3D, got {X.ndim}D")
+    
     if X.shape[1] == 0:
         raise ValueError("No test trajectories found")
     
@@ -257,21 +260,6 @@ def main():
         state_dim=state_dim,
         system=system,
         device=device,
-    )
-
-    # Evaluate on all test trajectories
-    mse_mean, mse_std, _ = evaluate_rollouts(
-        X=X,
-        traj_indices=test_indices,
-        model_name=args.model,
-        model=model,
-        steps=args.steps,
-        extras=extras,
-    )
-
-    print(
-        f"Test rollout MSE over {len(test_indices)} trajectories: "
-        f"{mse_mean:.6e} ± {mse_std:.6e}"
     )
 
     # Plot one test trajectory
@@ -317,7 +305,7 @@ def main():
     max_one_step_pairs = None if args.max_one_step_pairs_per_traj == 0 else args.max_one_step_pairs_per_traj
     max_horizon_starts = None if args.max_horizon_starts_per_traj == 0 else args.max_horizon_starts_per_traj
 
-    use_shared_rollout_cache = args.run_diagnostics or args.shared_rollout_cache
+    use_shared_rollout_cache = True
     rollout_cache = None
 
     if use_shared_rollout_cache:
@@ -491,9 +479,10 @@ def main():
     elif model is not None and hasattr(model, "Lambda"):
         lam = model.Lambda
         if torch.is_tensor(lam):
-            eigvals = lam.detach().cpu().numpy()
+            lam = lam.detach().cpu().numpy()
         else:
-            eigvals = np.asarray(lam)
+            lam = np.asarray(lam)
+        eigvals = np.linalg.eigvals(lam)
 
     if eigvals is not None:
         plot_eigenvalues(eigvals, figdir)
@@ -502,14 +491,13 @@ def main():
     # Plot training losses if available
     # --------------------------------------------------
 
-    if args.model_path.endswith(".pt") and "ckpt" in extras:
-        ckpt = extras["ckpt"]
-        if "train_losses" in ckpt and "val_losses" in ckpt:
-            plot_training_losses(
-                ckpt["train_losses"],
-                ckpt["val_losses"],
-                figdir,
-            )
+    loss_file = args.model_path.replace("model.npz", "losses.npz").replace("model.pt", "losses.npz")
+
+    if os.path.exists(loss_file):
+        try:
+            plot_training_losses(loss_file, figdir)
+        except KeyError:
+            print(f"Skipping training loss plot (invalid file format): {loss_file}")
 
     # --------------------------------------------------
     # Plot transition matrix if available

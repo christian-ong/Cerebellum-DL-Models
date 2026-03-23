@@ -130,16 +130,19 @@ def build_rollout_cache(
                 starts[0] = 0
             starts = np.unique(starts)
 
+        # Only compute ONE rollout per trajectory from t0 = 0
+        x0 = X_traj[0]
+        full_rollout = predict_rollout_from_x0(
+            x0=x0,
+            steps=T - 1,
+            model_name=model_name,
+            model=model,
+            extras=extras,
+        )
+
         rollouts = []
         for t0 in starts:
-            x0 = X_traj[t0]
-            rollout = predict_rollout_from_x0(
-                x0=x0,
-                steps=max_horizon,
-                model_name=model_name,
-                model=model,
-                extras=extras,
-            )
+            rollout = full_rollout[t0 : t0 + max_horizon + 1]
             rollouts.append(rollout)
 
         cache[traj_id] = {

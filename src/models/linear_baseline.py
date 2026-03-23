@@ -5,31 +5,26 @@ def fit_linear_map(X, Y):
     """
     Fit a linear map M such that:
         y ≈ x @ M.T
-    using least squares.
 
     Args:
-        X: np.ndarray with shape:
-           - (T, state_dim) OR
-           - (T, n_traj, state_dim)
-        Y: np.ndarray with shape:
-           - (T, state_dim) OR
-           - (T, n_traj, state_dim)
+        X: np.ndarray of shape (N, d) or (T, n_traj, d)
+        Y: np.ndarray of same shape as X
 
     Returns:
-        M: np.ndarray (state_dim, state_dim)
+        M: np.ndarray of shape (d, d)
     """
-    if X.ndim == 2:
-        # (T, state_dim)
-        x = X[:-1]
-        y = X[1:]
-    elif X.ndim == 3:
-        # (T, n_traj, state_dim)
-        x = X[:-1].reshape(-1, X.shape[-1])
-        y = X[1:].reshape(-1, X.shape[-1])
+    if X.shape != Y.shape:
+        raise ValueError(f"X and Y must have same shape, got {X.shape} and {Y.shape}")
+
+    if X.ndim == 3:
+        x = X.reshape(-1, X.shape[-1])
+        y = Y.reshape(-1, Y.shape[-1])
+    elif X.ndim == 2:
+        x = X
+        y = Y
     else:
         raise ValueError(f"Expected X to have 2 or 3 dims, got shape {X.shape}")
 
-    # Solve y = x @ M.T  ->  least squares for M.T
     MT, _, _, _ = np.linalg.lstsq(x, y, rcond=None)
     M = MT.T
     return M

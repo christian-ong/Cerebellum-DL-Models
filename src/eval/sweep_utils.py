@@ -1,8 +1,6 @@
 import numpy as np
 import torch
 
-# from src.models.deprecated.ml_dmd import ML_DMD
-# from src.models.deprecated.ml_eigen_dmd import MLEigenDMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.ml_dmd import ML_DMD
 
@@ -41,16 +39,6 @@ def build_run_name(args, system_name, run_id=None):
 
 
 def build_model(args, state_dim, system_name, device):
-    # if args.model == "ml_dmd":
-    #     model = ML_DMD(
-    #         state_dim=state_dim,
-    #     ).to(device)
-
-    # elif args.model == "ml_eigen_dmd":
-    #     model = MLEigenDMD(
-    #         state_dim=state_dim,
-    #     ).to(device)
-
     if args.model == "ml_lineardynamics":
         model = ML_LinearDynamics(
             state_dim=state_dim,
@@ -123,49 +111,91 @@ def compute_loader_loss_and_rmse(model, loader, device):
     return mean_loss, rmse
 
 
-def compute_multi_horizon_rollout_rmse(
+def compute_rollout_metrics(
     model,
     X,
-    traj_idx,
     device,
-    fractions=(0.25, 0.5, 0.75, 1.0),
+    horizon=100,
+    gamma=0.95,
     max_trajs=None,
 ):
-    if len(traj_idx) == 0:
+    """
+    Computes:
+      - horizon-N RMSE
+      - horizon-N NRMSE
+      - weighted cumulative horizon NRMSE-prediction error
+
+    X expected shape: (T, N, d)
+    rollout always starts from X[0] and compares predictions against X[t].
+
+    Returns dict with:
+      {
+        "rollout_rmse_h100": ...,
+        "rollout_nrmse_h100": ...,
+        "weighted_cumulative_nrmse_h100_g0.95": ...,
+      }
+    """
+    if X is None:
         return None
 
-    traj_idx = np.asarray(traj_idx)
-    if max_trajs is not None and len(traj_idx) > max_trajs:
-        traj_idx = traj_idx[:max_trajs]
+    if isinstance(X, np.ndarray):
+        X = torch.tensor(X, dtype=torch.float32, device=device)
+    else:
+        X = X.to(device)
+
+    if X.ndim != 3:
+        raise ValueError(f"Expected X to have shape (T, N, d), got {tuple(X.shape)}")
+
+    T, N, d = X.shape
+    if T < 2:
+        return None
+
+    if max_trajs is not None and N > max_trajs:
+        X = X[:, :max_trajs, :]
+        T, N, d = X.shape
+
+    max_h = min(horizon, T - 1)
+    if max_h < 1:
+        return None
 
     model.eval()
 
-    X_sel = torch.tensor(X[:, traj_idx, :], dtype=torch.float32, device=device)
-    T, N, d = X_sel.shape
-    max_horizon = T - 1
+    # denominator for NRMSE:
+    # root mean square magnitude of the ground truth over rollout horizon
+    target = X[1 : max_h + 1]  # (H, N, d)
+    target_sq_mean = torch.mean(target ** 2)
+    target_rms = torch.sqrt(torch.clamp(target_sq_mean, min=1e-12))
 
-    horizons = [max(1, int(f * max_horizon)) for f in fractions]
+    x = X[0]  # (N, d)
 
-    x = X_sel[0]  # (N, d)
+    total_sq_err = torch.tensor(0.0, device=device)
+    total_numel = 0
 
-    sq_errors = {h: torch.tensor(0.0, device=device) for h in horizons}
-    numels = {h: 0 for h in horizons}
+    weighted_num = torch.tensor(0.0, device=device)
+    weight_sum = 0.0
 
     with torch.no_grad():
-        for t in range(1, max_horizon + 1):
+        for h in range(1, max_h + 1):
             x = model(x)
-            diff = x - X_sel[t]
+            diff = x - X[h]
 
-            diff_sq = torch.sum(diff * diff)
-            n_el = diff.numel()
+            mse_h = torch.mean(diff ** 2)
+            rmse_h = torch.sqrt(torch.clamp(mse_h, min=1e-12))
+            nrmse_h = rmse_h / target_rms
 
-            for h in horizons:
-                if t <= h:
-                    sq_errors[h] += diff_sq
-                    numels[h] += n_el
+            w = gamma ** h
+            weighted_num += w * nrmse_h
+            weight_sum += w
 
-    # convert ONCE
+            total_sq_err += torch.sum(diff ** 2)
+            total_numel += diff.numel()
+
+    rollout_rmse = torch.sqrt(total_sq_err / max(total_numel, 1))
+    rollout_nrmse = rollout_rmse / target_rms
+    weighted_cumulative_nrmse = weighted_num / max(weight_sum, 1e-12)
+
     return {
-        int(100 * h / max_horizon): float(torch.sqrt(sq_errors[h] / max(numels[h], 1)).item())
-        for h in horizons
+        f"rollout_rmse_h{max_h}": float(rollout_rmse.item()),
+        f"rollout_nrmse_h{max_h}": float(rollout_nrmse.item()),
+        f"weighted_cumulative_nrmse_h{max_h}_g{gamma:.2f}": float(weighted_cumulative_nrmse.item()),
     }

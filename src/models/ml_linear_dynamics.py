@@ -108,17 +108,48 @@ class ML_LinearDynamics(ManualExpansion):
         #   x^3     -> weight = 1/3
         #
         # This keeps training focused on low-order dynamics.
-        degrees = []
-
-        for name in self.expand_names:
-            deg = name.count("^") + name.count("*")
-            degrees.append(deg)
-
-        degrees = torch.tensor(degrees, dtype=torch.float32)
+        degrees = torch.tensor(
+            [self._feature_degree(name) for name in self.expand_names],
+            dtype=torch.float32,
+        )
         weights = 1.0 / (degrees + 1.0)
-
         self.register_buffer("lift_weights", weights)
+        
+    def _feature_degree(self, name: str) -> int:
+        """
+        Compute polynomial/trig feature degree from expansion name.
 
+        Examples
+        --------
+        1        -> 0
+        x        -> 1
+        y        -> 1
+        x^2      -> 2
+        x*y      -> 2
+        x^2*y    -> 3
+        sin(x)   -> 1
+        cos(y)   -> 1
+        """
+        name = name.strip()
+
+        if name == "1":
+            return 0
+
+        if name.startswith("sin(") or name.startswith("cos("):
+            return 1
+
+        parts = name.split("*")
+        deg = 0
+
+        for part in parts:
+            part = part.strip()
+            if "^" in part:
+                _, power = part.split("^")
+                deg += int(power)
+            else:
+                deg += 1
+
+        return deg
     # ------------------------------------------------
     # Set scaling for lifted features
     # ------------------------------------------------

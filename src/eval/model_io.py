@@ -6,7 +6,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.models.linear_baseline import rollout_linear_map
-# from src.models.deprecated.dmd_baseline import rollout_dmd_eig
+from src.models.dmd_baseline import rollout_dmd_eig
 # from src.models.deprecated.ml_dmd import ML_DMD
 # from src.models.deprecated.ml_eigen_dmd import MLEigenDMD
 from src.models.regression_dmd import Regression_DMD
