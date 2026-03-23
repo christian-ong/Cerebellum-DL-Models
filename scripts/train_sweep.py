@@ -16,31 +16,75 @@ from src.eval.sweep_utils import (
 )
 
 
-def get_rollout_metric_values(metrics_dict, X, horizon, gamma):
-    """
-    Safely extract rollout metrics using the ACTUAL available horizon.
-    """
-    if metrics_dict is None or X is None:
-        return None, None, None, None
-
-    actual_h = min(horizon, X.shape[0] - 1)
-    if actual_h < 1:
-        return None, None, None, None
-
-    rmse_key = f"rollout_rmse_h{actual_h}"
-    nrmse_key = f"rollout_nrmse_h{actual_h}"
-    weighted_key = f"weighted_cumulative_nrmse_h{actual_h}_g{gamma:.2f}"
-
-    return (
-        actual_h,
-        metrics_dict.get(rmse_key),
-        metrics_dict.get(nrmse_key),
-        metrics_dict.get(weighted_key),
-    )
+EVAL_HORIZONS = [10, 50, 100, 200, 500]
+SELECTION_HORIZON = 100  # choose 100, 200, or 500 depending on what you want to optimize
 
 
 def fmt_metric(x):
     return f"{x:.6e}" if x is not None else "None"
+
+
+def print_multi_horizon_metrics(metrics_dict, gamma, prefix=""):
+    if metrics_dict is None:
+        print(f"{prefix}No rollout metrics.")
+        return
+
+    for h in EVAL_HORIZONS:
+        rmse = metrics_dict.get(f"rollout_rmse_h{h}")
+        nrmse = metrics_dict.get(f"rollout_nrmse_h{h}")
+        w_nrmse = metrics_dict.get(f"weighted_cumulative_nrmse_h{h}_g{gamma:.2f}")
+
+        print(
+            f"{prefix}h={h:3d} | "
+            f"RMSE: {fmt_metric(rmse)} | "
+            f"NRMSE: {fmt_metric(nrmse)} | "
+            f"W-NRMSE: {fmt_metric(w_nrmse)}"
+        )
+
+
+def add_prefixed_metrics(log_dict, metrics_dict, prefix):
+    if metrics_dict is None:
+        return
+
+    for k, v in metrics_dict.items():
+        log_dict[f"{prefix}{k}"] = v
+
+
+def get_selection_metric(metrics_dict, gamma, selection_horizon):
+    if metrics_dict is None:
+        return None
+    return metrics_dict.get(
+        f"weighted_cumulative_nrmse_h{selection_horizon}_g{gamma:.2f}"
+    )
+
+
+def build_final_table(val_metrics, test_metrics, val_one_step_rmse, test_one_step_rmse, gamma):
+    columns = ["split", "one_step_rmse"]
+
+    for h in EVAL_HORIZONS:
+        columns.extend([
+            f"rollout_rmse_h{h}",
+            f"rollout_nrmse_h{h}",
+            f"weighted_cumulative_nrmse_h{h}_g{gamma:.2f}",
+        ])
+
+    def make_row(split_name, one_step_rmse, metrics_dict):
+        row = [split_name, one_step_rmse]
+        for h in EVAL_HORIZONS:
+            row.extend([
+                metrics_dict.get(f"rollout_rmse_h{h}") if metrics_dict is not None else None,
+                metrics_dict.get(f"rollout_nrmse_h{h}") if metrics_dict is not None else None,
+                metrics_dict.get(f"weighted_cumulative_nrmse_h{h}_g{gamma:.2f}") if metrics_dict is not None else None,
+            ])
+        return row
+
+    return wandb.Table(
+        columns=columns,
+        data=[
+            make_row("val", val_one_step_rmse, val_metrics),
+            make_row("test", test_one_step_rmse, test_metrics),
+        ],
+    )
 
 
 def main():
@@ -75,7 +119,7 @@ def main():
     parser.add_argument("--eval_every", type=int, default=1)
     parser.add_argument("--max_val_rollout_trajs", type=int, default=None)
     parser.add_argument("--max_test_rollout_trajs", type=int, default=None)
-    parser.add_argument("--rollout_horizon", type=int, default=100)
+    parser.add_argument("--rollout_horizon", type=int, default=500)
     parser.add_argument("--rollout_gamma", type=float, default=0.95)
 
     # misc
@@ -122,13 +166,15 @@ def main():
     # --------------------------------------------------
     # W&B init
     # --------------------------------------------------
+    selection_metric_name = f"val_weighted_cumulative_nrmse_h{SELECTION_HORIZON}_g{args.rollout_gamma:.2f}"
+
     run = wandb.init(
         project="koopman-operator-learning",
         config=vars(args),
         group=f"{system_name}_{args.model}",
-        tags=[system_name, args.model, args.expansion_type]
+        tags=[system_name, args.model, args.expansion_type],
     )
-    wandb.define_metric("val_weighted_cumulative_nrmse", summary="min")
+    wandb.define_metric(selection_metric_name, summary="min")
 
     config = wandb.config
     for key, value in config.items():
@@ -145,6 +191,8 @@ def main():
             "group_name": f"{system_name}_{args.model}",
             "model_name": args.model,
             "system_name": system_name,
+            "selection_horizon": SELECTION_HORIZON,
+            "selection_metric_name": selection_metric_name,
         },
         allow_val_change=True,
     )
@@ -271,6 +319,8 @@ def main():
         # rollout validation
         do_rollout_eval = ((epoch + 1) % args.eval_every == 0) or (epoch == args.epochs - 1)
 
+        val_rollout_metrics = None
+
         if do_rollout_eval:
             print("Computing validation rollout metrics...")
             t0 = time.time()
@@ -284,31 +334,13 @@ def main():
                 max_trajs=args.max_val_rollout_trajs,
             )
 
-            actual_val_h, val_rollout_rmse, val_rollout_nrmse, val_weighted_cumulative_nrmse = (
-                get_rollout_metric_values(
-                    val_rollout_metrics,
-                    val_X,
-                    args.rollout_horizon,
-                    args.rollout_gamma,
-                )
+            print_multi_horizon_metrics(
+                val_rollout_metrics,
+                gamma=args.rollout_gamma,
+                prefix="val ",
             )
-
-            print(f"Val rollout RMSE (h={actual_val_h}): {fmt_metric(val_rollout_rmse)}")
-            print(f"Val rollout NRMSE (h={actual_val_h}): {fmt_metric(val_rollout_nrmse)}")
-            print(
-                f"Val weighted cumulative NRMSE "
-                f"(h={actual_val_h}, gamma={args.rollout_gamma}): "
-                f"{fmt_metric(val_weighted_cumulative_nrmse)}"
-            )
-
             print(f"Rollout eval time: {time.time() - t0:.1f}s")
-
         else:
-            val_rollout_metrics = None
-            actual_val_h = None
-            val_rollout_rmse = None
-            val_rollout_nrmse = None
-            val_weighted_cumulative_nrmse = None
             print("Skipping rollout eval this epoch.")
 
         log_dict = {
@@ -324,13 +356,20 @@ def main():
             log_dict["val_one_step_rmse"] = val_one_step_rmse
 
         if val_rollout_metrics is not None:
-            log_dict["val_rollout_rmse"] = val_rollout_rmse
-            log_dict["val_rollout_nrmse"] = val_rollout_nrmse
-            log_dict["val_weighted_cumulative_nrmse"] = val_weighted_cumulative_nrmse
+            add_prefixed_metrics(log_dict, val_rollout_metrics, "val_")
 
-            if val_weighted_cumulative_nrmse is not None and val_weighted_cumulative_nrmse < best_metric:
-                print("New best model based on val_weighted_cumulative_nrmse.")
-                best_metric = val_weighted_cumulative_nrmse
+            selection_metric = get_selection_metric(
+                val_rollout_metrics,
+                gamma=args.rollout_gamma,
+                selection_horizon=SELECTION_HORIZON,
+            )
+
+            if selection_metric is not None:
+                log_dict[selection_metric_name] = selection_metric
+
+            if selection_metric is not None and selection_metric < best_metric:
+                print(f"New best model based on {selection_metric_name}.")
+                best_metric = selection_metric
                 best_epoch = epoch
                 best_state = {
                     k: v.detach().cpu().clone()
@@ -355,7 +394,7 @@ def main():
 
     wandb.log({
         "best_epoch": best_epoch,
-        "best_val_weighted_cumulative_nrmse": float(best_metric) if np.isfinite(best_metric) else None,
+        f"best_{selection_metric_name}": float(best_metric) if np.isfinite(best_metric) else None,
     })
 
     # --------------------------------------------------
@@ -373,28 +412,19 @@ def main():
         max_trajs=args.max_val_rollout_trajs,
     )
 
-    actual_val_h, val_final_rollout_rmse, val_final_rollout_nrmse, val_final_weighted_cumulative_nrmse = (
-        get_rollout_metric_values(
-            val_final_rollout_metrics,
-            val_X,
-            args.rollout_horizon,
-            args.rollout_gamma,
-        )
+    print(f"val_final_loss:          {fmt_metric(val_final_loss)}")
+    print(f"val_final_one_step_rmse: {fmt_metric(val_final_one_step_rmse)}")
+    print_multi_horizon_metrics(
+        val_final_rollout_metrics,
+        gamma=args.rollout_gamma,
+        prefix="val_final ",
     )
-
-    print(f"val_final_loss:                       {fmt_metric(val_final_loss)}")
-    print(f"val_final_one_step_rmse:              {fmt_metric(val_final_one_step_rmse)}")
-    print(f"val_final_rollout_rmse:               {fmt_metric(val_final_rollout_rmse)}")
-    print(f"val_final_rollout_nrmse:              {fmt_metric(val_final_rollout_nrmse)}")
-    print(f"val_final_weighted_cumulative_nrmse:  {fmt_metric(val_final_weighted_cumulative_nrmse)}")
 
     val_final_log = {
         "val_final_loss": val_final_loss,
         "val_final_one_step_rmse": val_final_one_step_rmse,
-        "val_final_rollout_rmse": val_final_rollout_rmse,
-        "val_final_rollout_nrmse": val_final_rollout_nrmse,
-        "val_final_weighted_cumulative_nrmse": val_final_weighted_cumulative_nrmse,
     }
+    add_prefixed_metrics(val_final_log, val_final_rollout_metrics, "val_final_")
     wandb.log(val_final_log)
 
     # --------------------------------------------------
@@ -412,72 +442,46 @@ def main():
         max_trajs=args.max_test_rollout_trajs,
     )
 
-    actual_test_h, test_rollout_rmse, test_rollout_nrmse, test_weighted_cumulative_nrmse = (
-        get_rollout_metric_values(
-            test_rollout_metrics,
-            test_X,
-            args.rollout_horizon,
-            args.rollout_gamma,
-        )
+    print(f"test_loss:          {fmt_metric(test_loss)}")
+    print(f"test_one_step_rmse: {fmt_metric(test_one_step_rmse)}")
+    print_multi_horizon_metrics(
+        test_rollout_metrics,
+        gamma=args.rollout_gamma,
+        prefix="test ",
     )
-
-    print(f"test_loss:                            {fmt_metric(test_loss)}")
-    print(f"test_one_step_rmse:                   {fmt_metric(test_one_step_rmse)}")
-    print(f"test_rollout_rmse:                    {fmt_metric(test_rollout_rmse)}")
-    print(f"test_rollout_nrmse:                   {fmt_metric(test_rollout_nrmse)}")
-    print(f"test_weighted_cumulative_nrmse:       {fmt_metric(test_weighted_cumulative_nrmse)}")
 
     test_log = {
         "test_loss": test_loss,
         "test_one_step_rmse": test_one_step_rmse,
-        "test_rollout_rmse": test_rollout_rmse,
-        "test_rollout_nrmse": test_rollout_nrmse,
-        "test_weighted_cumulative_nrmse": test_weighted_cumulative_nrmse,
     }
+    add_prefixed_metrics(test_log, test_rollout_metrics, "test_")
     wandb.log(test_log)
 
     # --------------------------------------------------
     # Summary
     # --------------------------------------------------
     wandb.summary["best_epoch"] = best_epoch
-    wandb.summary["best_val_weighted_cumulative_nrmse"] = (
+    wandb.summary[f"best_{selection_metric_name}"] = (
         float(best_metric) if np.isfinite(best_metric) else None
     )
 
     wandb.summary["val_final_one_step_rmse"] = val_final_one_step_rmse
-    wandb.summary["val_final_rollout_rmse"] = val_final_rollout_rmse
-    wandb.summary["val_final_rollout_nrmse"] = val_final_rollout_nrmse
-    wandb.summary["val_final_weighted_cumulative_nrmse"] = val_final_weighted_cumulative_nrmse
-
     wandb.summary["test_one_step_rmse"] = test_one_step_rmse
-    wandb.summary["test_rollout_rmse"] = test_rollout_rmse
-    wandb.summary["test_rollout_nrmse"] = test_rollout_nrmse
-    wandb.summary["test_weighted_cumulative_nrmse"] = test_weighted_cumulative_nrmse
 
-    final_table = wandb.Table(
-        columns=[
-            "split",
-            "one_step_rmse",
-            "rollout_rmse",
-            "rollout_nrmse",
-            "weighted_cumulative_nrmse",
-        ],
-        data=[
-            [
-                "val",
-                val_final_one_step_rmse,
-                val_final_rollout_rmse,
-                val_final_rollout_nrmse,
-                val_final_weighted_cumulative_nrmse,
-            ],
-            [
-                "test",
-                test_one_step_rmse,
-                test_rollout_rmse,
-                test_rollout_nrmse,
-                test_weighted_cumulative_nrmse,
-            ],
-        ],
+    if val_final_rollout_metrics is not None:
+        for k, v in val_final_rollout_metrics.items():
+            wandb.summary[f"val_final_{k}"] = v
+
+    if test_rollout_metrics is not None:
+        for k, v in test_rollout_metrics.items():
+            wandb.summary[f"test_{k}"] = v
+
+    final_table = build_final_table(
+        val_metrics=val_final_rollout_metrics,
+        test_metrics=test_rollout_metrics,
+        val_one_step_rmse=val_final_one_step_rmse,
+        test_one_step_rmse=test_one_step_rmse,
+        gamma=args.rollout_gamma,
     )
     wandb.log({"final_metrics_table": final_table})
 

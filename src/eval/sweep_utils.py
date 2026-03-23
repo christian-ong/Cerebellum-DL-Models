@@ -39,7 +39,7 @@ def build_run_name(args, system_name, run_id=None):
 
 
 def build_model(args, state_dim, system_name, device):
-    if args.model == "ml_lineardynamics":
+    if args.model == "ml_linear_dynamics":
         model = ML_LinearDynamics(
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
@@ -115,8 +115,8 @@ def compute_rollout_metrics(
     model,
     X,
     device,
-    horizon=100,
-    gamma=0.95,
+    horizon=500,
+    gamma=0.99,
     max_trajs=None,
 ):
     """
@@ -139,12 +139,7 @@ def compute_rollout_metrics(
     else:
         X = X.to(device)
 
-    if X.ndim != 3:
-        raise ValueError(f"Expected X to have shape (T, N, d), got {tuple(X.shape)}")
-
     T, N, d = X.shape
-    if T < 2:
-        return None
 
     if max_trajs is not None and N > max_trajs:
         X = X[:, :max_trajs, :]
@@ -156,49 +151,45 @@ def compute_rollout_metrics(
 
     model.eval()
 
-    # Target rollout window used for normalization
-    target = X[1 : max_h + 1]  # shape (H, N, d)
+    target = X[1 : max_h + 1]
+    target_std = torch.std(target, dim=(0, 1), unbiased=False) + 1e-8
 
-    # Per-dimension normalization for comparability across state dimensions
-    target_std = torch.std(target, dim=(0, 1), unbiased=False) + 1e-8  # shape (d,)
+    x = X[0]
 
-    x = X[0]  # shape (N, d)
-
-    total_sq_err = torch.tensor(0.0, device=device)
-    total_numel = 0
-
-    total_norm_sq_err = torch.tensor(0.0, device=device)
-    total_norm_numel = 0
-
-    weighted_num = torch.tensor(0.0, device=device)
-    weight_sum = 0.0
+    # store per-step errors
+    rmse_list = []
+    nrmse_list = []
 
     with torch.no_grad():
         for h in range(1, max_h + 1):
             x = model(x)
-            diff = x - X[h]  # shape (N, d)
+            diff = x - X[h]
 
-            # Plain RMSE
-            total_sq_err += torch.sum(diff ** 2)
-            total_numel += diff.numel()
+            rmse_h = torch.sqrt(torch.mean(diff ** 2))
+            nrmse_h = torch.sqrt(torch.mean((diff / target_std) ** 2))
 
-            # Per-dimension normalized NRMSE
-            diff_norm = diff / target_std
-            nrmse_h = torch.sqrt(torch.mean(diff_norm ** 2))
+            rmse_list.append(rmse_h)
+            nrmse_list.append(nrmse_h)
 
-            total_norm_sq_err += torch.sum(diff_norm ** 2)
-            total_norm_numel += diff_norm.numel()
+    rmse_tensor = torch.stack(rmse_list)     # (H,)
+    nrmse_tensor = torch.stack(nrmse_list)   # (H,)
 
-            w = gamma ** h
-            weighted_num += w * nrmse_h
-            weight_sum += w
+    results = {}
 
-    rollout_rmse = torch.sqrt(total_sq_err / max(total_numel, 1))
-    rollout_nrmse = torch.sqrt(total_norm_sq_err / max(total_norm_numel, 1))
-    weighted_cumulative_nrmse = weighted_num / max(weight_sum, 1e-12)
+    # ---- extract specific horizons ----
+    eval_points = [10, 50, 100, 200, 500]
 
-    return {
-        f"rollout_rmse_h{max_h}": float(rollout_rmse.item()),
-        f"rollout_nrmse_h{max_h}": float(rollout_nrmse.item()),
-        f"weighted_cumulative_nrmse_h{max_h}_g{gamma:.2f}": float(weighted_cumulative_nrmse.item()),
-    }
+    for h in eval_points:
+        if h <= max_h:
+            results[f"rollout_rmse_h{h}"] = float(rmse_tensor[h-1].item())
+            results[f"rollout_nrmse_h{h}"] = float(nrmse_tensor[h-1].item())
+
+            weights = torch.tensor(
+                [gamma ** i for i in range(1, h + 1)],
+                device=device
+            )
+            weighted = torch.sum(weights * nrmse_tensor[:h]) / torch.sum(weights)
+
+            results[f"weighted_cumulative_nrmse_h{h}_g{gamma:.2f}"] = float(weighted.item())
+
+    return results
