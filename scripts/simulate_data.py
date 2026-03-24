@@ -74,9 +74,9 @@ python -m scripts.simulate_data --system lotka_volterra --n_traj_train 5000 --n_
 python -m scripts.simulate_data --system pendulum --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
 python -m scripts.simulate_data --system duffing --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
 python -m scripts.simulate_data --system lorenz --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system koopman_poly --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --dt 0.01 --mu_KP 0.1 --alpha_KP -1.0
-python -m scripts.simulate_data --system koopman_poly_large --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --dt 0.01
-python -m scripts.simulate_data --system koopman_poly_trig --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --dt 0.01
+python -m scripts.simulate_data --system koopman_poly --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 1０ --dt 0.０１ --mu_KP ０.１ --alpha_KP -１.０
+python -m scripts.simulate_data --system koopman_poly_large --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --dt 0.01
+python -m scripts.simulate_data --system koopman_poly_trig --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --dt 0.01
 --------------------------------------------------
 Output
 --------------------------------------------------

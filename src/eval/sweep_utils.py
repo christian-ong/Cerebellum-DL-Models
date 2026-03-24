@@ -27,7 +27,7 @@ def build_run_name(args, system_name, run_id=None):
     parts.append(f"lr{args.lr:.0e}")
     parts.append(f"bs{args.batch_size}")
 
-    if "manual_expansion" in args.model:
+    if hasattr(args, "expansion_type"):
         parts.append(args.expansion_type)
         parts.append(f"deg{args.expansion_degree}")
         parts.append(f"trig{args.sine_cosine_expansion}")
@@ -65,14 +65,6 @@ def build_model(args, state_dim, system_name, device):
     return model
 
 
-def _get_loss_tensor(model, x, y, loss_fn):
-    if hasattr(model, "compute_loss"):
-        loss_out = model.compute_loss(x, y)
-        return loss_out if isinstance(loss_out, torch.Tensor) else sum(loss_out)
-    y_hat = model(x)
-    return loss_fn(y_hat, y)
-
-
 def compute_loader_loss_and_rmse(model, loader, device):
     if loader is None or len(loader.dataset) == 0:
         return None, None
@@ -91,12 +83,7 @@ def compute_loader_loss_and_rmse(model, loader, device):
             y = y.to(device, non_blocking=True)
 
             y_hat = model(x)
-
-            if hasattr(model, "compute_loss"):
-                loss_out = model.compute_loss(x, y)
-                loss = loss_out if isinstance(loss_out, torch.Tensor) else sum(loss_out)
-            else:
-                loss = loss_fn(y_hat, y)
+            loss = torch.mean((y_hat - y) ** 2)
 
             bs = x.size(0)
             total_loss += loss.item() * bs

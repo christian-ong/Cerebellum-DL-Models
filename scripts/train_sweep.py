@@ -57,36 +57,6 @@ def get_selection_metric(metrics_dict, gamma, selection_horizon):
         f"weighted_cumulative_nrmse_h{selection_horizon}_g{gamma:.2f}"
     )
 
-
-def build_final_table(val_metrics, test_metrics, val_one_step_rmse, test_one_step_rmse, gamma):
-    columns = ["split", "one_step_rmse"]
-
-    for h in EVAL_HORIZONS:
-        columns.extend([
-            f"rollout_rmse_h{h}",
-            f"rollout_nrmse_h{h}",
-            f"weighted_cumulative_nrmse_h{h}_g{gamma:.2f}",
-        ])
-
-    def make_row(split_name, one_step_rmse, metrics_dict):
-        row = [split_name, one_step_rmse]
-        for h in EVAL_HORIZONS:
-            row.extend([
-                metrics_dict.get(f"rollout_rmse_h{h}") if metrics_dict is not None else None,
-                metrics_dict.get(f"rollout_nrmse_h{h}") if metrics_dict is not None else None,
-                metrics_dict.get(f"weighted_cumulative_nrmse_h{h}_g{gamma:.2f}") if metrics_dict is not None else None,
-            ])
-        return row
-
-    return wandb.Table(
-        columns=columns,
-        data=[
-            make_row("val", val_one_step_rmse, val_metrics),
-            make_row("test", test_one_step_rmse, test_metrics),
-        ],
-    )
-
-
 def main():
     parser = argparse.ArgumentParser(description="Fast W&B sweep training for Koopman models")
 
@@ -120,7 +90,7 @@ def main():
     parser.add_argument("--max_val_rollout_trajs", type=int, default=None)
     parser.add_argument("--max_test_rollout_trajs", type=int, default=None)
     parser.add_argument("--rollout_horizon", type=int, default=500)
-    parser.add_argument("--rollout_gamma", type=float, default=0.95)
+    parser.add_argument("--rollout_gamma", type=float, default=0.99)
 
     # misc
     parser.add_argument("--num_workers", type=int, default=4)
@@ -172,7 +142,7 @@ def main():
         project="koopman-operator-learning",
         config=vars(args),
         group=f"{system_name}_{args.model}",
-        tags=[system_name, args.model, args.expansion_type],
+        tags=[system_name, args.model, args.expansion_type, "short"],
     )
     wandb.define_metric(selection_metric_name, summary="min")
 
@@ -193,6 +163,7 @@ def main():
             "system_name": system_name,
             "selection_horizon": SELECTION_HORIZON,
             "selection_metric_name": selection_metric_name,
+            "trajectory_length": "short"
         },
         allow_val_change=True,
     )
@@ -475,15 +446,6 @@ def main():
     if test_rollout_metrics is not None:
         for k, v in test_rollout_metrics.items():
             wandb.summary[f"test_{k}"] = v
-
-    final_table = build_final_table(
-        val_metrics=val_final_rollout_metrics,
-        test_metrics=test_rollout_metrics,
-        val_one_step_rmse=val_final_one_step_rmse,
-        test_one_step_rmse=test_one_step_rmse,
-        gamma=args.rollout_gamma,
-    )
-    wandb.log({"final_metrics_table": final_table})
 
     wandb.finish()
 

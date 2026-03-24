@@ -28,7 +28,7 @@ source .venv/bin/activate
 # SWEEP
 # ----------------------------------
 
-SWEEP_ID=DeepLearningP4Destruction/Cerebellum-DL-Models/xl0ac7tm
+SWEEP_ID=DeepLearningP4Destruction/Cerebellum-DL-Models/1e9a4tdm
 
 # ----------------------------------
 # RUN (ONLY ONE AGENT!)

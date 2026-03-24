@@ -1,7 +1,7 @@
 method: grid
 
 metric:
-  name: val_weighted_cumulative_nrmse_h200_g0.99
+  name: val_weighted_cumulative_nrmse_h100_g0.99
   goal: minimize
 
 command:
@@ -14,7 +14,7 @@ command:
   - --eval_every
   - 1
   - --num_workers
-  - 4
+  - 0
   - ${args}
 
 parameters:
@@ -37,7 +37,7 @@ parameters:
     values: [0.0, 1e-6]
 
   batch_size:
-    values: [512]
+    values: [2048]
 
   expansion_degree:
     values: [3, 5, 10]
