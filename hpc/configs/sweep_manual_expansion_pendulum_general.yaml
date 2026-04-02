@@ -27,7 +27,7 @@ parameters:
     values: [data/trajectories/nonlinear/pendulum]
 
   lr:
-    values: [1e-4, 5e-4, 1e-3]
+    values: [5e-5, 1e-4, 5e-4]
 
   weight_decay:
     values: [0.0, 1e-6]

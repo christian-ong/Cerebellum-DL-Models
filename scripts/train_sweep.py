@@ -142,7 +142,7 @@ def main():
         project="koopman-operator-learning",
         config=vars(args),
         group=f"{system_name}_{args.model}",
-        tags=[system_name, args.model, args.expansion_type, "short"],
+        tags=[system_name, args.model, args.expansion_type, "long"],
     )
     wandb.define_metric(selection_metric_name, summary="min")
 
@@ -163,7 +163,7 @@ def main():
             "system_name": system_name,
             "selection_horizon": SELECTION_HORIZON,
             "selection_metric_name": selection_metric_name,
-            "trajectory_length": "short"
+            "trajectory_length": "long"
         },
         allow_val_change=True,
     )

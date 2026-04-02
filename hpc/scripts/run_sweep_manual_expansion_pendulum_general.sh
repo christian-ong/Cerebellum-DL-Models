@@ -7,7 +7,7 @@
 #BSUB -e hpc/runs/%J.err
 
 # GPU
-#BSUB -q gpua10
+#BSUB -q gpua40
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -R "rusage[mem=32GB] span[hosts=1]"
 #BSUB -n 4
@@ -28,7 +28,7 @@ source .venv/bin/activate
 # SWEEP
 # ----------------------------------
 
-SWEEP_ID=DeepLearningP4Destruction/Cerebellum-DL-Models/kpwikp5a
+SWEEP_ID=DeepLearningP4Destruction/Cerebellum-DL-Models/i4swf559
 
 # ----------------------------------
 # RUN (ONLY ONE AGENT!)
