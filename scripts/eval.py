@@ -560,11 +560,13 @@ def main():
 
     if model is not None and hasattr(model, "get_K_true") and hasattr(model, "K"):
 
-        print("\n--- Learned lifted Koopman operator (original lifted coordinates) ---")
+        print("\n--- Learned lifted Koopman operator (after undoing feature scaling) ---")
 
         K = model.get_K_true().detach().cpu().numpy()
 
         print("Full lifted transition matrix shape:", K.shape)
+        print("Full lifted transition matrix:")
+        print(K)
 
         if hasattr(model, "state_indices"):
             state_idx = model.state_indices
