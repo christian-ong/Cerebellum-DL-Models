@@ -146,6 +146,80 @@ class ML_DMD(ManualExpansion):
 
         self.z_scale.copy_(z_scale.to(self.z_scale.device))
 
+    def get_scaling_matrix(self):
+        """
+        Return diagonal scaling matrix S such that
+
+            z_raw = S z_scaled
+
+        where z_scaled = z_raw / z_scale.
+        """
+        return torch.diag(self.z_scale)
+
+
+    def get_Phi_scaled(self):
+        """
+        Return Phi in scaled lifted coordinates.
+        """
+        return self.Phi
+
+
+    def get_Phi_scaled_inv(self):
+        """
+        Return pseudo-inverse of Phi in scaled lifted coordinates.
+        """
+        return torch.linalg.pinv(self.Phi, rcond=1e-6)
+
+
+    def get_Lambda(self):
+        """
+        Return the learned Lambda matrix in scaled modal coordinates.
+        """
+        return self.Lambda
+
+
+    def get_K_scaled(self):
+        """
+        Return the lifted operator in scaled lifted coordinates:
+
+            K_scaled = Phi Lambda Phi^{-1}
+        """
+        Phi_inv = self.get_Phi_scaled_inv()
+        return self.Phi @ self.Lambda @ Phi_inv
+
+
+    def get_Phi_true(self):
+        """
+        Return Phi expressed in the original lifted coordinates.
+
+        Since z_raw = S z_scaled, the eigenvector matrix transforms as
+            Phi_true = S Phi_scaled
+        """
+        S = self.get_scaling_matrix()
+        return S @ self.Phi
+
+
+    def get_K_true(self):
+        """
+        Return the equivalent operator in the original lifted coordinates.
+
+        If z_scaled = S^{-1} z_raw, then
+            K_true = S K_scaled S^{-1}
+        """
+        S = self.get_scaling_matrix()
+        S_inv = torch.diag(1.0 / (self.z_scale + 1e-12))
+        K_scaled = self.get_K_scaled()
+        return S @ K_scaled @ S_inv
+
+
+    def get_eigenvalues(self):
+        """
+        Eigenvalues of the lifted Koopman operator.
+        These are identical for K_scaled and K_true.
+        """
+        K_scaled = self.get_K_scaled()
+        return torch.linalg.eigvals(K_scaled)
+
     # ------------------------------------------------
     # Forward pass
     # ------------------------------------------------
@@ -167,6 +241,9 @@ class ML_DMD(ManualExpansion):
 
         # Compute pseudo-inverse of Phi
         Phi_inv = torch.linalg.pinv(self.Phi, rcond=1e-6)
+        cond_number = torch.linalg.cond(self.Phi)
+        if cond_number > 1e6:
+            print(f"Warning: High condition number for Phi: {cond_number:.2e}")
 
         # Convert to modal coordinates
         b = z @ Phi_inv.mT

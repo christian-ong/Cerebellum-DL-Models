@@ -154,6 +154,45 @@ class ML_LinearDynamics(ManualExpansion):
 
         self.z_scale.copy_(z_scale.to(self.z_scale.device))
 
+    def get_scaling_matrix(self):
+        """
+        Return diagonal scaling matrix S such that
+
+            z_raw = S z_scaled
+
+        where z_scaled = z_raw / z_scale.
+        """
+        return torch.diag(self.z_scale)
+
+    def get_K_scaled(self):
+        """
+        Return the learned operator acting in scaled lifted coordinates.
+
+        Dynamics in scaled coordinates:
+            z_scaled_next = K_scaled z_scaled
+        """
+        return self.K.weight.mT
+
+    def get_K_true(self):
+        """
+        Return the equivalent operator in the original lifted coordinates.
+
+        If z_scaled = S^{-1} z_raw, then
+            K_true = S K_scaled S^{-1}
+        """
+        S = self.get_scaling_matrix()
+        S_inv = torch.diag(1.0 / (self.z_scale + 1e-12))
+        K_scaled = self.get_K_scaled()
+        return S @ K_scaled @ S_inv
+
+    def get_eigenvalues(self):
+        """
+        Eigenvalues of the lifted Koopman operator.
+        These are identical for K_scaled and K_true.
+        """
+        K_true = self.get_K_true()
+        return torch.linalg.eigvals(K_true)
+
     # ------------------------------------------------
     # Forward pass
     # ------------------------------------------------
