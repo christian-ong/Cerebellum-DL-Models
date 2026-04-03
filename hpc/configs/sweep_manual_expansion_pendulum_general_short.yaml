@@ -1,7 +1,7 @@
 method: grid
 
 metric:
-  name: val_weighted_cumulative_nrmse_h100_g0.99
+  name: val_discounted_mean_nrmse_h100_g0.99
   goal: minimize
 
 command:
@@ -24,14 +24,10 @@ parameters:
       - ml_linear_dynamics
 
   data_path:
-    values:
-      - data/trajectories/nonlinear/vanderpol
-      - data/trajectories/nonlinear/lotka_volterra
-      - data/trajectories/nonlinear/duffing
-      - data/trajectories/nonlinear/lorenz
+    values: [data/trajectories/nonlinear/pendulum/short]
 
   lr:
-    values: [5e-5, 1e-4, 5e-4]
+    values: [1e-5, 1e-4, 1e-3]
 
   weight_decay:
     values: [0.0, 1e-6]
@@ -43,7 +39,10 @@ parameters:
     values: [3, 5, 10]
 
   expansion_type:
-    values: ["specific"]
+    values: ["general"]
 
   sine_cosine_expansion:
-    values: ["false"]
+    values: ["true"]
+
+  trajectory_length:
+    values: ["short"]
