@@ -70,6 +70,7 @@ def main():
         ],
     )
     parser.add_argument("--data_path", type=str, required=True)
+    parser.add_argument("--trajectory_length", type=str, choices=["short", "long"], default="long")
     parser.add_argument("--name", type=str, default="run")
 
     # training
@@ -147,7 +148,7 @@ def main():
         project="koopman-operator-learning",
         config=vars(args),
         group=f"{system_name}_{args.model}",
-        tags=[system_name, args.model, args.expansion_type, "long"],
+        tags=[system_name, args.model, args.expansion_type, args.trajectory_length],
     )
     wandb.define_metric(selection_metric_name, summary="min")
 
@@ -168,7 +169,7 @@ def main():
             "system_name": system_name,
             "selection_horizon": SELECTION_HORIZON,
             "selection_metric_name": selection_metric_name,
-            "trajectory_length": "long"
+            "trajectory_length": args.trajectory_length
         },
         allow_val_change=True,
     )
