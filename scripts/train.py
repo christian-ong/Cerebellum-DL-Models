@@ -120,7 +120,7 @@ Global options (defaults):
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_large --epochs 10 --expansion_type specific --expansion_degree 5 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5
 
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol --epochs 10 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/pendulum --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/duffing --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
@@ -132,7 +132,7 @@ Global options (defaults):
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/linear/inward_spiral --sindy_discrete_time true --sindy_poly_order 1 --sindy_threshold 0.0 --sindy_alpha 0.0
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/linear/harmonic_oscillator --sindy_discrete_time true --sindy_poly_order 1 --sindy_threshold 0.0 --sindy_alpha 0.0
 
-    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/vanderpol --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/vanderpol --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 1e-4 --sindy_alpha 1e-6 --sindy_library_type specific --sindy_specific_basis_size 10
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/lotka_volterra --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/pendulum --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/duffing --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6

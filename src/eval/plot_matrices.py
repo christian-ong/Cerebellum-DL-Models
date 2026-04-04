@@ -20,7 +20,7 @@ def plot_transition_matrix(
     model : torch.nn.Module or None
         Model object for NN-based models.
     matrix : np.ndarray or torch.Tensor or None
-        Directly supplied matrix to plot (used for non-NN models like manual EDMD).
+        Directly supplied matrix to plot (used for non-NN models like regression DMD).
     """
 
     K = None
@@ -37,30 +37,29 @@ def plot_transition_matrix(
             K = np.array(matrix)
 
     # --------------------------------------------------
-    # Otherwise extract matrices from model
+    # Otherwise extract matrices from model helpers
     # --------------------------------------------------
     elif model is not None:
 
-        # Standard Koopman / linear models
-        if hasattr(model, "K"):
-            if hasattr(model.K, "weight"):
-                K = model.K.weight.detach().cpu().numpy()
-            else:
-                K = model.K.detach().cpu().numpy()
+        if hasattr(model, "get_K_true"):
+            K_obj = model.get_K_true()
+            K = K_obj.detach().cpu().numpy() if torch.is_tensor(K_obj) else np.array(K_obj)
 
-        # Eigen-DMD style models
-        elif hasattr(model, "Lambda") and hasattr(model, "Phi") and hasattr(model, "Phi_inv"):
+        if hasattr(model, "get_Lambda"):
+            Lambda_obj = model.get_Lambda()
+            Lambda = (
+                Lambda_obj.detach().cpu().numpy()
+                if torch.is_tensor(Lambda_obj)
+                else np.array(Lambda_obj)
+            )
 
-            Lambda = model.Lambda.detach().cpu().numpy()
-            Phi = model.Phi.detach().cpu().numpy()
-            Phi_inv = model.Phi_inv.detach().cpu().numpy()
-
-            # If Lambda is stored as a vector, make it diagonal
-            if Lambda.ndim == 1:
-                Lambda = np.diag(Lambda)
-
-            # reconstruct transition matrix
-            K = Phi @ Lambda @ Phi_inv
+        if hasattr(model, "get_Phi_true"):
+            Phi_obj = model.get_Phi_true()
+            Phi = (
+                Phi_obj.detach().cpu().numpy()
+                if torch.is_tensor(Phi_obj)
+                else np.array(Phi_obj)
+            )
 
     else:
         return
@@ -91,8 +90,8 @@ def plot_transition_matrix(
             print(f"... showing top-left {max_rows}x{max_cols} block")
 
     pretty_print_matrix("Transition matrix K/A", K)
-    pretty_print_matrix("Lambda (eigenvalues)", Lambda)
-    pretty_print_matrix("Phi (eigenvectors)", Phi)
+    pretty_print_matrix("Lambda", Lambda)
+    pretty_print_matrix("Phi", Phi)
 
     # --------------------------------------------------
     # Plot heatmap of K
@@ -108,7 +107,7 @@ def plot_transition_matrix(
         f"Transition Matrix\nModel: {model_name.replace('_',' ')}\n(values > {threshold})"
     )
 
-    plt.imshow(np.abs(K_plot), cmap="viridis", aspect="auto")
+    plt.imshow(K_plot, cmap="viridis", aspect="auto")
 
     for i in range(K.shape[0]):
         for j in range(K.shape[1]):
@@ -117,7 +116,10 @@ def plot_transition_matrix(
 
             if val_abs >= threshold:
                 if np.iscomplexobj(value):
-                    label = f"{value.real:.3f}+{value.imag:.3f}j"
+                    if abs(value.imag) < 1e-10:
+                        label = f"{value.real:.3f}"
+                    else:
+                        label = f"{value.real:.3f}+{value.imag:.3f}j"
                 else:
                     label = f"{value:.3f}"
 
@@ -131,15 +133,15 @@ def plot_transition_matrix(
                     fontsize=7,
                 )
 
-    plt.colorbar(label="|weight|" if np.iscomplexobj(K) else "value")
+    plt.colorbar(label="|value|" if np.iscomplexobj(K) else "value")
 
-    plt.xlabel("Current state index")
-    plt.ylabel("Next state index")
+    plt.xlabel("Current feature")
+    plt.ylabel("Next feature")
 
     if expand_names is not None and len(expand_names) == K.shape[0] == K.shape[1]:
-        expand_names = [f"${e}$" for e in expand_names]
-        plt.xticks(range(len(expand_names)), expand_names, rotation=90)
-        plt.yticks(range(len(expand_names)), expand_names)
+        expand_names_fmt = [f"${e}$" for e in expand_names]
+        plt.xticks(range(len(expand_names_fmt)), expand_names_fmt, rotation=90)
+        plt.yticks(range(len(expand_names_fmt)), expand_names_fmt)
 
     plt.tight_layout()
 

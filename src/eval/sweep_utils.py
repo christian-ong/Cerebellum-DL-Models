@@ -65,15 +65,25 @@ def build_model(args, state_dim, system_name, device):
     return model
 
 
-def compute_loader_loss_and_rmse(model, loader, device):
+def compute_loader_metrics(model, loader, device, state_scale=None):
     if loader is None or len(loader.dataset) == 0:
-        return None, None
+        return None, None, None
+
+    if state_scale is None:
+        raise ValueError("state_scale must be provided for one-step NRMSE computation.")
+
+    if isinstance(state_scale, np.ndarray):
+        state_scale = torch.tensor(state_scale, dtype=torch.float32, device=device)
+    else:
+        state_scale = state_scale.to(device)
+
+    state_scale = state_scale + 1e-8
 
     model.eval()
-    loss_fn = torch.nn.MSELoss()
 
     total_loss = 0.0
     total_sq_err = 0.0
+    total_sq_err_norm = 0.0
     total_numel = 0
     total_samples = 0
 
@@ -83,20 +93,22 @@ def compute_loader_loss_and_rmse(model, loader, device):
             y = y.to(device, non_blocking=True)
 
             y_hat = model(x)
-            loss = torch.mean((y_hat - y) ** 2)
+            diff = y_hat - y
+            loss = torch.mean(diff ** 2)
 
             bs = x.size(0)
             total_loss += loss.item() * bs
             total_samples += bs
 
-            sq_err = torch.sum((y_hat - y) ** 2).item()
-            total_sq_err += sq_err
+            total_sq_err += torch.sum(diff ** 2).item()
+            total_sq_err_norm += torch.sum((diff / state_scale) ** 2).item()
             total_numel += y.numel()
 
     mean_loss = total_loss / max(total_samples, 1)
     rmse = float(np.sqrt(total_sq_err / max(total_numel, 1)))
-    return mean_loss, rmse
+    nrmse = float(np.sqrt(total_sq_err_norm / max(total_numel, 1)))
 
+    return mean_loss, rmse, nrmse
 
 def compute_rollout_metrics(
     model,
@@ -105,6 +117,7 @@ def compute_rollout_metrics(
     horizon=500,
     gamma=0.99,
     max_trajs=None,
+    state_scale=None,
 ):
     """
     Computes:
@@ -138,8 +151,15 @@ def compute_rollout_metrics(
 
     model.eval()
 
-    target = X[1 : max_h + 1]
-    target_std = torch.std(target, dim=(0, 1), unbiased=False) + 1e-8
+    if state_scale is None:
+        raise ValueError("state_scale must be provided for rollout NRMSE computation.")
+
+    if isinstance(state_scale, np.ndarray):
+        state_scale = torch.tensor(state_scale, dtype=torch.float32, device=device)
+    else:
+        state_scale = state_scale.to(device)
+
+    state_scale = state_scale + 1e-8
 
     x = X[0]
 
@@ -153,7 +173,7 @@ def compute_rollout_metrics(
             diff = x - X[h]
 
             rmse_h = torch.sqrt(torch.mean(diff ** 2))
-            nrmse_h = torch.sqrt(torch.mean((diff / target_std) ** 2))
+            nrmse_h = torch.sqrt(torch.mean((diff / state_scale) ** 2))
 
             rmse_list.append(rmse_h)
             nrmse_list.append(nrmse_h)
@@ -164,7 +184,7 @@ def compute_rollout_metrics(
     results = {}
 
     # ---- extract specific horizons ----
-    eval_points = [10, 50, 100, 200, 500]
+    eval_points = [10, 100, 500]
 
     for h in eval_points:
         if h <= max_h:
@@ -177,6 +197,6 @@ def compute_rollout_metrics(
             )
             weighted = torch.sum(weights * nrmse_tensor[:h]) / torch.sum(weights)
 
-            results[f"weighted_cumulative_nrmse_h{h}_g{gamma:.2f}"] = float(weighted.item())
+            results[f"discounted_mean_nrmse_h{h}_g{gamma:.2f}"] = float(weighted.item())
 
     return results

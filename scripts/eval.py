@@ -476,13 +476,8 @@ def main():
     elif args.model == "regression_dmd":
         eigvals = np.linalg.eigvals(extras["K"])
 
-    elif model is not None and hasattr(model, "Lambda"):
-        lam = model.Lambda
-        if torch.is_tensor(lam):
-            lam = lam.detach().cpu().numpy()
-        else:
-            lam = np.asarray(lam)
-        eigvals = np.linalg.eigvals(lam)
+    elif model is not None and hasattr(model, "get_eigenvalues"):
+        eigvals = model.get_eigenvalues().detach().cpu().numpy()
 
     if eigvals is not None:
         plot_eigenvalues(eigvals, figdir)
@@ -528,34 +523,29 @@ def main():
     # Compare learned state block with true A_d
     # --------------------------------------------------
 
-    if model is not None and hasattr(model, "Phi") and hasattr(model, "Lambda"):
+    if model is not None and hasattr(model, "get_K_true") and hasattr(model, "get_Phi_true"):
 
-        print("\n--- Learned lifted operator ---")
+        print("\n--- Learned lifted operator (original lifted coordinates) ---")
 
-        Phi = model.Phi.detach().cpu().numpy()
-        Lambda = model.Lambda.detach().cpu().numpy()
+        K = model.get_K_true().detach().cpu().numpy()
+        Phi = model.get_Phi_true().detach().cpu().numpy()
 
-        try:
-            Phi_inv = np.linalg.inv(Phi)
-        except np.linalg.LinAlgError:
-            Phi_inv = np.linalg.pinv(Phi)
-
-        K = Phi @ Lambda @ Phi_inv
+        if hasattr(model, "get_Lambda"):
+            Lambda = model.get_Lambda().detach().cpu().numpy()
+            print("Lambda shape:", Lambda.shape)
 
         print("Full lifted transition matrix shape:", K.shape)
+        print("Phi shape:", Phi.shape)
 
-        # extract state indices (x,y or x,y,z)
         if hasattr(model, "state_indices"):
             state_idx = model.state_indices
             K_xx = K[np.ix_(state_idx, state_idx)]
         else:
-            # no lifting → the whole matrix is the state block
             K_xx = K
 
         print("\nState-space block K_xx:")
         print(K_xx)
 
-        # If linear system, also print true A_d if available
         if args.model in ["ml_dmd"] and system in [
             "saddle_point",
             "degenerate_node",
@@ -568,21 +558,20 @@ def main():
     # Compare learned state block with true A_d
     # --------------------------------------------------
 
-    if model is not None and hasattr(model, "K"):
+    if model is not None and hasattr(model, "get_K_true") and hasattr(model, "K"):
 
-        print("\n--- Learned lifted Koopman operator ---")
+        print("\n--- Learned lifted Koopman operator (after undoing feature scaling) ---")
 
-        # Full lifted operator
-        K = model.K.weight.detach().cpu().numpy().T
+        K = model.get_K_true().detach().cpu().numpy()
 
         print("Full lifted transition matrix shape:", K.shape)
+        print("Full lifted transition matrix:")
+        print(K)
 
-        # Extract state block
         if hasattr(model, "state_indices"):
             state_idx = model.state_indices
             K_xx = K[np.ix_(state_idx, state_idx)]
         else:
-            # no lifting → the whole matrix is the state block
             K_xx = K
 
         print("\nState-space block K_xx:")

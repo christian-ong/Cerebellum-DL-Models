@@ -1,19 +1,19 @@
 # LSBATCH: User input
 #!/bin/bash
-#BSUB -J koopman_manual_pendulum_specific
+#BSUB -J koopman_manual_pendulum_general
 
 # Output files
 #BSUB -o hpc/runs/%J.out
 #BSUB -e hpc/runs/%J.err
 
 # GPU
-#BSUB -q gpua40
+#BSUB -q gpuv100
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -R "rusage[mem=32GB] span[hosts=1]"
 #BSUB -n 4
 
 # Runtime
-#BSUB -W 12:00
+#BSUB -W 6:00
 
 # ----------------------------------
 # ENV
@@ -28,7 +28,7 @@ source .venv/bin/activate
 # SWEEP
 # ----------------------------------
 
-SWEEP_ID=DeepLearningP4Destruction/Cerebellum-DL-Models/90ho2dye
+SWEEP_ID=DeepLearningP4Destruction/Cerebellum-DL-Models/ir36kvan
 
 # ----------------------------------
 # RUN (ONLY ONE AGENT!)
