@@ -313,12 +313,12 @@ class ML_DMD(ManualExpansion):
         # 4) Stability regularization on effective operator
         # --------------------------------------------------
 
-        K_eff = self.Phi @ self.Lambda @ Phi_inv
-        eigvals = torch.linalg.eigvals(K_eff)
+        # K_eff = self.Phi @ self.Lambda @ Phi_inv
+        # eigvals = torch.linalg.eigvals(K_eff)
 
-        loss_stability = torch.mean(
-            torch.relu(torch.abs(eigvals) - 1.0) ** 2
-        )
+        # loss_stability = torch.mean(
+        #     torch.relu(torch.abs(eigvals) - 1.0) ** 2
+        # )
 
         # --------------------------------------------------
         # Total loss
@@ -328,7 +328,7 @@ class ML_DMD(ManualExpansion):
             loss_lift
             + 0.1 * loss_state
             + 1e-3 * loss_unit_length
-            + 1e-3 * loss_stability
+            # + 1e-3 * loss_stability
         )
         return (loss,)
 

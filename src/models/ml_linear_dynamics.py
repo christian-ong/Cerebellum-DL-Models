@@ -283,12 +283,12 @@ class ML_LinearDynamics(ManualExpansion):
         #
         # Ensures stable long-term rollouts.
 
-        K_eff = self.K.weight * self.z_scale.unsqueeze(1) / self.z_scale.unsqueeze(0)
-        eigvals = torch.linalg.eigvals(K_eff)
+        # K_eff = self.K.weight * self.z_scale.unsqueeze(1) / self.z_scale.unsqueeze(0)
+        # eigvals = torch.linalg.eigvals(K_eff)
 
-        loss_stability = torch.mean(
-            torch.relu(torch.abs(eigvals) - 1.0) ** 2
-        )
+        # loss_stability = torch.mean(
+        #     torch.relu(torch.abs(eigvals) - 1.0) ** 2
+        # )
 
         # ------------------------------------------------
         # Total loss
@@ -296,7 +296,7 @@ class ML_LinearDynamics(ManualExpansion):
         loss = (
             loss_lift
             + 0.1 * loss_state
-            + 1e-3 * loss_stability
+            # + 1e-3 * loss_stability
         )
 
         return (loss,)

@@ -311,14 +311,16 @@ def predict_rollout_from_x0(
         return rollout_dmd_eig(extras["Lambda"], extras["Phi"], x0=x0, steps=steps)
 
     if model_name == "regression_dmd":
-        return model.rollout(
-            K=extras["K"],
-            C=extras["C"],
-            x0=x0,
-            steps=steps,
-        ).detach().cpu().numpy()
+        with torch.inference_mode():
+            return model.rollout(
+                K=extras["K"],
+                C=extras["C"],
+                x0=x0,
+                steps=steps,
+            ).detach().cpu().numpy()
 
     if model_name == "sindy_baseline":
         return model.rollout(x0, steps=steps)
 
-    return model.rollout(x0=x0, steps=steps).detach().cpu().numpy()
+    with torch.inference_mode():
+        return model.rollout(x0=x0, steps=steps).detach().cpu().numpy()

@@ -85,7 +85,7 @@ Global options (defaults):
     python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/lotka_volterra --model_path data/models/ml_lineardynamics/lotka_volterra/default/model.pt
     python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/pendulum --model_path data/models/ml_lineardynamics/pendulum/default/model.pt
     python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/duffing --model_path data/models/ml_lineardynamics/duffing/default/model.pt
-    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz --model_path data/models/ml_lineardynamics/lorenz/default/model.pt
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz --model_path data/models/ml_lineardynamics/lorenz/default/model.pt --match_sweep_metrics
 
 # ML DMD
     python -m scripts.eval --model ml_dmd --data_path data/trajectories/linear/saddle_point --model_path data/models/ml_dmd/saddle_point/default/model.pt
@@ -216,6 +216,7 @@ def main():
     parser.add_argument("--summary_path",type=str,default=None,help="Optional explicit path to diagnostics_summary.npz. If omitted, the default run-matched path is used.")
     parser.add_argument("--horizons",type=str,default="1,5,20",help="Comma-separated terminal horizons for test metrics.")
     parser.add_argument("--rollout_horizons",type=str,default="5,20",help="Comma-separated rollout horizons from x(0) for test metrics.")
+    parser.add_argument("--match_sweep_metrics",action="store_true",help="Use the same horizon set as the sweep: horizons 10,100,500; rollout horizon 500; steps 500 for the example rollout plot.")
     parser.add_argument("--max_one_step_pairs_per_traj",type=int,default=256, help="Cap on one-step pairs per test trajectory. Use 0 for all.")
     parser.add_argument("--max_horizon_starts_per_traj",type=int,default=256,help="Cap on number of horizon-metric start points per test trajectory. Use 0 for all." )
     parser.add_argument("--shared_rollout_cache",action="store_true",help="Reuse cached rollouts across metrics. Auto-used with --run_diagnostics.")
@@ -229,6 +230,11 @@ def main():
     parser.add_argument("--grid_resolution",type=int,default=100,help="Grid size per axis for true-grid heatmap. 100 -> 100x100 = 10,000 points.")
 
     args = parser.parse_args()
+
+    if args.match_sweep_metrics:
+        args.horizons = "10,100,500"
+        args.rollout_horizons = "500"
+        args.steps = 500
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -285,6 +291,9 @@ def main():
     horizons = parse_int_list(args.horizons)
     rollout_horizons = parse_int_list(args.rollout_horizons)
 
+    if args.match_sweep_metrics:
+        print("Using sweep-matched metrics: horizons=10,100,500; rollout_horizons=500; steps=500.")
+
     max_needed = max(max(horizons), max(rollout_horizons))
     if X.shape[0] <= max_needed:
         raise ValueError(
@@ -305,7 +314,7 @@ def main():
     max_one_step_pairs = None if args.max_one_step_pairs_per_traj == 0 else args.max_one_step_pairs_per_traj
     max_horizon_starts = None if args.max_horizon_starts_per_traj == 0 else args.max_horizon_starts_per_traj
 
-    use_shared_rollout_cache = True
+    use_shared_rollout_cache = args.shared_rollout_cache or args.run_diagnostics
     rollout_cache = None
 
     if use_shared_rollout_cache:

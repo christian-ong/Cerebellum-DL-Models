@@ -17,7 +17,7 @@ def maybe_set_z_scale(model, train_loader, device):
 
             if len(zs) > 0:
                 z_all = torch.cat(zs, dim=0)
-                z_scale = torch.mean(torch.abs(z_all), dim=0) + 1e-6
+                z_scale = torch.clamp(torch.mean(torch.abs(z_all), dim=0), min=1e-5)
                 model.set_z_scale(z_scale)
         print("z_scale set.")
 
