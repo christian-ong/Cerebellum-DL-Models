@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
+from src.eval.sweep_utils import maybe_set_z_scale
 from src.models.linear_baseline import fit_linear_map
 from src.models.dmd_baseline import fit_dmd
 from src.models.ml_linear_dynamics import ML_LinearDynamics
@@ -261,6 +262,10 @@ def main():
     
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size) if len(val_ds) > 0 else None
+
+    train_state_mean = torch.tensor(np.mean(meta["X"], axis=(0, 1)), dtype=torch.float32, device=device)
+    train_state_scale = torch.tensor(np.std(meta["X"], axis=(0, 1)), dtype=torch.float32, device=device)
+    train_state_scale = torch.clamp(train_state_scale, min=1e-6)
     
 
 # Get training data
@@ -460,19 +465,14 @@ def main():
     if hasattr(model, "expansion_type"):
         print(f"Expand names: {model.expand_names}")
 
+    if hasattr(model, "set_state_scale"):
+        model.set_state_scale(train_state_mean, train_state_scale)
+
     # --------------------------------------------------
     # Compute lifted scaling (only for expansion models)
     # --------------------------------------------------
 
-    if hasattr(model, "expand") and hasattr(model, "set_z_scale"):
-        print("Computing expansion basis scaling...")
-        with torch.no_grad():
-            zs = []
-            for x_batch, _ in train_loader:
-                zs.append(model.expand(x_batch.to(device)))
-            z_all = torch.cat(zs, dim=0)
-            z_scale = torch.clamp(torch.mean(torch.abs(z_all), dim=0), min=1e-5)
-            model.set_z_scale(z_scale)
+    maybe_set_z_scale(model, train_loader, device)
     
     # Train
     model, (train_losses, batch_val_losses, epoch_val_losses, loss_components_val) = train_onestep(

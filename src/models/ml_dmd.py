@@ -24,13 +24,15 @@ class ML_DMD(ManualExpansion):
 
     Pipeline:
 
-        x  --expand-->  z
+        x  --standardize-->  x_scaled
+        x_scaled --expand-->  z
         z  --scale-->   z_norm
         z_norm --Phi^{-1}--> modal coordinates b
         b --Lambda--> modal_next
         modal_next --Phi--> z_norm_next
         z_norm_next --descale--> z_next
-        z_next --de_expand--> x_next
+        z_next --de_expand--> x_next_scaled
+        x_next_scaled --unscale--> x_next
 
     Important design choices
     ------------------------
@@ -89,9 +91,12 @@ class ML_DMD(ManualExpansion):
         # ------------------------------------------------
         # Feature scaling buffer
         # ------------------------------------------------
-        # z_scale normalizes lifted observables
-        # (computed from training data).
+        # x_mean/x_scale standardize the physical state before expansion.
+        # z_scale normalizes lifted observables computed from standardized data.
         self.register_buffer("z_scale", torch.ones(self.latent_dim))
+        self.register_buffer("x_mean", torch.zeros(state_dim))
+        self.register_buffer("x_scale", torch.ones(state_dim))
+        self.max_abs_z_norm = 1e6
 
         # ------------------------------------------------
         # Degree-based lifted loss weighting
@@ -105,6 +110,21 @@ class ML_DMD(ManualExpansion):
         weights = 1.0 / (degrees + 1.0)
         self.register_buffer("lift_weights", weights)
         
+    def set_state_scale(self, x_mean, x_scale):
+        if not torch.is_tensor(x_mean):
+            x_mean = torch.tensor(x_mean, dtype=torch.float32)
+        if not torch.is_tensor(x_scale):
+            x_scale = torch.tensor(x_scale, dtype=torch.float32)
+
+        self.x_mean.copy_(x_mean.to(self.x_mean.device))
+        self.x_scale.copy_(torch.clamp(x_scale.to(self.x_scale.device), min=1e-6))
+
+    def scale_state(self, x):
+        return (x - self.x_mean) / self.x_scale    
+    
+    def unscale_state(self, x):
+        return x * self.x_scale + self.x_mean
+    
     def _feature_degree(self, name: str) -> int:
         name = name.strip()
 
@@ -190,10 +210,14 @@ class ML_DMD(ManualExpansion):
 
     def get_Phi_true(self):
         """
-        Return Phi expressed in the original lifted coordinates.
+        Return Phi expressed in the lifted coordinates induced by the
+        standardized physical state.
 
         Since z_raw = S z_scaled, the eigenvector matrix transforms as
             Phi_true = S Phi_scaled
+
+        This does not undo the nonlinear state standardization applied
+        before expansion.
         """
         S = self.get_scaling_matrix()
         return S @ self.Phi
@@ -201,10 +225,14 @@ class ML_DMD(ManualExpansion):
 
     def get_K_true(self):
         """
-        Return the equivalent operator in the original lifted coordinates.
+        Return the equivalent operator in the lifted coordinates induced by
+        the standardized physical state.
 
         If z_scaled = S^{-1} z_raw, then
             K_true = S K_scaled S^{-1}
+
+        This is still an operator in lifted coordinates, not a global linear
+        operator in raw physical state coordinates.
         """
         S = self.get_scaling_matrix()
         S_inv = torch.diag(1.0 / (self.z_scale + 1e-12))
@@ -234,19 +262,20 @@ class ML_DMD(ManualExpansion):
         """
 
         # Lift state into observable space
-        z_raw = self.expand(x)
+        x_scaled = self.scale_state(x)
+        z_raw = self.expand(x_scaled)
 
         # Normalize lifted coordinates
-        z = z_raw / self.z_scale
+        z = torch.clamp(z_raw / self.z_scale, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
 
-        # Compute pseudo-inverse of Phi
-        Phi_inv = torch.linalg.pinv(self.Phi, rcond=1e-6)
+        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
+        Phi_reg = self.Phi + I_eps
         cond_number = torch.linalg.cond(self.Phi)
         if cond_number > 1e6:
             print(f"Warning: High condition number for Phi: {cond_number:.2e}")
 
         # Convert to modal coordinates
-        b = z @ Phi_inv.mT
+        b = torch.linalg.solve(Phi_reg, z.mT).mT
 
         # Modal evolution
         b_next = b @ self.Lambda.mT
@@ -258,8 +287,8 @@ class ML_DMD(ManualExpansion):
         z_next_raw = z_next * self.z_scale
 
         # Recover original state
-        x_next = self.de_expand(z_next_raw)
-
+        x_next_scaled = self.de_expand(z_next_raw)
+        x_next = self.unscale_state(x_next_scaled)
         return x_next
 
     # ------------------------------------------------
@@ -269,17 +298,25 @@ class ML_DMD(ManualExpansion):
     def compute_loss(self, x, x_next_true):
 
         # Expand states
-        z_raw = self.expand(x)
-        z_next_true_raw = self.expand(x_next_true)
+        x_scaled = self.scale_state(x)
+        x_next_true_scaled = self.scale_state(x_next_true)
+
+        z_raw = self.expand(x_scaled)
+        z_next_true_raw = self.expand(x_next_true_scaled)
 
         # Normalize lifted coordinates
-        z = z_raw / self.z_scale
-        z_next_true = z_next_true_raw / self.z_scale
+        z = torch.clamp(z_raw / self.z_scale, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
+        z_next_true = torch.clamp(
+            z_next_true_raw / self.z_scale,
+            min=-self.max_abs_z_norm,
+            max=self.max_abs_z_norm,
+        )
 
-        Phi_inv = torch.linalg.pinv(self.Phi, rcond=1e-6)
+        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
+        Phi_reg = self.Phi + I_eps
 
         # Convert to modal coordinates
-        b = z @ Phi_inv.mT
+        b = torch.linalg.solve(Phi_reg, z.mT).mT
 
         # Modal evolution
         b_next = b @ self.Lambda.mT
@@ -299,7 +336,8 @@ class ML_DMD(ManualExpansion):
         # --------------------------------------------------
 
         z_next_pred_raw = z_next_pred * self.z_scale
-        x_next_pred = self.de_expand(z_next_pred_raw)
+        x_next_pred_scaled = self.de_expand(z_next_pred_raw)
+        x_next_pred = self.unscale_state(x_next_pred_scaled)
         loss_state = nn.MSELoss()(x_next_pred, x_next_true)
 
         # --------------------------------------------------
@@ -310,15 +348,13 @@ class ML_DMD(ManualExpansion):
         loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
 
         # --------------------------------------------------
-        # 4) Stability regularization on effective operator
+        # 4) Eigenvalue stability regularization
         # --------------------------------------------------
 
-        # K_eff = self.Phi @ self.Lambda @ Phi_inv
-        # eigvals = torch.linalg.eigvals(K_eff)
-
-        # loss_stability = torch.mean(
-        #     torch.relu(torch.abs(eigvals) - 1.0) ** 2
-        # )
+        Phi_cols = self.Phi / (torch.linalg.norm(self.Phi, dim=0, keepdim=True) + 1e-8)
+        G = Phi_cols.mT @ Phi_cols
+        I = torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
+        loss_coherence = torch.mean((G - I) ** 2)
 
         # --------------------------------------------------
         # Total loss
@@ -328,7 +364,7 @@ class ML_DMD(ManualExpansion):
             loss_lift
             + 0.1 * loss_state
             + 1e-3 * loss_unit_length
-            # + 1e-3 * loss_stability
+            + 1e-3 * loss_coherence
         )
         return (loss,)
 

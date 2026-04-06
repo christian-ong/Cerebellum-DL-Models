@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import os
 
-from src.eval.rollout_eval import evaluate_rollouts, compute_single_rollout
+from src.eval.rollout_eval import compute_single_rollout
 from src.eval.model_io import load_model, infer_run_name
 from src.eval.plot_rollout import plot_time_series, plot_phase_space
 from src.eval.plot_eigenvalues import plot_eigenvalues
@@ -19,6 +19,7 @@ from src.eval.metrics import (
     save_summary_npz,
     build_rollout_cache,
 )
+from src.eval.sweep_utils import compute_rollout_metrics
 from src.data_generation.load_data import resolve_split_npz_path
 """
 Global options (defaults):
@@ -31,11 +32,11 @@ Global options (defaults):
         sindy_baseline}
     --data_path data/trajectories/{linear|nonlinear}/{system}
     --model_path data/models/{model}/{system}/{run_name}/model.{npz|pt}
-    --steps 5000
+    --steps 500
     --traj_index 0
     --name optional_suffix
-    --horizons 1,5,20
-    --rollout_horizons 5,20
+    --horizons 1,5
+    --rollout_horizons 5
 
 ---------------------------------------------------------------------------------------------
 
@@ -85,7 +86,7 @@ Global options (defaults):
     python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/lotka_volterra --model_path data/models/ml_lineardynamics/lotka_volterra/default/model.pt
     python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/pendulum --model_path data/models/ml_lineardynamics/pendulum/default/model.pt
     python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/duffing --model_path data/models/ml_lineardynamics/duffing/default/model.pt
-    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz --model_path data/models/ml_lineardynamics/lorenz/default/model.pt --match_sweep_metrics
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz --model_path data/models/ml_lineardynamics/lorenz/default/model.pt
 
 # ML DMD
     python -m scripts.eval --model ml_dmd --data_path data/trajectories/linear/saddle_point --model_path data/models/ml_dmd/saddle_point/default/model.pt
@@ -209,32 +210,33 @@ def main():
                         ])
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--model_path", type=str, required=True)
-    parser.add_argument("--steps", type=int, default=1000)
+    parser.add_argument("--steps", type=int, default=500)
     parser.add_argument("--traj_index", type=int, default=0, help="Which test trajectory to show")
     parser.add_argument("--name", type=str, help="Optional suffix for saved figure")
     parser.add_argument("--print_validation_summary",action="store_true",help="Print saved validation diagnostics summary for the same run if available.")
     parser.add_argument("--summary_path",type=str,default=None,help="Optional explicit path to diagnostics_summary.npz. If omitted, the default run-matched path is used.")
-    parser.add_argument("--horizons",type=str,default="1,5,20",help="Comma-separated terminal horizons for test metrics.")
-    parser.add_argument("--rollout_horizons",type=str,default="5,20",help="Comma-separated rollout horizons from x(0) for test metrics.")
-    parser.add_argument("--match_sweep_metrics",action="store_true",help="Use the same horizon set as the sweep: horizons 10,100,500; rollout horizon 500; steps 500 for the example rollout plot.")
-    parser.add_argument("--max_one_step_pairs_per_traj",type=int,default=256, help="Cap on one-step pairs per test trajectory. Use 0 for all.")
-    parser.add_argument("--max_horizon_starts_per_traj",type=int,default=256,help="Cap on number of horizon-metric start points per test trajectory. Use 0 for all." )
-    parser.add_argument("--shared_rollout_cache",action="store_true",help="Reuse cached rollouts across metrics. Auto-used with --run_diagnostics.")
-    parser.add_argument("--run_diagnostics",action="store_true",help="Run deeper diagnostic plots on the test split.")
-
-    parser.add_argument("--phase_horizons",type=str,default="1,10,50",help="Comma-separated horizons for phase-space error maps.")
-    parser.add_argument("--heatmap_horizon",type=int, default=50,help="Horizon for initial-condition error map.")
-    parser.add_argument("--heatmap_mode",type=str, default="traj_initials",choices=["traj_initials", "all_valid_starts"],help="Use only test trajectory initials or all valid start points for the error heatmap.")
-    parser.add_argument("--linear_error_scale",action="store_true", help="Use linear instead of log scale on the horizon-error plot when diagnostics are enabled.")
-    parser.add_argument("--run_true_grid_heatmap",action="store_true",help="Compute a dense regular-grid heatmap using the true simulator and the trained model.")
-    parser.add_argument("--grid_resolution",type=int,default=100,help="Grid size per axis for true-grid heatmap. 100 -> 100x100 = 10,000 points.")
+    parser.add_argument("--horizons",type=str,default="1,5",help="Comma-separated terminal horizons for test metrics.")
+    parser.add_argument("--rollout_horizons",type=str,default="5",help="Comma-separated rollout horizons from x(0) for test metrics.")
+    parser.add_argument("--max_one_step_pairs_per_traj",type=int,default=64, help="Cap on one-step pairs per test trajectory. Use 0 for all.")
+    parser.add_argument("--max_horizon_starts_per_traj",type=int,default=64,help="Cap on number of horizon-metric start points per test trajectory. Use 0 for all." )
+    parser.add_argument("--match_sweep_metrics", action="store_true", help="Use sweep-style rollout metrics on test split (h=10,100,500 with discounted NRMSE).")
+    parser.add_argument("--rollout_gamma", type=float, default=0.99, help="Discount factor used for sweep-style discounted mean NRMSE.")
+    parser.add_argument("--max_test_rollout_trajs", type=int, default=None, help="Optional cap on test trajectories for sweep-style rollout metrics.")
+    parser.add_argument("--run_diagnostics", action="store_true", help="Generate diagnostic plots on the test split.")
+    parser.add_argument("--phase_horizons", type=str, default="1,5", help="Comma-separated horizons for phase-space diagnostic maps.")
+    parser.add_argument("--heatmap_horizon", type=int, default=5, help="Horizon for sampled-start or true-grid heatmap diagnostics.")
+    parser.add_argument(
+        "--heatmap_mode",
+        type=str,
+        default="traj_initials",
+        choices=["traj_initials", "all_valid_starts"],
+        help="Diagnostics heatmap mode: trajectory initials or all valid start points.",
+    )
+    parser.add_argument("--linear_error_scale", action="store_true", help="Use linear y-axis for error-vs-horizon diagnostics plot.")
+    parser.add_argument("--run_true_grid_heatmap", action="store_true", help="Use true simulator vs model grid heatmap in diagnostics.")
+    parser.add_argument("--grid_resolution", type=int, default=100, help="Grid size per axis for true-grid diagnostics heatmap.")
 
     args = parser.parse_args()
-
-    if args.match_sweep_metrics:
-        args.horizons = "10,100,500"
-        args.rollout_horizons = "500"
-        args.steps = 500
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -290,11 +292,16 @@ def main():
     # Compute test metrics
     horizons = parse_int_list(args.horizons)
     rollout_horizons = parse_int_list(args.rollout_horizons)
+    phase_horizons = parse_int_list(args.phase_horizons) if args.run_diagnostics else []
 
-    if args.match_sweep_metrics:
-        print("Using sweep-matched metrics: horizons=10,100,500; rollout_horizons=500; steps=500.")
+    if args.match_sweep_metrics and args.run_diagnostics:
+        raise ValueError("--run_diagnostics cannot be combined with --match_sweep_metrics.")
 
     max_needed = max(max(horizons), max(rollout_horizons))
+    if args.run_diagnostics:
+        max_needed = max(max_needed, max(phase_horizons), args.heatmap_horizon)
+    if args.match_sweep_metrics:
+        max_needed = max(max_needed, 10)
     if X.shape[0] <= max_needed:
         raise ValueError(
             f"Trajectory length T={X.shape[0]} is too short for max horizon {max_needed}. "
@@ -304,80 +311,152 @@ def main():
     scales = get_state_scale_from_train_split(args.data_path)
     scale_std = scales["std"]
     
-    diag_max_horizon = 1
-    if args.run_diagnostics:
-        phase_horizons = parse_int_list(args.phase_horizons)
-        diag_max_horizon = max(max(phase_horizons), args.heatmap_horizon)
-
-    metric_max_horizon = max(1, max(horizons), max(rollout_horizons), diag_max_horizon)
-
-    max_one_step_pairs = None if args.max_one_step_pairs_per_traj == 0 else args.max_one_step_pairs_per_traj
-    max_horizon_starts = None if args.max_horizon_starts_per_traj == 0 else args.max_horizon_starts_per_traj
-
-    use_shared_rollout_cache = args.shared_rollout_cache or args.run_diagnostics
+    one_step_metrics = None
+    horizon_metrics = None
+    rollout_metrics = None
     rollout_cache = None
 
-    if use_shared_rollout_cache:
-        rollout_cache = build_rollout_cache(
+    if args.match_sweep_metrics:
+        if args.model not in {"ml_lineardynamics", "ml_dmd"}:
+            raise ValueError("--match_sweep_metrics currently supports only ml_lineardynamics and ml_dmd.")
+
+        print("Computing sweep-style rollout metrics on test split...")
+        sweep_rollout_metrics = compute_rollout_metrics(
+            model=model,
+            X=X,
+            device=device,
+            horizon=max(500, max(rollout_horizons)),
+            gamma=args.rollout_gamma,
+            max_trajs=args.max_test_rollout_trajs,
+            state_scale=scale_std,
+        )
+
+        print("\n--- Sweep-style test rollout summary ---")
+        for h in [10, 100, 500]:
+            rmse = sweep_rollout_metrics.get(f"rollout_rmse_h{h}")
+            nrmse = sweep_rollout_metrics.get(f"rollout_nrmse_h{h}")
+            w_nrmse = sweep_rollout_metrics.get(f"discounted_mean_nrmse_h{h}_g{args.rollout_gamma:.2f}")
+            if rmse is not None:
+                print(
+                    f"  h={h:>3d} | RMSE={float(rmse):.6e} | "
+                    f"NRMSE={float(nrmse):.6e} | W-NRMSE={float(w_nrmse):.6e}"
+                )
+
+        test_summary_path = os.path.join(figdir, "test_summary.npz")
+        test_summary_payload = {
+            "model_name": np.array(args.model),
+            "system": np.array(system),
+            "run_name": np.array(run_name),
+            "split": np.array("test"),
+            "test_indices": np.asarray(test_indices),
+            "scale_std": scale_std,
+            **{k: np.array(v) for k, v in sweep_rollout_metrics.items()},
+        }
+        save_summary_npz(test_summary_path, test_summary_payload)
+        print(f"Saved test summary        : {test_summary_path}")
+    else:
+        metric_max_horizon = max(1, max(horizons), max(rollout_horizons))
+
+        max_one_step_pairs = None if args.max_one_step_pairs_per_traj == 0 else args.max_one_step_pairs_per_traj
+        max_horizon_starts = None if args.max_horizon_starts_per_traj == 0 else args.max_horizon_starts_per_traj
+
+        use_shared_rollout_cache = True
+
+        if use_shared_rollout_cache:
+            rollout_cache = build_rollout_cache(
+                X=X,
+                traj_indices=test_indices,
+                model_name=args.model,
+                model=model,
+                extras=extras,
+                max_horizon=metric_max_horizon,
+                start_stride=1,
+                max_starts_per_traj=max_horizon_starts,
+            )
+
+        one_step_metrics = compute_one_step_metrics(
             X=X,
             traj_indices=test_indices,
             model_name=args.model,
             model=model,
             extras=extras,
-            max_horizon=metric_max_horizon,
-            start_stride=1,
-            max_starts_per_traj=max_horizon_starts,
+            scale_std=scale_std,
+            max_pairs_per_traj=max_one_step_pairs,
+            rollout_cache=rollout_cache,
         )
 
-    one_step_metrics = compute_one_step_metrics(
-        X=X,
-        traj_indices=test_indices,
-        model_name=args.model,
-        model=model,
-        extras=extras,
-        scale_std=scale_std,
-        max_pairs_per_traj=max_one_step_pairs,
-        rollout_cache=rollout_cache,
-    )
+        horizon_metrics = compute_horizon_metrics(
+            X=X,
+            traj_indices=test_indices,
+            horizons=horizons,
+            model_name=args.model,
+            model=model,
+            extras=extras,
+            scale_std=scale_std,
+            max_starts_per_traj=max_horizon_starts,
+            rollout_cache=rollout_cache,
+        )
 
-    horizon_metrics = compute_horizon_metrics(
-        X=X,
-        traj_indices=test_indices,
-        horizons=horizons,
-        model_name=args.model,
-        model=model,
-        extras=extras,
-        scale_std=scale_std,
-        max_starts_per_traj=max_horizon_starts,
-        rollout_cache=rollout_cache,
-    )
+        rollout_metrics = compute_full_rollout_metrics(
+            X=X,
+            traj_indices=test_indices,
+            rollout_horizons=rollout_horizons,
+            model_name=args.model,
+            model=model,
+            extras=extras,
+            scale_std=scale_std,
+            rollout_cache=rollout_cache,
+        )
 
-    rollout_metrics = compute_full_rollout_metrics(
-        X=X,
-        traj_indices=test_indices,
-        rollout_horizons=rollout_horizons,
-        model_name=args.model,
-        model=model,
-        extras=extras,
-        scale_std=scale_std,
-        rollout_cache=rollout_cache,
-    )
+        test_composite_score = compute_composite_validation_score(
+            one_step_nrmse=float(one_step_metrics["one_step_nrmse"]),
+            horizon_nrmse=horizon_metrics["horizon_nrmse"],
+            rollout_nrmse=rollout_metrics["rollout_nrmse"],
+        )
+        print("\n--- Test metric summary ---")
+        print(f"One-step MSE              : {float(one_step_metrics['one_step_mse']):.6e}")
+        print(f"One-step RMSE             : {float(one_step_metrics['one_step_rmse']):.6e}")
+        print(f"One-step NRMSE            : {float(one_step_metrics['one_step_nrmse']):.6e}")
 
-    test_composite_score = compute_composite_validation_score(
-        one_step_nrmse=float(one_step_metrics["one_step_nrmse"]),
-        horizon_nrmse=horizon_metrics["horizon_nrmse"],
-        rollout_nrmse=rollout_metrics["rollout_nrmse"],
-    )
+        print(f"Mean horizon RMSE         : {float(np.mean(horizon_metrics['horizon_rmse'])):.6e}")
+        print(f"Mean horizon NRMSE        : {float(np.mean(horizon_metrics['horizon_nrmse'])):.6e}")
+        for h, rmse, nrmse in zip(
+            horizon_metrics["horizons"],
+            horizon_metrics["horizon_rmse"],
+            horizon_metrics["horizon_nrmse"],
+        ):
+            print(f"  Horizon h={int(h):>3d}        : RMSE={float(rmse):.6e}, NRMSE={float(nrmse):.6e}")
+
+        print(f"Mean rollout RMSE         : {float(np.mean(rollout_metrics['rollout_rmse'])):.6e}")
+        print(f"Mean rollout NRMSE        : {float(np.mean(rollout_metrics['rollout_nrmse'])):.6e}")
+        for h, rmse, nrmse in zip(
+            rollout_metrics["rollout_horizons"],
+            rollout_metrics["rollout_rmse"],
+            rollout_metrics["rollout_nrmse"],
+        ):
+            print(f"  Rollout h={int(h):>3d}        : RMSE={float(rmse):.6e}, NRMSE={float(nrmse):.6e}")
+
+        print(f"Composite test score      : {test_composite_score:.6e}  (reporting only)")
+
+        test_summary_path = os.path.join(figdir, "test_summary.npz")
+        test_summary_payload = {
+            "model_name": np.array(args.model),
+            "system": np.array(system),
+            "run_name": np.array(run_name),
+            "split": np.array("test"),
+            "test_indices": np.asarray(test_indices),
+            "scale_std": scale_std,
+            "test_composite_score": np.array(test_composite_score),
+            **one_step_metrics,
+            **horizon_metrics,
+            **rollout_metrics,
+        }
+        save_summary_npz(test_summary_path, test_summary_payload)
+        print(f"Saved test summary        : {test_summary_path}")
+
     if args.run_diagnostics:
-        max_diag_needed = max(max(phase_horizons), args.heatmap_horizon)
-        if X.shape[0] <= max_diag_needed:
-            raise ValueError(
-                f"Trajectory length T={X.shape[0]} is too short for requested diagnostic horizon {max_diag_needed}. "
-                "Use smaller --phase_horizons / --heatmap_horizon."
-            )
-
-        diagnostics_figdir = os.path.join(figdir, "diagnostics_test")
-        os.makedirs(diagnostics_figdir, exist_ok=True)
+        diagnostics_dir = os.path.join(figdir, "diagnostics_test")
+        os.makedirs(diagnostics_dir, exist_ok=True)
 
         run_diagnostics(
             X=X,
@@ -387,7 +466,7 @@ def main():
             model=model,
             extras=extras,
             system=system,
-            figdir=diagnostics_figdir,
+            figdir=diagnostics_dir,
             horizon_metrics=horizon_metrics,
             rollout_metrics=rollout_metrics,
             phase_horizons=phase_horizons,
@@ -399,48 +478,7 @@ def main():
             run_true_grid_heatmap=args.run_true_grid_heatmap,
             grid_resolution=args.grid_resolution,
         )
-
-        print(f"Saved test diagnostics     : {diagnostics_figdir}")
-    print("\n--- Test metric summary ---")
-    print(f"One-step MSE              : {float(one_step_metrics['one_step_mse']):.6e}")
-    print(f"One-step RMSE             : {float(one_step_metrics['one_step_rmse']):.6e}")
-    print(f"One-step NRMSE            : {float(one_step_metrics['one_step_nrmse']):.6e}")
-
-    print(f"Mean horizon RMSE         : {float(np.mean(horizon_metrics['horizon_rmse'])):.6e}")
-    print(f"Mean horizon NRMSE        : {float(np.mean(horizon_metrics['horizon_nrmse'])):.6e}")
-    for h, rmse, nrmse in zip(
-        horizon_metrics["horizons"],
-        horizon_metrics["horizon_rmse"],
-        horizon_metrics["horizon_nrmse"],
-    ):
-        print(f"  Horizon h={int(h):>3d}        : RMSE={float(rmse):.6e}, NRMSE={float(nrmse):.6e}")
-
-    print(f"Mean rollout RMSE         : {float(np.mean(rollout_metrics['rollout_rmse'])):.6e}")
-    print(f"Mean rollout NRMSE        : {float(np.mean(rollout_metrics['rollout_nrmse'])):.6e}")
-    for h, rmse, nrmse in zip(
-        rollout_metrics["rollout_horizons"],
-        rollout_metrics["rollout_rmse"],
-        rollout_metrics["rollout_nrmse"],
-    ):
-        print(f"  Rollout h={int(h):>3d}        : RMSE={float(rmse):.6e}, NRMSE={float(nrmse):.6e}")
-
-    print(f"Composite test score      : {test_composite_score:.6e}  (reporting only)")
-
-    test_summary_path = os.path.join(figdir, "test_summary.npz")
-    test_summary_payload = {
-        "model_name": np.array(args.model),
-        "system": np.array(system),
-        "run_name": np.array(run_name),
-        "split": np.array("test"),
-        "test_indices": np.asarray(test_indices),
-        "scale_std": scale_std,
-        "test_composite_score": np.array(test_composite_score),
-        **one_step_metrics,
-        **horizon_metrics,
-        **rollout_metrics,
-    }
-    save_summary_npz(test_summary_path, test_summary_payload)
-    print(f"Saved test summary        : {test_summary_path}")
+        print(f"Saved diagnostics plots   : {diagnostics_dir}")
 
     X_true, X_hat = compute_single_rollout(
         X=X,
@@ -534,7 +572,7 @@ def main():
 
     if model is not None and hasattr(model, "get_K_true") and hasattr(model, "get_Phi_true"):
 
-        print("\n--- Learned lifted operator (original lifted coordinates) ---")
+        print("\n--- Learned lifted operator (standardized lifted coordinates) ---")
 
         K = model.get_K_true().detach().cpu().numpy()
         Phi = model.get_Phi_true().detach().cpu().numpy()
@@ -569,7 +607,7 @@ def main():
 
     if model is not None and hasattr(model, "get_K_true") and hasattr(model, "K"):
 
-        print("\n--- Learned lifted Koopman operator (after undoing feature scaling) ---")
+        print("\n--- Learned lifted Koopman operator (standardized lifted coordinates) ---")
 
         K = model.get_K_true().detach().cpu().numpy()
 

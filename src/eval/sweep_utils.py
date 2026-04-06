@@ -12,6 +12,8 @@ def maybe_set_z_scale(model, train_loader, device):
             zs = []
             for x_batch, _ in train_loader:
                 x_batch = x_batch.to(device)
+                if hasattr(model, "scale_state"):
+                    x_batch = model.scale_state(x_batch)
                 z_batch = model.expand(x_batch)
                 zs.append(z_batch)
 
@@ -170,6 +172,15 @@ def compute_rollout_metrics(
     with torch.no_grad():
         for h in range(1, max_h + 1):
             x = model(x)
+            if not torch.isfinite(x).all():
+                results = {"rollout_failed": 1.0}
+                for hh in [10, 100, 500]:
+                    if hh <= max_h:
+                        results[f"rollout_rmse_h{hh}"] = np.nan
+                        results[f"rollout_nrmse_h{hh}"] = np.nan
+                        results[f"discounted_mean_nrmse_h{hh}_g{gamma:.2f}"] = np.nan
+                return results
+
             diff = x - X[h]
 
             rmse_h = torch.sqrt(torch.mean(diff ** 2))

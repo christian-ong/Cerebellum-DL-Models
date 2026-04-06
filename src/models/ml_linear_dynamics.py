@@ -94,6 +94,9 @@ class ML_LinearDynamics(ManualExpansion):
         # - moved to GPU automatically
         # - not trainable
         self.register_buffer("z_scale", torch.ones(self.latent_dim))
+        self.register_buffer("x_mean", torch.zeros(state_dim))
+        self.register_buffer("x_scale", torch.ones(state_dim))
+        self.max_abs_z_norm = 1e6
 
         # ------------------------------------------------
         # Lifted loss weights
@@ -114,6 +117,21 @@ class ML_LinearDynamics(ManualExpansion):
         )
         weights = 1.0 / (degrees + 1.0)
         self.register_buffer("lift_weights", weights)
+
+    def set_state_scale(self, x_mean, x_scale):
+        if not torch.is_tensor(x_mean):
+            x_mean = torch.tensor(x_mean, dtype=torch.float32)
+        if not torch.is_tensor(x_scale):
+            x_scale = torch.tensor(x_scale, dtype=torch.float32)
+
+        self.x_mean.copy_(x_mean.to(self.x_mean.device))
+        self.x_scale.copy_(torch.clamp(x_scale.to(self.x_scale.device), min=1e-6))
+
+    def unscale_state(self, x):
+        return x * self.x_scale + self.x_mean
+
+    def scale_state(self, x):
+        return (x - self.x_mean) / self.x_scale
         
     def _feature_degree(self, name: str) -> int:
         name = name.strip()
@@ -175,10 +193,14 @@ class ML_LinearDynamics(ManualExpansion):
 
     def get_K_true(self):
         """
-        Return the equivalent operator in the original lifted coordinates.
+        Return the equivalent operator in the lifted coordinates induced by
+        the standardized physical state.
 
         If z_scaled = S^{-1} z_raw, then
             K_true = S K_scaled S^{-1}
+
+        This is still an operator in lifted coordinates, not a global linear
+        operator in raw physical state coordinates.
         """
         S = self.get_scaling_matrix()
         S_inv = torch.diag(1.0 / (self.z_scale + 1e-12))
@@ -213,10 +235,11 @@ class ML_LinearDynamics(ManualExpansion):
         """
 
         # Lift state into expanded space
-        z_raw = self.expand(x)
+        x_scaled = self.scale_state(x)
+        z_raw = self.expand(x_scaled)
 
         # Normalize lifted features
-        z = z_raw / self.z_scale
+        z = torch.clamp(z_raw / self.z_scale, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
 
         # Linear Koopman step
         z_next = self.K(z)
@@ -225,8 +248,8 @@ class ML_LinearDynamics(ManualExpansion):
         z_next_raw = z_next * self.z_scale
 
         # Recover original state
-        x_next = self.de_expand(z_next_raw)
-
+        x_next_scaled = self.de_expand(z_next_raw)
+        x_next = self.unscale_state(x_next_scaled)
         return x_next
 
     # ------------------------------------------------
@@ -250,12 +273,19 @@ class ML_LinearDynamics(ManualExpansion):
         """
 
         # Expand states
-        z_raw = self.expand(x)
-        z_next_true_raw = self.expand(x_next_true)
+        x_scaled = self.scale_state(x)
+        x_next_true_scaled = self.scale_state(x_next_true)
+
+        z_raw = self.expand(x_scaled)
+        z_next_true_raw = self.expand(x_next_true_scaled)
 
         # Normalize lifted coordinates
-        z = z_raw / self.z_scale
-        z_next_true = z_next_true_raw / self.z_scale
+        z = torch.clamp(z_raw / self.z_scale, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
+        z_next_true = torch.clamp(
+            z_next_true_raw / self.z_scale,
+            min=-self.max_abs_z_norm,
+            max=self.max_abs_z_norm,
+        )
 
         # Predict next lifted state
         z_next_pred = self.K(z)
@@ -272,8 +302,8 @@ class ML_LinearDynamics(ManualExpansion):
         # ------------------------------------------------
         # Convert lifted prediction back to state space
         z_next_pred_raw = z_next_pred * self.z_scale
-        x_next_pred = self.de_expand(z_next_pred_raw)
-
+        x_next_pred_scaled = self.de_expand(z_next_pred_raw)
+        x_next_pred = self.unscale_state(x_next_pred_scaled)
         loss_state = nn.MSELoss()(x_next_pred, x_next_true)
 
         # ------------------------------------------------
