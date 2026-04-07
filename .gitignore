@@ -6,6 +6,9 @@
 # file types
 *__pycache__/
 *.ipynb
+sandbox/*
+sandbox_*
+
 
 # data (except .py files)
 /data/*
