@@ -102,15 +102,8 @@ def build_rollout_cache(
     max_starts_per_traj: Optional[int] = None,
 ) -> Dict[int, Dict[str, np.ndarray]]:
     """
-    Cache rollouts for each selected trajectory and valid start point.
-
-    Returns
-    -------
-    cache : dict
-        cache[traj_id] = {
-            "starts": array of start indices,
-            "rollouts": list of rollout arrays, each of shape (max_horizon+1, d)
-        }
+    RE-INITIALIZED CACHE:
+    Each entry in 'rollouts' is a fresh prediction starting from the TRUE state at t0.
     """
     T, _, _ = X.shape
     cache = {}
@@ -118,23 +111,19 @@ def build_rollout_cache(
     for traj_id in traj_indices:
         X_traj = X[:, traj_id, :]
         n_valid_starts = T - max_horizon
-        if n_valid_starts <= 0:
-            raise ValueError(f"Trajectory length {T} is too short for max horizon {max_horizon}.")
-
         starts = np.arange(0, n_valid_starts, start_stride)
 
+        # Sampling logic...
         if max_starts_per_traj is not None and len(starts) > max_starts_per_traj:
-            keep = np.linspace(0, len(starts) - 1, max_starts_per_traj, dtype=int)
-            starts = starts[keep]
-            if starts[0] != 0:
-                starts[0] = 0
-            starts = np.unique(starts)
+            indices = np.linspace(0, len(starts) - 1, max_starts_per_traj, dtype=int)
+            starts = starts[indices]
 
         rollouts = []
         for t0 in starts:
-            x0 = X_traj[t0]
+            # Re-initialize the model with the GROUND TRUTH state at t0
+            x0_truth = X_traj[t0] 
             rollout = predict_rollout_from_x0(
-                x0=x0,
+                x0=x0_truth,
                 steps=max_horizon,
                 model_name=model_name,
                 model=model,
@@ -146,7 +135,6 @@ def build_rollout_cache(
             "starts": starts,
             "rollouts": rollouts,
         }
-
     return cache
 
 def compute_one_step_metrics(

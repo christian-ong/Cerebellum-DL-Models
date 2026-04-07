@@ -5,33 +5,33 @@ from src.models.expander import ManualExpansion
 
 class Regression_DMD(ManualExpansion):
     """
-    EDMD model built on top of the shared ManualExpansion class.
+    Clean EDMD model with two rollout modes:
 
-    Improvements over the original:
-    - optional input-state normalization before expansion
-    - optional lifted-feature normalization before regression
-    - separate ridge for Koopman and decoder fits
-    - optional spectral-radius clipping for stability
-    - optional residual decoding: predict dx and add to x
+    - linear_dynamics:
+        direct iteration in normalized lifted space using K_full
+    - DMD:
+        reduced exact-DMD / exact-EDMD style rollout using
+        K_tilde, U_r, W_reduced, Lambda, Phi_lift, Phi_state
+
+    Important:
+    - rollout mode is inference-only
+    - fit() always computes and stores BOTH representations
     """
 
     def __init__(
         self,
         state_dim=2,
         expansion_degree=3,
-        rank=None,
-        ridge=0.0,
-        decoder_ridge=None,
-        decoder_mode="regressed",
         bias=True,
         sine_cosine_expansion=False,
         expansion_type="general",
         system=None,
-        normalize_state=True,
+        normalize_state=False,
         normalize_lifted=True,
-        residual_decode=False,
-        max_spectral_radius=None,
-        eps=1e-10,
+        rollout_mode="DMD",
+        ridge=0.0,
+        rank=None,
+        eps=1e-12,
     ):
         super().__init__(
             state_dim=state_dim,
@@ -43,117 +43,132 @@ class Regression_DMD(ManualExpansion):
         )
 
         self.state_dim = state_dim
-        self.rank = rank
-        self.ridge = ridge
-        self.decoder_ridge = ridge if decoder_ridge is None else decoder_ridge
-        self.decoder_mode = decoder_mode
         self.normalize_state = normalize_state
         self.normalize_lifted = normalize_lifted
-        self.residual_decode = residual_decode
-        self.max_spectral_radius = max_spectral_radius
+        self.rollout_mode = rollout_mode
+        self.ridge = ridge
+        self.rank = rank
         self.eps = eps
 
-        if self.decoder_mode not in {"regressed", "fixed"}:
-            raise ValueError("decoder_mode must be 'regressed' or 'fixed'")
-
-        # learned / stored at fit time
+        # scaling
         self.x_mean = None
         self.x_scale = None
         self.psi_scale = None
+
+        # direct lifted dynamics
         self.K_fitted = None
         self.C_fitted = None
+
+        # reduced exact-DMD / EDMD objects
+        self.K_tilde_fitted = None
+        self.U_r_fitted = None
+        self.W_reduced_fitted = None
+        self.Lambda_fitted = None
+        self.Phi_lift_fitted = None
+        self.Phi_state_fitted = None
+
+        # optional alias for convenience / backward compatibility
+        self.Phi_fitted = None
+
+        self.Phi_pinv_fitted = None
+
+    def _canonical_mode(self, mode):
+        mode = self.rollout_mode if mode is None else mode
+        aliases = {
+            "linear_dynamics": "linear_dynamics",
+            "DMD": "DMD",
+            "projected_DMD": "projected_DMD",
+            "iterative": "linear_dynamics",
+            "modal": "DMD",
+        }
+        if mode not in aliases:
+            raise ValueError(f"Unknown rollout mode: {mode}")
+        return aliases[mode]
 
     def _to_tensor(self, x):
         if isinstance(x, np.ndarray):
             return torch.tensor(x, dtype=torch.float64)
         return x.to(dtype=torch.float64)
 
-    def _safe_scale(self, x, dim=0):
-        scale = torch.std(x, dim=dim, unbiased=False)
-        scale = torch.where(scale > self.eps, scale, torch.ones_like(scale))
+    def _feature_is_trig(self, name: str) -> bool:
+        return ("sin(" in name) or ("cos(" in name)
+
+    def _safe_rms_scale(self, x, dim=0):
+        s = torch.sqrt(torch.mean(x**2, dim=dim))
+        return torch.clamp(s, min=self.eps)
+
+    def _build_state_scale(self, x):
+        """
+        Scale-only normalization.
+        Important:
+        - no mean-centering
+        - if trig features are present, do NOT scale state before expansion
+        """
+        if not self.normalize_state:
+            return torch.ones(x.shape[1], dtype=x.dtype, device=x.device)
+
+        if any(self._feature_is_trig(name) for name in self.expand_names):
+            return torch.ones(x.shape[1], dtype=x.dtype, device=x.device)
+
+        return self._safe_rms_scale(x, dim=0)
+
+    def _build_lifted_scale(self, psi):
+        """
+        Normalize only polynomial/state-like lifted coordinates.
+        Keep constants and trig features unscaled.
+        """
+        if not self.normalize_lifted:
+            return torch.ones(psi.shape[1], dtype=psi.dtype, device=psi.device)
+
+        rms = self._safe_rms_scale(psi, dim=0)
+        scale = torch.ones(psi.shape[1], dtype=psi.dtype, device=psi.device)
+
+        for j, name in enumerate(self.expand_names):
+            if name == "1" or self._feature_is_trig(name):
+                scale[j] = 1.0
+            else:
+                scale[j] = rms[j]
+
         return scale
 
     def _normalize_x(self, x):
-        if not self.normalize_state:
-            return x
-        return (x - self.x_mean) / self.x_scale
+        return x / self.x_scale
 
     def _denormalize_x(self, x):
-        if not self.normalize_state:
-            return x
-        return x * self.x_scale + self.x_mean
+        return x * self.x_scale
 
-    def _build_fixed_decoder(self, dtype, device):
-        C = torch.zeros(
-            self.state_dim,
-            self.expanded_dim,
-            dtype=dtype,
-            device=device,
-        )
+    def _build_fixed_decoder(self):
+        """
+        Decoder from normalized lifted coordinates z_s back to normalized state x_n.
 
-        generic_names = [f"x{i+1}" for i in range(self.state_dim)]
-        specific_names = ["x", "y", "z", "w", "v", "u"][:self.state_dim]
-
-        for state_idx in range(self.state_dim):
-            candidates = [generic_names[state_idx], specific_names[state_idx]]
-
-            feature_idx = None
-            for name in candidates:
-                if name in self.expand_names:
-                    feature_idx = self.expand_names.index(name)
-                    break
-
-            if feature_idx is None:
-                raise ValueError(
-                    f"Could not find state coordinate for index {state_idx} "
-                    f"in expansion names {self.expand_names}"
-                )
-
-            C[state_idx, feature_idx] = 1.0
-
+        Since z_s[idx] = x_n[idx] / psi_scale[idx] for the original state features,
+        we need C[row, idx] = psi_scale[idx].
+        """
+        C = torch.zeros((self.state_dim, self.expanded_dim), dtype=torch.float64)
+        for i, idx in enumerate(self.state_indices):
+            C[i, idx] = self.psi_scale[idx]
         return C
 
-    def regression_matrix(self, x_in, y_out, method="svd", rank=None, ridge=0.0):
+    def _solve_modal_coeffs_exact(self, z0):
         """
-        Regress matrix M such that y_out ≈ x_in @ M.T
+        Solve z0 ≈ Phi_lift @ b0 for the exact DMD modes.
+        This is the right amplitude solve when using
+        Phi_lift = Y B W as the modal basis.
         """
-        x_in = self._to_tensor(x_in)
-        y_out = self._to_tensor(y_out)
+        z0 = z0.to(torch.complex128)
+        Phi = self.Phi_lift_fitted.to(torch.complex128)
 
-        X = x_in.T
-        Y = y_out.T
+        # Square full-rank case
+        if Phi.shape[0] == Phi.shape[1]:
+            try:
+                return torch.linalg.solve(Phi, z0)
+            except RuntimeError:
+                pass
 
-        if method == "svd":
-            U, s, Vt = torch.linalg.svd(X, full_matrices=False)
+        # General fallback
+        return torch.linalg.lstsq(Phi, z0.unsqueeze(1)).solution.squeeze(1)
 
-            r = len(s) if rank is None else max(1, min(rank, len(s)))
-            U_r = U[:, :r]
-            s_r = s[:r]
-            Vt_r = Vt[:r, :]
-
-            if ridge > 0.0:
-                s_inv = s_r / (s_r**2 + ridge)
-            else:
-                s_inv = 1.0 / torch.clamp(s_r, min=self.eps)
-
-            M = (Y @ (Vt_r.T * s_inv)) @ U_r.T
-        else:
-            W = torch.linalg.lstsq(X.T, Y.T).solution
-            M = W.T
-
-        return M
-
-    def _clip_spectral_radius(self, K):
-        if self.max_spectral_radius is None:
-            return K
-
-        eigvals = torch.linalg.eigvals(K)
-        rho = torch.max(torch.abs(eigvals)).real
-        if rho > self.max_spectral_radius:
-            K = K * (self.max_spectral_radius / rho)
-        return K
-
-    def fit(self, x, x_next, method="svd"):
+    def fit(self, x, x_next):
         x = self._to_tensor(x)
         x_next = self._to_tensor(x_next)
 
@@ -162,80 +177,97 @@ class Regression_DMD(ManualExpansion):
         if x_next.ndim == 1:
             x_next = x_next.unsqueeze(0)
 
-        # state normalization
-        self.x_mean = torch.mean(x, dim=0)
-        self.x_scale = self._safe_scale(x, dim=0)
+        # -------------------------------------------------
+        # 1) state normalization
+        # -------------------------------------------------
+        self.x_mean = torch.zeros(x.shape[1], dtype=torch.float64, device=x.device)
+        self.x_scale = self._build_state_scale(x)
 
         x_n = self._normalize_x(x)
         x_next_n = self._normalize_x(x_next)
 
-        psi_x = self.expand(x_n)
-        psi_y = self.expand(x_next_n)
+        # -------------------------------------------------
+        # 2) lifted snapshots
+        # -------------------------------------------------
+        psi_x = self.expand(x_n)       # (N, p)
+        psi_y = self.expand(x_next_n)  # (N, p)
 
-        # lifted normalization
-        if self.normalize_lifted:
-            self.psi_scale = self._safe_scale(psi_x, dim=0)
+        # -------------------------------------------------
+        # 3) lifted normalization
+        # -------------------------------------------------
+        self.psi_scale = self._build_lifted_scale(psi_x)
+
+        Z_x = psi_x / self.psi_scale   # (N, p)
+        Z_y = psi_y / self.psi_scale   # (N, p)
+
+        # -------------------------------------------------
+        # 4) reduced exact-DMD / EDMD fit
+        # -------------------------------------------------
+        Xc = Z_x.T   # (p, N)
+        Yc = Z_y.T   # (p, N)
+
+        U, s, Vh = torch.linalg.svd(Xc, full_matrices=False)
+
+        r = len(s) if self.rank is None else max(1, min(int(self.rank), len(s)))
+        U_r = U[:, :r]
+        s_r = s[:r]
+        Vh_r = Vh[:r, :]
+
+        if self.ridge > 0.0:
+            s_inv = s_r / (s_r**2 + self.ridge)
         else:
-            self.psi_scale = torch.ones(psi_x.shape[1], dtype=psi_x.dtype, device=psi_x.device)
+            s_inv = 1.0 / torch.clamp(s_r, min=self.eps)
 
-        psi_x_s = psi_x / self.psi_scale
-        psi_y_s = psi_y / self.psi_scale
+        B = Vh_r.T * s_inv                        # (N, r)
+        K_tilde = (U_r.T @ Yc) @ B               # (r, r)
+        K_full = (Yc @ B) @ U_r.T                # (p, p)
 
-        K = self.regression_matrix(
-            psi_x_s,
-            psi_y_s,
-            method=method,
-            rank=self.rank,
-            ridge=self.ridge,
+        # -------------------------------------------------
+        # 5) fixed decoder
+        # -------------------------------------------------
+        self.C_fitted = self._build_fixed_decoder()
+
+        # -------------------------------------------------
+        # 6) spectral objects for reduced exact-DMD rollout
+        # -------------------------------------------------
+        Lambda, W_reduced = torch.linalg.eig(K_tilde.to(torch.complex128))
+        Phi_lift = (
+            Yc.to(torch.complex128)
+            @ B.to(torch.complex128)
+            @ W_reduced
         )
+        Phi_state = self.C_fitted.to(torch.complex128) @ Phi_lift
 
-        K = self._clip_spectral_radius(K)
+        # -------------------------------------------------
+        # 7) store everything
+        # -------------------------------------------------
+        self.K_fitted = K_full
+        self.K_tilde_fitted = K_tilde
+        self.U_r_fitted = U_r
+        self.W_reduced_fitted = W_reduced
+        self.Lambda_fitted = Lambda
+        self.Phi_lift_fitted = Phi_lift
+        self.Phi_state_fitted = Phi_state
+        self.Phi_pinv_fitted = torch.linalg.pinv(Phi_lift)
 
-        if self.decoder_mode == "fixed":
-            # fixed decoder is in normalized lifted coordinates
-            C = self._build_fixed_decoder(dtype=psi_x.dtype, device=psi_x.device)
-            C = C * self.psi_scale[None, :]
-        else:
-            target = (x_next_n - x_n) if self.residual_decode else x_next_n
-            C = self.regression_matrix(
-                psi_y_s,
-                target,
-                method=method,
-                rank=self.rank,
-                ridge=self.decoder_ridge,
-            )
+        # alias
+        self.Phi_fitted = Phi_lift
 
-        self.K_fitted = K
-        self.C_fitted = C
-        return K, C
+        return self.K_fitted, self.C_fitted
 
-    def predict_one_step(self, K, C, x):
-        K = self._to_tensor(K)
-        C = self._to_tensor(C)
+    def _predict_one_step(self, x):
         x = self._to_tensor(x)
-
         if x.ndim == 1:
             x = x.unsqueeze(0)
 
         x_n = self._normalize_x(x)
-        psi = self.expand(x_n)
-        psi_s = psi / self.psi_scale
-        psi_next_s = psi_s @ K.T
+        z = self.expand(x_n) / self.psi_scale
+        z_next = z @ self.K_fitted.T
+        x_next_n = z_next @ self.C_fitted.T
+        return self._denormalize_x(x_next_n)
 
-        if self.decoder_mode == "fixed":
-            x_next_n = psi_next_s @ C.T
-        else:
-            pred = psi_next_s @ C.T
-            x_next_n = x_n + pred if self.residual_decode else pred
-
-        x_next = self._denormalize_x(x_next_n)
-        return x_next
-
-    def rollout(self, K, C, x0, steps):
-        K = self._to_tensor(K)
-        C = self._to_tensor(C)
+    def _rollout_linear_dynamics(self, x0, steps):
         x0 = self._to_tensor(x0)
-
         if x0.ndim == 1:
             x0 = x0.unsqueeze(0)
 
@@ -243,213 +275,96 @@ class Regression_DMD(ManualExpansion):
         x = x0.clone()
 
         for _ in range(steps):
-            x = self.predict_one_step(K, C, x)
+            x = self._predict_one_step(x)
             traj.append(x[0].clone())
 
         return torch.stack(traj, dim=0)
 
-# import torch
-# import torch.nn as nn
-# import numpy as np
-# from itertools import product
-# from src.models.expander import ManualExpansion
+    def _rollout_DMD(self, x0, steps): # lambda^k step
+        if (
+            self.Lambda_fitted is None
+            or self.Phi_lift_fitted is None
+            or self.C_fitted is None
+        ):
+            raise ValueError("Missing DMD spectral objects. Call fit() first.")
 
-# import torch
-# import numpy as np
+        x0 = self._to_tensor(x0)
+        if x0.ndim == 1:
+            x0 = x0.unsqueeze(0)
 
-# from src.models.expander import ManualExpansion
+        x0_n = self._normalize_x(x0)
+        z0 = (self.expand(x0_n) / self.psi_scale)[0].to(torch.complex128)
 
+        # IMPORTANT:
+        # exact-mode amplitudes must be solved against Phi_lift,
+        # not via W^{-1} U^* z0
+        b0 = self._solve_modal_coeffs_exact(z0)
 
-# class ManualExpansion_ManualDMD(ManualExpansion):
-#     """
-#     EDMD model built on top of the shared ManualExpansion class.
-#     """
+        traj = [x0[0].clone()]
 
-#     def __init__(
-#         self,
-#         state_dim=2,
-#         expansion_degree=3,
-#         rank=None,
-#         ridge=0.0,
-#         decoder_mode="fixed",
-#         bias=True,
-#         sine_cosine_expansion=False,
-#         expansion_type="general",
-#         system=None,
-#     ):
-#         super().__init__(
-#             state_dim=state_dim,
-#             expansion_degree=expansion_degree,
-#             bias=bias,
-#             sine_cosine_expansion=sine_cosine_expansion,
-#             expansion_type=expansion_type,
-#             system=system,
-#         )
+        Phi_lift = self.Phi_lift_fitted.to(torch.complex128)
+        Lambda = self.Lambda_fitted.to(torch.complex128)
+        C = self.C_fitted.to(torch.complex128)
 
-#         self.state_dim = state_dim
-#         self.rank = rank
-#         self.ridge = ridge
-#         self.decoder_mode = decoder_mode
+        for k in range(1, steps + 1):
+            z_k = Phi_lift @ ((Lambda ** k) * b0)
+            x_k_n = C @ z_k
+            x_k = self._denormalize_x(x_k_n.real.to(torch.float64))
+            traj.append(x_k)
 
-#         if self.decoder_mode not in {"regressed", "fixed"}:
-#             raise ValueError("decoder_mode must be 'regressed' or 'fixed'")
+        return torch.stack(traj, dim=0)
 
-#     def _build_fixed_decoder(self, dtype, device):
-#         """
-#         Build hardcoded decoder C (state_dim, expanded_dim):
-#         each state coordinate picks its corresponding linear monomial.
-#         """
-#         C = torch.zeros(
-#             self.state_dim,
-#             self.expanded_dim,
-#             dtype=dtype,
-#             device=device,
-#         )
+    def _rollout_projected_DMD(self, x0, steps): # phi lambda phi^-1 step
+        if (
+            self.Phi_lift_fitted is None
+            or self.Phi_pinv_fitted is None
+            or self.Lambda_fitted is None
+            or self.C_fitted is None
+        ):
+            raise ValueError("Missing DMD spectral objects. Call fit() first.")
 
-#         generic_names = [f"x{i+1}" for i in range(self.state_dim)]
-#         specific_names = ["x", "y", "z", "w", "v", "u"][:self.state_dim]
+        x0 = self._to_tensor(x0)
+        if x0.ndim == 1:
+            x0 = x0.unsqueeze(0)
 
-#         for state_idx in range(self.state_dim):
-#             candidates = [generic_names[state_idx], specific_names[state_idx]]
+        traj = [x0[0].clone()]
 
-#             feature_idx = None
-#             for name in candidates:
-#                 if name in self.expand_names:
-#                     feature_idx = self.expand_names.index(name)
-#                     break
+        Phi = self.Phi_lift_fitted.to(torch.complex128)
+        Phi_pinv = self.Phi_pinv_fitted.to(torch.complex128)
+        Lambda = self.Lambda_fitted.to(torch.complex128)
+        C = self.C_fitted.to(torch.complex128)
 
-#             if feature_idx is None:
-#                 raise ValueError(
-#                     f"Could not find state coordinate for index {state_idx} "
-#                     f"in expansion names {self.expand_names}"
-#                 )
+        x = x0.clone()
 
-#             C[state_idx, feature_idx] = 1.0
+        for _ in range(steps):
+            # current normalized state
+            x_n = self._normalize_x(x)
 
-#         return C
+            # lift current state
+            z = (self.expand(x_n) / self.psi_scale)[0].to(torch.complex128)
 
-#     def regression_matrix(self, x_in, y_out, method="svd", rank=None, ridge=0.0):
-#         """
-#         Regress matrix M such that y_out ≈ x_in @ M.T.
-        
-#         Solves:
-#             min_M ||y_out - x_in @ M.T||_F
-        
-#         Uses SVD-based pseudoinverse with optional rank truncation and ridge regularization.
+            # one-step DMD map in lifted space:
+            # z_next = Phi Λ Phi^+ z
+            b = Phi_pinv @ z
+            z_next = Phi @ (Lambda * b)
 
-#         Parameters
-#         ----------
-#         x_in : torch.Tensor (N, k)
-#             Input features
-#         y_out : torch.Tensor (N, d)
-#             Output targets
-#         rank : int or None
-#             SVD rank truncation for stability
-#         ridge : float
-#             Ridge regularization to prevent overfitting on small singular values
-#         """
-#         if isinstance(x_in, np.ndarray):
-#             x_in = torch.tensor(x_in, dtype=torch.float64)
-#         if isinstance(y_out, np.ndarray):
-#             y_out = torch.tensor(y_out, dtype=torch.float64)
+            # decode normalized state using fixed/manual decoder
+            x_next_n = C @ z_next
+            x_next = self._denormalize_x(x_next_n.real.to(torch.float64)).unsqueeze(0)
 
-#         X = x_in.T
-#         Y = y_out.T
+            traj.append(x_next[0].clone())
+            x = x_next
 
-#         if method == "svd":
-#             U, s, Vt = torch.linalg.svd(X, full_matrices=False)
+        return torch.stack(traj, dim=0)
 
-#             r = len(s) if rank is None else max(1, min(rank, len(s)))
-#             U_r = U[:, :r]
-#             s_r = s[:r]
-#             Vt_r = Vt[:r, :]
+    def rollout(self, x0, steps, mode=None):
+        mode = self._canonical_mode(mode)
 
-#             if ridge > 0.0:
-#                 s_inv = s_r / (s_r**2 + ridge)
-#             else:
-#                 s_inv = 1.0 / s_r
+        if mode == "linear_dynamics":
+            return self._rollout_linear_dynamics(x0, steps)
+        if mode == "DMD":
+            return self._rollout_DMD(x0, steps)
+        if mode == "projected_DMD":
+            return self._rollout_projected_DMD(x0, steps)
 
-#             M = (Y @ (Vt_r.T * s_inv)) @ U_r.T
-#         else:
-#             W = torch.linalg.lstsq(X.T, Y.T).solution
-#             M = W.T
-
-#         return M
-
-#     def fit(self, x, x_next, method="svd"):
-#         """
-#         Fit EDMD model to data (x, x_next).
-
-#         Returns
-#         -------
-#         K : torch.Tensor (expanded_dim, expanded_dim)
-#             Koopman operator in lifted space.
-#         C : torch.Tensor (state_dim, expanded_dim)
-#             Linear decoder from lifted space to original state space.
-#         """
-#         if isinstance(x, np.ndarray):
-#             x = torch.tensor(x, dtype=torch.float64)
-#         if isinstance(x_next, np.ndarray):
-#             x_next = torch.tensor(x_next, dtype=torch.float64)
-
-#         if x.ndim == 1:
-#             x = x.unsqueeze(0)
-#         if x_next.ndim == 1:
-#             x_next = x_next.unsqueeze(0)
-
-#         psi_x = self.expand(x)
-#         psi_y = self.expand(x_next)
-
-#         K = self.regression_matrix(
-#             psi_x,
-#             psi_y,
-#             method=method,
-#             rank=self.rank,
-#             ridge=self.ridge,
-#         )
-
-#         if self.decoder_mode == "fixed":
-#             C = self._build_fixed_decoder(dtype=psi_x.dtype, device=psi_x.device)
-#         else:
-#             C = self.regression_matrix(
-#                 psi_x,
-#                 x,
-#                 method=method,
-#                 rank=self.rank,
-#                 ridge=self.ridge,
-#             )
-
-#         return K, C
-
-#     def rollout(self, K, C, x0, steps):
-#         """
-#         Roll out the EDMD model from initial state x0 for `steps`.
-
-#         Returns trajectory in original state space with shape (steps+1, state_dim).
-
-#         K maps lifted -> lifted, C maps lifted -> original.
-#         """        
-#         if isinstance(K, np.ndarray):
-#             K = torch.tensor(K, dtype=torch.float64)
-#         if isinstance(C, np.ndarray):
-#             C = torch.tensor(C, dtype=torch.float64)
-#         if isinstance(x0, np.ndarray):
-#             x0 = torch.tensor(x0, dtype=torch.float64)
-
-#         if x0.ndim == 1:
-#             x0 = x0.unsqueeze(0)
-
-#         K = K.to(dtype=x0.dtype, device=x0.device)
-#         C = C.to(dtype=x0.dtype, device=x0.device)
-
-#         psi_current = self.expand(x0)
-#         x_current = psi_current @ C.T
-#         trajectory = [x_current[0]]
-
-#         for _ in range(steps):
-#             psi_next = psi_current @ K.T
-#             x_next = psi_next @ C.T
-#             trajectory.append(x_next[0])
-#             psi_current = psi_next
-
-#         return torch.stack(trajectory, dim=0)
+        raise ValueError(f"Unknown rollout mode: {mode}")
