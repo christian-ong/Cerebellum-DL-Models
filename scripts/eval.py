@@ -19,7 +19,6 @@ from src.eval.metrics import (
     save_summary_npz,
     build_rollout_cache,
 )
-from src.eval.sweep_utils import compute_rollout_metrics
 from src.data_generation.load_data import resolve_split_npz_path
 from src.eval.diagnostics import run_diagnostics
 """
@@ -278,16 +277,8 @@ def main():
 
     horizons = parse_int_list(args.horizons)
     rollout_horizons = parse_int_list(args.rollout_horizons)
-    phase_horizons = parse_int_list(args.phase_horizons) if args.run_diagnostics else []
-
-    if args.match_sweep_metrics and args.run_diagnostics:
-        raise ValueError("--run_diagnostics cannot be combined with --match_sweep_metrics.")
 
     max_needed = max(max(horizons), max(rollout_horizons))
-    if args.run_diagnostics:
-        max_needed = max(max_needed, max(phase_horizons), args.heatmap_horizon)
-    if args.match_sweep_metrics:
-        max_needed = max(max_needed, 10)
     if X.shape[0] <= max_needed:
         raise ValueError(
             f"Trajectory length T={X.shape[0]} is too short for max horizon {max_needed}."
@@ -320,6 +311,7 @@ def main():
             start_stride=1,
             max_starts_per_traj=metric_cap,
         )
+
     one_step_metrics = compute_one_step_metrics(
         X=X,
         traj_indices=test_indices,
@@ -339,34 +331,28 @@ def main():
         model=model,
         extras=extras,
         scale_std=scale_std,
-        max_starts_per_traj=max_horizon_starts,
+        max_starts_per_traj=metric_cap,
         rollout_cache=rollout_cache,
     )
 
-        rollout_metrics = compute_full_rollout_metrics(
-            X=X,
-            traj_indices=test_indices,
-            rollout_horizons=rollout_horizons,
-            model_name=args.model,
-            model=model,
-            extras=extras,
-            scale_std=scale_std,
-            rollout_cache=rollout_cache,
-        )
+    rollout_metrics = compute_full_rollout_metrics(
+        X=X,
+        traj_indices=test_indices,
+        rollout_horizons=rollout_horizons,
+        model_name=args.model,
+        model=model,
+        extras=extras,
+        scale_std=scale_std,
+        rollout_cache=rollout_cache,
+    )
 
     test_composite_score = compute_composite_validation_score(
         one_step_nrmse=float(one_step_metrics["one_step_nrmse"]),
         horizon_nrmse=horizon_metrics["horizon_nrmse"],
         rollout_nrmse=rollout_metrics["rollout_nrmse"],
     )
-    if args.run_diagnostics:
-        max_diag_needed = max(max(phase_horizons), args.heatmap_horizon)
-        if X.shape[0] <= max_diag_needed:
-            raise ValueError(
-                f"Trajectory length T={X.shape[0]} is too short for requested diagnostic horizon {max_diag_needed}. "
-                "Use smaller --phase_horizons / --heatmap_horizon."
-            )
 
+    if args.run_diagnostics:
         diagnostics_figdir = os.path.join(figdir, "diagnostics_test")
         os.makedirs(diagnostics_figdir, exist_ok=True)
 
@@ -381,83 +367,58 @@ def main():
             figdir=diagnostics_figdir,
             horizon_metrics=horizon_metrics,
             rollout_metrics=rollout_metrics,
-            phase_horizons=phase_horizons,
-            heatmap_horizon=args.heatmap_horizon,
-            heatmap_mode=args.heatmap_mode,
-            linear_error_scale=args.linear_error_scale,
+            phase_horizons=diag_phase_horizons,
+            heatmap_horizon=diag_heatmap_horizon,
+            heatmap_mode="traj_initials",
+            linear_error_scale=False,
             rollout_cache=rollout_cache,
-            data_path=args.data_path,
-            run_true_grid_heatmap=args.run_true_grid_heatmap,
-            grid_resolution=args.grid_resolution,
+            data_path=test_data_path,
+            run_true_grid_heatmap=False,
+            grid_resolution=100,
         )
 
         print(f"Saved test diagnostics     : {diagnostics_figdir}")
+
     print("\n--- Test metric summary ---")
     print(f"One-step MSE              : {float(one_step_metrics['one_step_mse']):.6e}")
     print(f"One-step RMSE             : {float(one_step_metrics['one_step_rmse']):.6e}")
     print(f"One-step NRMSE            : {float(one_step_metrics['one_step_nrmse']):.6e}")
 
-        print(f"Mean horizon RMSE         : {float(np.mean(horizon_metrics['horizon_rmse'])):.6e}")
-        print(f"Mean horizon NRMSE        : {float(np.mean(horizon_metrics['horizon_nrmse'])):.6e}")
-        for h, rmse, nrmse in zip(
-            horizon_metrics["horizons"],
-            horizon_metrics["horizon_rmse"],
-            horizon_metrics["horizon_nrmse"],
-        ):
-            print(f"  Horizon h={int(h):>3d}        : RMSE={float(rmse):.6e}, NRMSE={float(nrmse):.6e}")
+    print(f"Mean horizon RMSE         : {float(np.mean(horizon_metrics['horizon_rmse'])):.6e}")
+    print(f"Mean horizon NRMSE        : {float(np.mean(horizon_metrics['horizon_nrmse'])):.6e}")
+    for h, rmse, nrmse in zip(
+        horizon_metrics["horizons"],
+        horizon_metrics["horizon_rmse"],
+        horizon_metrics["horizon_nrmse"],
+    ):
+        print(f"  Horizon h={int(h):>3d}        : RMSE={float(rmse):.6e}, NRMSE={float(nrmse):.6e}")
 
-        print(f"Mean rollout RMSE         : {float(np.mean(rollout_metrics['rollout_rmse'])):.6e}")
-        print(f"Mean rollout NRMSE        : {float(np.mean(rollout_metrics['rollout_nrmse'])):.6e}")
-        for h, rmse, nrmse in zip(
-            rollout_metrics["rollout_horizons"],
-            rollout_metrics["rollout_rmse"],
-            rollout_metrics["rollout_nrmse"],
-        ):
-            print(f"  Rollout h={int(h):>3d}        : RMSE={float(rmse):.6e}, NRMSE={float(nrmse):.6e}")
+    print(f"Mean rollout RMSE         : {float(np.mean(rollout_metrics['rollout_rmse'])):.6e}")
+    print(f"Mean rollout NRMSE        : {float(np.mean(rollout_metrics['rollout_nrmse'])):.6e}")
+    for h, rmse, nrmse in zip(
+        rollout_metrics["rollout_horizons"],
+        rollout_metrics["rollout_rmse"],
+        rollout_metrics["rollout_nrmse"],
+    ):
+        print(f"  Rollout h={int(h):>3d}        : RMSE={float(rmse):.6e}, NRMSE={float(nrmse):.6e}")
 
-        print(f"Composite test score      : {test_composite_score:.6e}  (reporting only)")
+    print(f"Composite test score      : {test_composite_score:.6e}  (reporting only)")
 
-        test_summary_path = os.path.join(figdir, "test_summary.npz")
-        test_summary_payload = {
-            "model_name": np.array(args.model),
-            "system": np.array(system),
-            "run_name": np.array(run_name),
-            "split": np.array("test"),
-            "test_indices": np.asarray(test_indices),
-            "scale_std": scale_std,
-            "test_composite_score": np.array(test_composite_score),
-            **one_step_metrics,
-            **horizon_metrics,
-            **rollout_metrics,
-        }
-        save_summary_npz(test_summary_path, test_summary_payload)
-        print(f"Saved test summary        : {test_summary_path}")
-
-    if args.run_diagnostics:
-        diagnostics_dir = os.path.join(figdir, "diagnostics_test")
-        os.makedirs(diagnostics_dir, exist_ok=True)
-
-        run_diagnostics(
-            X=X,
-            split_idx=test_indices,
-            traj_id=traj_id,
-            model_name=args.model,
-            model=model,
-            extras=extras,
-            system=system,
-            figdir=diagnostics_dir,
-            horizon_metrics=horizon_metrics,
-            rollout_metrics=rollout_metrics,
-            phase_horizons=phase_horizons,
-            heatmap_horizon=args.heatmap_horizon,
-            heatmap_mode=args.heatmap_mode,
-            linear_error_scale=args.linear_error_scale,
-            rollout_cache=rollout_cache,
-            data_path=args.data_path,
-            run_true_grid_heatmap=args.run_true_grid_heatmap,
-            grid_resolution=args.grid_resolution,
-        )
-        print(f"Saved diagnostics plots   : {diagnostics_dir}")
+    test_summary_path = os.path.join(figdir, "test_summary.npz")
+    test_summary_payload = {
+        "model_name": np.array(args.model),
+        "system": np.array(system),
+        "run_name": np.array(run_name),
+        "split": np.array("test"),
+        "test_indices": np.asarray(test_indices),
+        "scale_std": scale_std,
+        "test_composite_score": np.array(test_composite_score),
+        **one_step_metrics,
+        **horizon_metrics,
+        **rollout_metrics,
+    }
+    save_summary_npz(test_summary_path, test_summary_payload)
+    print(f"Saved test summary        : {test_summary_path}")
 
     X_true, X_hat = compute_single_rollout(
         X=X,
@@ -513,77 +474,6 @@ def main():
         expand_names=expand_names,
     )
 
-    # --------------------------------------------------
-    # Compare learned state block with true A_d
-    # --------------------------------------------------
-
-    if model is not None and hasattr(model, "Phi") and hasattr(model, "Lambda"):
-
-        print("\n--- Learned lifted operator ---")
-
-        Phi = model.Phi.detach().cpu().numpy()
-        Lambda = model.Lambda.detach().cpu().numpy()
-
-        try:
-            Phi_inv = np.linalg.inv(Phi)
-        except np.linalg.LinAlgError:
-            Phi_inv = np.linalg.pinv(Phi)
-
-        K = Phi @ Lambda @ Phi_inv
-
-        print("Full lifted transition matrix shape:", K.shape)
-
-        # extract state indices (x,y or x,y,z)
-        if hasattr(model, "state_indices"):
-            state_idx = model.state_indices
-            K_xx = K[np.ix_(state_idx, state_idx)]
-        else:
-            # no lifting → the whole matrix is the state block
-            K_xx = K
-
-        print("\nState-space block K_xx:")
-        print(K_xx)
-
-        # If linear system, also print true A_d if available
-        if args.model in ["ml_dmd"] and system in [
-            "saddle_point",
-            "degenerate_node",
-            "inward_spiral",
-            "harmonic_oscillator",
-        ]:
-            print("\nCompare this with true A_d from Overleaf.")
-
-    # --------------------------------------------------
-    # Compare learned state block with true A_d
-    # --------------------------------------------------
-
-    if model is not None and hasattr(model, "K"):
-
-        print("\n--- Learned lifted Koopman operator ---")
-
-        # Full lifted operator
-        K = model.K.weight.detach().cpu().numpy().T
-
-        print("Full lifted transition matrix shape:", K.shape)
-
-        # Extract state block
-        if hasattr(model, "state_indices"):
-            state_idx = model.state_indices
-            K_xx = K[np.ix_(state_idx, state_idx)]
-        else:
-            # no lifting → the whole matrix is the state block
-            K_xx = K
-
-        print("\nState-space block K_xx:")
-        print(K_xx)
-
-        if system in [
-            "saddle_point",
-            "degenerate_node",
-            "inward_spiral",
-            "harmonic_oscillator",
-        ]:
-            print("\nCompare this with true A_d from Overleaf.")
 
 if __name__ == "__main__":
     main()
