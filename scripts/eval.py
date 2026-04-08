@@ -1,15 +1,15 @@
+
 import argparse
+import os
 import numpy as np
 import torch
-import os
 
-from src.eval.rollout_eval import evaluate_rollouts, compute_single_rollout
+from src.eval.rollout_eval import compute_single_rollout
 from src.eval.model_io import load_model, infer_run_name
 from src.eval.plot_rollout import plot_time_series, plot_phase_space
 from src.eval.plot_eigenvalues import plot_eigenvalues
 from src.eval.plot_training_losses import plot_training_losses
 from src.eval.plot_matrices import plot_transition_matrix
-from src.eval.diagnostics import parse_int_list, run_diagnostics
 from src.eval.metrics import (
     compute_one_step_metrics,
     compute_horizon_metrics,
@@ -20,6 +20,7 @@ from src.eval.metrics import (
     build_rollout_cache,
 )
 from src.data_generation.load_data import resolve_split_npz_path
+from src.eval.diagnostics import run_diagnostics
 """
 Global options (defaults):
     --model {
@@ -31,11 +32,11 @@ Global options (defaults):
         sindy_baseline}
     --data_path data/trajectories/{linear|nonlinear}/{system}
     --model_path data/models/{model}/{system}/{run_name}/model.{npz|pt}
-    --steps 5000
+    --steps 500
     --traj_index 0
     --name optional_suffix
-    --horizons 1,5,20
-    --rollout_horizons 5,20
+    --horizons 1,5
+    --rollout_horizons 5
 
 ---------------------------------------------------------------------------------------------
 
@@ -85,7 +86,7 @@ Global options (defaults):
     python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/lotka_volterra --model_path data/models/ml_lineardynamics/lotka_volterra/default/model.pt
     python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/pendulum --model_path data/models/ml_lineardynamics/pendulum/default/model.pt
     python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/duffing --model_path data/models/ml_lineardynamics/duffing/default/model.pt
-    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz --model_path data/models/ml_lineardynamics/lorenz/default/model.pt --match_sweep_metrics
+    python -m scripts.eval --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz --model_path data/models/ml_lineardynamics/lorenz/default/model.pt
 
 # ML DMD
     python -m scripts.eval --model ml_dmd --data_path data/trajectories/linear/saddle_point --model_path data/models/ml_dmd/saddle_point/default/model.pt
@@ -167,6 +168,11 @@ Output:
     data/figures/{model}/{system}/{run_name}/test_summary.npz
     data/figures/{model}/{system}/{run_name}/diagnostics_test/* (if --run_diagnostics)
 """
+
+def parse_int_list(text: str):
+    return [int(x.strip()) for x in text.split(",") if x.strip()]
+
+
 def get_default_summary_path(model_name: str, system: str, run_name: str) -> str:
     return os.path.join(
         "data", "figures", model_name, system, run_name, "diagnostics", "diagnostics_summary.npz"
@@ -195,129 +201,106 @@ def print_validation_summary(summary_path: str) -> None:
         print(f"Mean rollout NRMSE         : {float(np.mean(d['rollout_nrmse'])):.6e}")
     print(f"Summary file               : {summary_path}")
 
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate trained models")
 
-    parser.add_argument("--model", type=str, required=True,
-                        choices=[
-                            "linear_baseline",
-                            "dmd_baseline",
-                            "regression_dmd",
-                            "ml_lineardynamics",
-                            "ml_dmd",
-                            "sindy_baseline",
-                        ])
+    parser.add_argument(
+        "--model",
+        type=str,
+        required=True,
+        choices=[
+            "linear_baseline",
+            "dmd_baseline",
+            "regression_dmd",
+            "ml_lineardynamics",
+            "ml_dmd",
+            "sindy_baseline",
+        ],
+    )
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--model_path", type=str, required=True)
+
     parser.add_argument("--steps", type=int, default=1000)
-    parser.add_argument("--traj_index", type=int, default=0, help="Which test trajectory to show")
-    parser.add_argument("--name", type=str, help="Optional suffix for saved figure")
-    parser.add_argument("--print_validation_summary",action="store_true",help="Print saved validation diagnostics summary for the same run if available.")
-    parser.add_argument("--summary_path",type=str,default=None,help="Optional explicit path to diagnostics_summary.npz. If omitted, the default run-matched path is used.")
-    parser.add_argument("--horizons",type=str,default="1,5,20",help="Comma-separated terminal horizons for test metrics.")
-    parser.add_argument("--rollout_horizons",type=str,default="5,20",help="Comma-separated rollout horizons from x(0) for test metrics.")
-    parser.add_argument("--match_sweep_metrics",action="store_true",help="Use the same horizon set as the sweep: horizons 10,100,500; rollout horizon 500; steps 500 for the example rollout plot.")
-    parser.add_argument("--max_one_step_pairs_per_traj",type=int,default=256, help="Cap on one-step pairs per test trajectory. Use 0 for all.")
-    parser.add_argument("--max_horizon_starts_per_traj",type=int,default=256,help="Cap on number of horizon-metric start points per test trajectory. Use 0 for all." )
-    parser.add_argument("--shared_rollout_cache",action="store_true",help="Reuse cached rollouts across metrics. Auto-used with --run_diagnostics.")
-    parser.add_argument("--run_diagnostics",action="store_true",help="Run deeper diagnostic plots on the test split.")
-
-    parser.add_argument("--phase_horizons",type=str,default="1,10,50",help="Comma-separated horizons for phase-space error maps.")
-    parser.add_argument("--heatmap_horizon",type=int, default=50,help="Horizon for initial-condition error map.")
-    parser.add_argument("--heatmap_mode",type=str, default="traj_initials",choices=["traj_initials", "all_valid_starts"],help="Use only test trajectory initials or all valid start points for the error heatmap.")
-    parser.add_argument("--linear_error_scale",action="store_true", help="Use linear instead of log scale on the horizon-error plot when diagnostics are enabled.")
-    parser.add_argument("--run_true_grid_heatmap",action="store_true",help="Compute a dense regular-grid heatmap using the true simulator and the trained model.")
-    parser.add_argument("--grid_resolution",type=int,default=100,help="Grid size per axis for true-grid heatmap. 100 -> 100x100 = 10,000 points.")
-
+    parser.add_argument("--traj_index", type=int, default=0)
+    parser.add_argument("--print_validation_summary", action="store_true")
+    parser.add_argument("--horizons", type=str, default="1,5,20")
+    parser.add_argument("--rollout_horizons", type=str, default="5,20")
+    parser.add_argument("--metric_cap",type=int,default=64,help="Cap on sampled start points per trajectory for metrics. Use 0 for all.")
+    parser.add_argument("--use_cache",action="store_true",help="Reuse rollout cache across metrics.")
+    parser.add_argument("--run_diagnostics",action="store_true",help="Generate diagnostics with fixed defaults.")
     args = parser.parse_args()
-
-    if args.match_sweep_metrics:
-        args.horizons = "10,100,500"
-        args.rollout_horizons = "500"
-        args.steps = 500
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Load test split data
     test_data_path = resolve_split_npz_path(args.data_path, "test")
     data = np.load(test_data_path)
     X = data["X"]
     state_dim = X.shape[-1]
     system = str(data["system"])
-    
-    # Validate shape
+
     if X.ndim == 2:
         X = X[:, None, :]
     elif X.ndim != 3:
         raise ValueError(f"Expected X to be 2D or 3D, got {X.ndim}D")
-    
+
     if X.shape[1] == 0:
         raise ValueError("No test trajectories found")
-    
-    # All trajectories in test split file are test trajectories
+
     test_indices = np.arange(X.shape[1])
     print(f"Loaded {len(test_indices)} test trajectories for system '{system}'")
 
-    # Load model
     model, extras = load_model(
         model_name=args.model,
         model_path=args.model_path,
-        data_path=args.data_path,
+        data_path=test_data_path,
         state_dim=state_dim,
         system=system,
         device=device,
     )
 
-    # Plot one test trajectory
+    if args.model == "regression_dmd":
+        print(f"Regression_DMD rollout mode: {extras['rollout_mode']}")
+
     if args.traj_index >= len(test_indices):
         raise IndexError(
             f"traj_index={args.traj_index} but only {len(test_indices)} test trajectories exist"
         )
 
     traj_id = test_indices[args.traj_index]
-
-    # Setup figure directory
-    run_name = infer_run_name(args.model_path, args.name)
+    run_name = infer_run_name(args.model_path)
     figdir = os.path.join("data", "figures", args.model, system, run_name)
     os.makedirs(figdir, exist_ok=True)
-    
+
     if args.print_validation_summary:
-        summary_path = args.summary_path
-        if summary_path is None:
-            summary_path = get_default_summary_path(args.model, system, run_name)
+        summary_path = get_default_summary_path(args.model, system, run_name)
         print_validation_summary(summary_path)
 
-    # Compute test metrics
     horizons = parse_int_list(args.horizons)
     rollout_horizons = parse_int_list(args.rollout_horizons)
-
-    if args.match_sweep_metrics:
-        print("Using sweep-matched metrics: horizons=10,100,500; rollout_horizons=500; steps=500.")
 
     max_needed = max(max(horizons), max(rollout_horizons))
     if X.shape[0] <= max_needed:
         raise ValueError(
-            f"Trajectory length T={X.shape[0]} is too short for max horizon {max_needed}. "
-            "Use smaller horizons."
+            f"Trajectory length T={X.shape[0]} is too short for max horizon {max_needed}."
         )
 
     scales = get_state_scale_from_train_split(args.data_path)
     scale_std = scales["std"]
-    
-    diag_max_horizon = 1
-    if args.run_diagnostics:
-        phase_horizons = parse_int_list(args.phase_horizons)
-        diag_max_horizon = max(max(phase_horizons), args.heatmap_horizon)
 
-    metric_max_horizon = max(1, max(horizons), max(rollout_horizons), diag_max_horizon)
+    metric_cap = None if args.metric_cap == 0 else args.metric_cap
 
-    max_one_step_pairs = None if args.max_one_step_pairs_per_traj == 0 else args.max_one_step_pairs_per_traj
-    max_horizon_starts = None if args.max_horizon_starts_per_traj == 0 else args.max_horizon_starts_per_traj
+    diag_phase_horizons = [1, 10, 50]
+    diag_heatmap_horizon = max(50, max(horizons), max(rollout_horizons)) if args.run_diagnostics else 1
 
-    use_shared_rollout_cache = args.shared_rollout_cache or args.run_diagnostics
+    metric_max_horizon = max(
+        1,
+        max(horizons),
+        max(rollout_horizons),
+        diag_heatmap_horizon,
+    )
+
     rollout_cache = None
-
-    if use_shared_rollout_cache:
+    if args.use_cache or args.run_diagnostics:
         rollout_cache = build_rollout_cache(
             X=X,
             traj_indices=test_indices,
@@ -326,7 +309,7 @@ def main():
             extras=extras,
             max_horizon=metric_max_horizon,
             start_stride=1,
-            max_starts_per_traj=max_horizon_starts,
+            max_starts_per_traj=metric_cap,
         )
 
     one_step_metrics = compute_one_step_metrics(
@@ -336,7 +319,7 @@ def main():
         model=model,
         extras=extras,
         scale_std=scale_std,
-        max_pairs_per_traj=max_one_step_pairs,
+        max_pairs_per_traj=metric_cap,
         rollout_cache=rollout_cache,
     )
 
@@ -348,7 +331,7 @@ def main():
         model=model,
         extras=extras,
         scale_std=scale_std,
-        max_starts_per_traj=max_horizon_starts,
+        max_starts_per_traj=metric_cap,
         rollout_cache=rollout_cache,
     )
 
@@ -368,14 +351,8 @@ def main():
         horizon_nrmse=horizon_metrics["horizon_nrmse"],
         rollout_nrmse=rollout_metrics["rollout_nrmse"],
     )
-    if args.run_diagnostics:
-        max_diag_needed = max(max(phase_horizons), args.heatmap_horizon)
-        if X.shape[0] <= max_diag_needed:
-            raise ValueError(
-                f"Trajectory length T={X.shape[0]} is too short for requested diagnostic horizon {max_diag_needed}. "
-                "Use smaller --phase_horizons / --heatmap_horizon."
-            )
 
+    if args.run_diagnostics:
         diagnostics_figdir = os.path.join(figdir, "diagnostics_test")
         os.makedirs(diagnostics_figdir, exist_ok=True)
 
@@ -390,17 +367,18 @@ def main():
             figdir=diagnostics_figdir,
             horizon_metrics=horizon_metrics,
             rollout_metrics=rollout_metrics,
-            phase_horizons=phase_horizons,
-            heatmap_horizon=args.heatmap_horizon,
-            heatmap_mode=args.heatmap_mode,
-            linear_error_scale=args.linear_error_scale,
+            phase_horizons=diag_phase_horizons,
+            heatmap_horizon=diag_heatmap_horizon,
+            heatmap_mode="traj_initials",
+            linear_error_scale=False,
             rollout_cache=rollout_cache,
-            data_path=args.data_path,
-            run_true_grid_heatmap=args.run_true_grid_heatmap,
-            grid_resolution=args.grid_resolution,
+            data_path=test_data_path,
+            run_true_grid_heatmap=False,
+            grid_resolution=100,
         )
 
         print(f"Saved test diagnostics     : {diagnostics_figdir}")
+
     print("\n--- Test metric summary ---")
     print(f"One-step MSE              : {float(one_step_metrics['one_step_mse']):.6e}")
     print(f"One-step RMSE             : {float(one_step_metrics['one_step_rmse']):.6e}")
@@ -450,149 +428,52 @@ def main():
         model=model,
         extras=extras,
     )
-    # --------------------------------------------------
-    # Save trajectory plots
-    # --------------------------------------------------
 
-    plot_time_series(
-        X_true,
-        X_hat,
-        figdir,
-        args.traj_index,
-    )
-
-    plot_phase_space(
-        X_true,
-        X_hat,
-        system,
-        figdir,
-        args.model,
-        args.traj_index,
-    )
-
-    # --------------------------------------------------
-    # Plot eigenvalues if available
-    # --------------------------------------------------
+    plot_time_series(X_true, X_hat, figdir, args.traj_index)
+    plot_phase_space(X_true, X_hat, system, figdir, args.model, args.traj_index)
 
     eigvals = None
-
     if args.model == "linear_baseline":
         eigvals = np.linalg.eigvals(extras["M"])
-
     elif args.model == "dmd_baseline":
         eigvals = extras["Lambda"]
-
     elif args.model == "regression_dmd":
-        eigvals = np.linalg.eigvals(extras["K"])
-
-    elif model is not None and hasattr(model, "get_eigenvalues"):
-        eigvals = model.get_eigenvalues().detach().cpu().numpy()
+        if "Lambda" in extras:
+            eigvals = extras["Lambda"]
+        elif "K" in extras:
+            eigvals = np.linalg.eigvals(extras["K"])
+    elif model is not None and hasattr(model, "Lambda"):
+        lam = model.Lambda
+        lam = lam.detach().cpu().numpy() if torch.is_tensor(lam) else np.asarray(lam)
+        eigvals = np.linalg.eigvals(lam)
 
     if eigvals is not None:
         plot_eigenvalues(eigvals, figdir)
 
-    # --------------------------------------------------
-    # Plot training losses if available
-    # --------------------------------------------------
-
     loss_file = args.model_path.replace("model.npz", "losses.npz").replace("model.pt", "losses.npz")
-
     if os.path.exists(loss_file):
         try:
             plot_training_losses(loss_file, figdir)
         except KeyError:
             print(f"Skipping training loss plot (invalid file format): {loss_file}")
 
-    # --------------------------------------------------
-    # Plot transition matrix if available
-    # --------------------------------------------------
-
-    model_name = os.path.basename(args.model_path).replace(".pt", "").replace(".npz", "")
-
-    expand_names = None
     matrix_to_plot = None
+    expand_names = None
 
-    if args.model == "regression_dmd":
+    if args.model == "regression_dmd" and "K" in extras:
         matrix_to_plot = extras["K"]
         expand_names = model.expand_names if hasattr(model, "expand_names") else None
-
-    elif args.model_path.endswith(".pt") and "ckpt" in extras:
-        if "expand_names" in extras["ckpt"]:
-            expand_names = extras["ckpt"]["expand_names"]
+    elif args.model_path.endswith(".pt") and "ckpt" in extras and "expand_names" in extras["ckpt"]:
+        expand_names = extras["ckpt"]["expand_names"]
 
     plot_transition_matrix(
         model=None if matrix_to_plot is not None else model,
         matrix=matrix_to_plot,
-        model_name=model_name,
+        model_name=os.path.basename(args.model_path).replace(".pt", "").replace(".npz", ""),
         figdir=figdir,
         expand_names=expand_names,
     )
 
-    # --------------------------------------------------
-    # Compare learned state block with true A_d
-    # --------------------------------------------------
-
-    if model is not None and hasattr(model, "get_K_true") and hasattr(model, "get_Phi_true"):
-
-        print("\n--- Learned lifted operator (original lifted coordinates) ---")
-
-        K = model.get_K_true().detach().cpu().numpy()
-        Phi = model.get_Phi_true().detach().cpu().numpy()
-
-        if hasattr(model, "get_Lambda"):
-            Lambda = model.get_Lambda().detach().cpu().numpy()
-            print("Lambda shape:", Lambda.shape)
-
-        print("Full lifted transition matrix shape:", K.shape)
-        print("Phi shape:", Phi.shape)
-
-        if hasattr(model, "state_indices"):
-            state_idx = model.state_indices
-            K_xx = K[np.ix_(state_idx, state_idx)]
-        else:
-            K_xx = K
-
-        print("\nState-space block K_xx:")
-        print(K_xx)
-
-        if args.model in ["ml_dmd"] and system in [
-            "saddle_point",
-            "degenerate_node",
-            "inward_spiral",
-            "harmonic_oscillator",
-        ]:
-            print("\nCompare this with true A_d from Overleaf.")
-
-    # --------------------------------------------------
-    # Compare learned state block with true A_d
-    # --------------------------------------------------
-
-    if model is not None and hasattr(model, "get_K_true") and hasattr(model, "K"):
-
-        print("\n--- Learned lifted Koopman operator (after undoing feature scaling) ---")
-
-        K = model.get_K_true().detach().cpu().numpy()
-
-        print("Full lifted transition matrix shape:", K.shape)
-        print("Full lifted transition matrix:")
-        print(K)
-
-        if hasattr(model, "state_indices"):
-            state_idx = model.state_indices
-            K_xx = K[np.ix_(state_idx, state_idx)]
-        else:
-            K_xx = K
-
-        print("\nState-space block K_xx:")
-        print(K_xx)
-
-        if system in [
-            "saddle_point",
-            "degenerate_node",
-            "inward_spiral",
-            "harmonic_oscillator",
-        ]:
-            print("\nCompare this with true A_d from Overleaf.")
 
 if __name__ == "__main__":
     main()

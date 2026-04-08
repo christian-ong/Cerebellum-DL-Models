@@ -115,11 +115,19 @@ def main():
     system_name = str(meta["system"])
     train_X = meta["X"]
     state_dim = train_X.shape[-1]
+
+    train_state_mean = torch.tensor(
+        np.mean(train_X, axis=(0, 1)),
+        dtype=torch.float32,
+        device=device,
+    )
+
     train_state_scale = torch.tensor(
         np.std(train_X, axis=(0, 1)),
         dtype=torch.float32,
         device=device,
-    ) + 1e-8
+    )
+    train_state_scale = torch.clamp(train_state_scale, min=1e-6)
 
     if train_X.ndim != 3:
         raise ValueError("Expected X to have shape (T, n_traj, d).")
@@ -221,6 +229,8 @@ def main():
     if hasattr(model, "expand_names"):
         print(f"Expanded features: {len(model.expand_names)}")
         print(model.expand_names)
+    if hasattr(model, "set_state_scale"):
+        model.set_state_scale(train_state_mean, train_state_scale)
 
     maybe_set_z_scale(model, train_loader, device)
 

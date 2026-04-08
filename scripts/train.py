@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
+from src.eval.sweep_utils import maybe_set_z_scale
 from src.models.linear_baseline import fit_linear_map
 from src.models.dmd_baseline import fit_dmd
 from src.models.ml_linear_dynamics import ML_LinearDynamics
@@ -78,12 +79,12 @@ Global options (defaults):
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lorenz --epochs 10
 
 
----------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------expansion_degree 3 --normalize_state false
 # Regression DMD
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/saddle_point --expansion_type general --expansion_degree 3
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/degenerate_node --expansion_type general --expansion_degree 3
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/inward_spiral --expansion_type general --expansion_degree 3
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/harmonic_oscillator --expansion_type general --expansion_degree 3
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/saddle_point --bias true --normalize_state true
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/degenerate_node --bias true --normalize_state true
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/inward_spiral --bias true --normalize_state true
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/harmonic_oscillator --bias true --normalize_state true
 
     python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/vanderpol --expansion_type specific --expansion_degree 10
     python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/lotka_volterra --expansion_type specific --expansion_degree 10
@@ -204,21 +205,16 @@ def main():
     parser.add_argument("--rank", type=int, default=None)
     parser.add_argument("--ridge", type=float, default=0.0)
     parser.add_argument("--bias", type=str.lower, choices=["true", "false"], default="false", help="Include bias term in polynomial expansion")
-    parser.add_argument("--manual_decoder", type=str, choices=["regressed", "fixed"], default="fixed")
-    parser.add_argument("--manual_regression_method", type=str, default="svd")
     parser.add_argument("--expansion_type", type=str, default="general", choices=["general", "specific"], help="Whether to use general polynomial expansion (all combinations up to degree) or specific expansion (e.g. only x^2, y^2, xy) for the manual expansion models")
     parser.add_argument("--expansion_degree", type=int, default=1)
     parser.add_argument("--sine_cosine_expansion", type=str.lower,choices=["true", "false"], default="false",help="Include sin(x_i) and cos(x_i) terms in the manual expansion basis")
-    parser.add_argument("--decoder_ridge", type=float, default=None)
     parser.add_argument("--normalize_state", type=str.lower, choices=["true", "false"], default="false")
     parser.add_argument("--normalize_lifted", type=str.lower, choices=["true", "false"], default="true")
-    parser.add_argument("--residual_decode", type=str.lower, choices=["true", "false"], default="true")
-    parser.add_argument("--max_spectral_radius", type=float, default=None)
-
+    parser.add_argument("--regression_rollout_mode",type=str,default="DMD",choices=["linear_dynamics", "DMD","projected_DMD"],help="Default rollout mode for regression_dmd checkpoints.")
     # --------------------------------------------------
     # SINDy
     # --------------------------------------------------
-    parser.add_argument("--sindy_discrete_time", type=str.lower, choices=["true", "false"], default="true")
+    parser.add_argument("--sindy_discrete_time", type=str.lower, choices=["true", "false"], default="false")
     parser.add_argument("--sindy_poly_order", type=int, default=3)
     parser.add_argument("--sindy_threshold", type=float, default=0.1)
     parser.add_argument("--sindy_alpha", type=float, default=0.0)
@@ -261,6 +257,10 @@ def main():
     
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size) if len(val_ds) > 0 else None
+
+    train_state_mean = torch.tensor(np.mean(meta["X"], axis=(0, 1)), dtype=torch.float32, device=device)
+    train_state_scale = torch.tensor(np.std(meta["X"], axis=(0, 1)), dtype=torch.float32, device=device)
+    train_state_scale = torch.clamp(train_state_scale, min=1e-6)
     
 
 # Get training data
@@ -283,93 +283,116 @@ def main():
     # ==================================================
     # DMD baseline
     # ==================================================
-    if args.model in {"dmd_baseline", "regression_dmd"}:
+    if args.model == "dmd_baseline":
         print(f"Fitting {args.model.upper()}...")
 
         X = train_ds.x.numpy()
         Y = train_ds.y.numpy()
 
-        if args.model == "dmd_baseline":
-            Lambda, Phi = fit_dmd(
-                X,
-                Y,
-                rank=args.rank,
-                ridge=args.ridge,
-            )
 
-            save_path = os.path.join(save_dir, "model.npz")
+        Lambda, Phi = fit_dmd(
+            X,
+            Y,
+            rank=args.rank,
+            ridge=args.ridge,
+        )
 
-            np.savez(
-                save_path,
-                Lambda=Lambda,
-                Phi=Phi,
-                rank=args.rank,
-                ridge=args.ridge,
-                model="dmd_baseline",
-                system=system_name,
-                data_path=args.data_path,
-            )
+        save_path = os.path.join(save_dir, "model.npz")
 
-            print("Saved DMD baseline to:", save_path)
-            return
+        np.savez(
+            save_path,
+            Lambda=Lambda,
+            Phi=Phi,
+            rank=args.rank,
+            ridge=args.ridge,
+            model="dmd_baseline",
+            system=system_name,
+            data_path=args.data_path,
+        )
 
-        elif args.model == "regression_dmd":
-            model = Regression_DMD(
-                state_dim=state_dim,
-                expansion_degree=args.expansion_degree,
-                rank=args.rank,
-                ridge=args.ridge,
-                decoder_ridge=args.decoder_ridge,
-                bias=args.bias == "true",
-                sine_cosine_expansion=args.sine_cosine_expansion == "true",
-                expansion_type=args.expansion_type,
-                system=system_name if args.expansion_type == "specific" else None,
-                decoder_mode=args.manual_decoder,
-                normalize_state=args.normalize_state == "true",
-                normalize_lifted=args.normalize_lifted == "true",
-                residual_decode=args.residual_decode == "true",
-                max_spectral_radius=args.max_spectral_radius,
-            ).to(device)
-            K, C = model.fit(X, Y, method=args.manual_regression_method)
-            
-            print("K shape:", K.shape, K)
-            print("C shape:", C.shape, C)
-            print("Model expand names:", model.expand_names)
+        print("Saved DMD baseline to:", save_path)
+        return
 
-            save_path = os.path.join(save_dir, "model.npz")
+    elif args.model == "regression_dmd":
+        model = Regression_DMD(
+            state_dim=state_dim,
+            expansion_degree=args.expansion_degree,
+            bias=args.bias == "true",
+            sine_cosine_expansion=args.sine_cosine_expansion == "true",
+            expansion_type=args.expansion_type,
+            system=system_name if args.expansion_type == "specific" else None,
+            normalize_state=args.normalize_state == "true",
+            normalize_lifted=args.normalize_lifted == "true",
+            rollout_mode=args.regression_rollout_mode,
+            ridge=args.ridge,
+            rank=args.rank,
+        ).to(device)
+        print(f"Expansion type: {args.expansion_type}")
+        print(f"Expansion degree: {args.expansion_degree}")
+        print(f"Expanded dim: {model.expanded_dim}")
+        # print("Expansion library:")
+        # for i, name in enumerate(model.expand_names):
+        #     print(f"  [{i:02d}] {name}")
 
-            np.savez(
-                save_path,
-                K=K.detach().cpu().numpy(),
-                C=C.detach().cpu().numpy(),
-                state_dim=state_dim,
-                expansion_degree=args.expansion_degree,
-                bias=args.bias == "true",
-                sine_cosine_expansion=args.sine_cosine_expansion == "true",
-                expansion_type=args.expansion_type,
-                system_basis=system_name if args.expansion_type == "specific" else "",
-                decoder_mode=args.manual_decoder,
-                regression_method=args.manual_regression_method,
-                rank=-1 if args.rank is None else args.rank,
-                ridge=args.ridge,
-                decoder_ridge=np.nan if args.decoder_ridge is None else args.decoder_ridge,
-                normalize_state=args.normalize_state == "true",
-                normalize_lifted=args.normalize_lifted == "true",
-                residual_decode=args.residual_decode == "true",
-                max_spectral_radius=np.nan if args.max_spectral_radius is None else args.max_spectral_radius,
-                x_mean=model.x_mean.detach().cpu().numpy(),
-                x_scale=model.x_scale.detach().cpu().numpy(),
-                psi_scale=model.psi_scale.detach().cpu().numpy(),
-                model="regression_dmd",
-                system=system_name,
-                data_path=args.data_path,
-            )
+        K, C = model.fit(X, Y)
+        phi_cond = np.linalg.cond(model.Phi_lift_fitted.detach().cpu().numpy())
+        print(f"cond(Phi_lift): {phi_cond:.3e}")
+        K_np = model.K_fitted.detach().cpu().numpy()
+        Phi_np = model.Phi_lift_fitted.detach().cpu().numpy()
+        Lambda_np = model.Lambda_fitted.detach().cpu().numpy()
 
-            print("Saved manual DMD manual expansion baseline to:", save_path)
-            return
+        Phi_pinv = np.linalg.pinv(Phi_np)
+        Lambda_mat = np.diag(Lambda_np)
+
+        recon_err = np.linalg.norm(K_np - Phi_np @ Lambda_mat @ Phi_pinv) / np.linalg.norm(K_np)
+        eig_resid = np.linalg.norm(K_np @ Phi_np - Phi_np @ Lambda_mat) / np.linalg.norm(K_np)
+        spec_radius = np.max(np.abs(Lambda_np))
+
+        print(f"recon_relerr(K vs PhiΛPhi^+): {recon_err:.3e}")
+        print(f"eig_resid_relerr           : {eig_resid:.3e}")
+        print(f"spectral_radius           : {spec_radius:.6f}")
+
+        save_path = os.path.join(save_dir, "model.npz")
         
-        else:
-            raise ValueError(f"Unknown manual model: {args.model}")
+        # Only save what the model actually produces
+        save_kwargs = dict(
+            model="regression_dmd",
+            system=system_name,
+            state_dim=state_dim,
+            expansion_degree=args.expansion_degree,
+            bias=args.bias == "true",
+            sine_cosine_expansion=args.sine_cosine_expansion == "true",
+            expansion_type=args.expansion_type,
+            system_basis=system_name if args.expansion_type == "specific" else "",
+            rollout_mode=args.regression_rollout_mode,
+            ridge=args.ridge,
+            rank=-1 if args.rank is None else args.rank,
+            normalize_state=args.normalize_state == "true",
+            normalize_lifted=args.normalize_lifted == "true",
+
+            x_mean=model.x_mean.detach().cpu().numpy(),
+            x_scale=model.x_scale.detach().cpu().numpy(),
+            psi_scale=model.psi_scale.detach().cpu().numpy(),
+
+            K=model.K_fitted.detach().cpu().numpy(),
+            C=model.C_fitted.detach().cpu().numpy(),
+
+            K_tilde=model.K_tilde_fitted.detach().cpu().numpy(),
+            U_r=model.U_r_fitted.detach().cpu().numpy(),
+            W_reduced=model.W_reduced_fitted.detach().cpu().numpy(),
+            Lambda=model.Lambda_fitted.detach().cpu().numpy(),
+            Phi_lift=model.Phi_lift_fitted.detach().cpu().numpy(),
+            Phi_state=model.Phi_state_fitted.detach().cpu().numpy(),
+        )
+
+        if model.Lambda_fitted is not None:
+            save_kwargs["Lambda"] = model.Lambda_fitted.detach().cpu().numpy()
+            save_kwargs["Phi"] = model.Phi_fitted.detach().cpu().numpy()
+
+        np.savez(save_path, **save_kwargs)
+        print(f"Saved regression_dmd checkpoint to: {save_path}")
+        return
+
     # ==================================================
     # SINDy baseline
     # ==================================================
@@ -460,19 +483,14 @@ def main():
     if hasattr(model, "expansion_type"):
         print(f"Expand names: {model.expand_names}")
 
+    if hasattr(model, "set_state_scale"):
+        model.set_state_scale(train_state_mean, train_state_scale)
+
     # --------------------------------------------------
     # Compute lifted scaling (only for expansion models)
     # --------------------------------------------------
 
-    if hasattr(model, "expand") and hasattr(model, "set_z_scale"):
-        print("Computing expansion basis scaling...")
-        with torch.no_grad():
-            zs = []
-            for x_batch, _ in train_loader:
-                zs.append(model.expand(x_batch.to(device)))
-            z_all = torch.cat(zs, dim=0)
-            z_scale = torch.clamp(torch.mean(torch.abs(z_all), dim=0), min=1e-5)
-            model.set_z_scale(z_scale)
+    maybe_set_z_scale(model, train_loader, device)
     
     # Train
     model, (train_losses, batch_val_losses, epoch_val_losses, loss_components_val) = train_onestep(

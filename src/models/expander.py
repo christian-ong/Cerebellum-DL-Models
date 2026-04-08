@@ -133,6 +133,7 @@ class ManualExpansion(nn.Module):
         self.expansion_type = expansion_type
         self.expand_names = []
         self.expanded_basis = []
+        self.max_poly_base_abs = 100.0
 
         if expansion_type == "specific":
 
@@ -276,7 +277,13 @@ class ManualExpansion(nn.Module):
 
                     for dim, power in enumerate(basis):
                         if power > 0:
-                            term = term * (x[:, dim] ** power)
+                            # Bound polynomial base to avoid float overflow at high degree.
+                            base = torch.clamp(
+                                x[:, dim],
+                                min=-self.max_poly_base_abs,
+                                max=self.max_poly_base_abs,
+                            )
+                            term = term * (base ** power)
 
                     expanded_features.append(term)
 
