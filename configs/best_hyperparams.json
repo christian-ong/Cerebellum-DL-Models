@@ -1,0 +1,312 @@
+{
+  "duffing": {
+    "ml_dmd": {
+      "general": {
+        "10": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "3": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "5": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        }
+      },
+      "specific": {
+        "10": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "3": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        },
+        "5": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        }
+      }
+    },
+    "ml_linear_dynamics": {
+      "general": {
+        "10": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        },
+        "3": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "5": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        }
+      },
+      "specific": {
+        "10": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        },
+        "3": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        },
+        "5": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        }
+      }
+    }
+  },
+  "lorenz": {
+    "ml_dmd": {
+      "general": {
+        "10": {
+          "lr": 0.0001,
+          "weight_decay": 1e-06
+        },
+        "3": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "5": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        }
+      },
+      "specific": {
+        "10": {
+          "lr": 1e-05,
+          "weight_decay": 1e-06
+        },
+        "3": {
+          "lr": 1e-05,
+          "weight_decay": 1e-06
+        },
+        "5": {
+          "lr": 1e-05,
+          "weight_decay": 1e-06
+        }
+      }
+    },
+    "ml_linear_dynamics": {
+      "general": {
+        "10": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "3": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "5": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        }
+      },
+      "specific": {
+        "10": {
+          "lr": 1e-05,
+          "weight_decay": 1e-06
+        },
+        "3": {
+          "lr": 1e-05,
+          "weight_decay": 1e-06
+        },
+        "5": {
+          "lr": 1e-05,
+          "weight_decay": 1e-06
+        }
+      }
+    }
+  },
+  "lotka_volterra": {
+    "ml_dmd": {
+      "general": {
+        "10": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "3": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "5": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        }
+      },
+      "specific": {
+        "10": {
+          "lr": 0.0001,
+          "weight_decay": 1e-06
+        },
+        "3": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "5": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        }
+      }
+    },
+    "ml_linear_dynamics": {
+      "general": {
+        "10": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "3": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "5": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        }
+      },
+      "specific": {
+        "10": {
+          "lr": 0.0001,
+          "weight_decay": 1e-06
+        },
+        "3": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "5": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        }
+      }
+    }
+  },
+  "pendulum": {
+    "ml_dmd": {
+      "general": {
+        "10": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "3": {
+          "lr": 0.0001,
+          "weight_decay": 1e-06
+        },
+        "5": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        }
+      },
+      "specific": {
+        "10": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        },
+        "3": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        },
+        "5": {
+          "lr": 0.0001,
+          "weight_decay": 1e-06
+        }
+      }
+    },
+    "ml_linear_dynamics": {
+      "general": {
+        "10": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "3": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        },
+        "5": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        }
+      },
+      "specific": {
+        "10": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "3": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        },
+        "5": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        }
+      }
+    }
+  },
+  "vanderpol": {
+    "ml_dmd": {
+      "general": {
+        "10": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "3": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "5": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        }
+      },
+      "specific": {
+        "10": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "3": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        },
+        "5": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        }
+      }
+    },
+    "ml_linear_dynamics": {
+      "general": {
+        "10": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "3": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "5": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        }
+      },
+      "specific": {
+        "10": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "3": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        },
+        "5": {
+          "lr": 0.001,
+          "weight_decay": 0.0
+        }
+      }
+    }
+  }
+}
