@@ -1,8 +1,10 @@
 import os
 import argparse
+import json
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+from pathlib import Path
 
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
 from src.eval.sweep_utils import maybe_set_z_scale
@@ -105,11 +107,11 @@ Global options (defaults):
     python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_large --epochs 10 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
     python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_trig --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5
 
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/vanderpol --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lotka_volterra --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/pendulum --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/duffing --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz --epochs 3 --expansion_type general --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/vanderpol --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lotka_volterra --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/pendulum --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/duffing --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz --epochs 3 --expansion_type general --expansion_degree 10 --bias false --sine_cosine_expansion false
 
 # ML DMD + Manual Expansion
     python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/saddle_point --epochs 10 --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
@@ -121,11 +123,11 @@ Global options (defaults):
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_large --epochs 10 --expansion_type specific --expansion_degree 5 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5
 
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/pendulum --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/duffing --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lorenz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false 
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/pendulum --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion true
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/duffing --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lorenz --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false
 
 # SINDy baseline
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/linear/saddle_point --sindy_discrete_time true --sindy_poly_order 1 --sindy_threshold 0.0 --sindy_alpha 0.0
@@ -159,6 +161,23 @@ def dataloader_to_numpy(loader):
         xs.append(x.numpy())
         ys.append(y.numpy())
     return np.vstack(xs), np.vstack(ys)
+
+
+def load_best_hyperparams(config_path, system_name, model_name, expansion_type, expansion_degree):
+    config_file = Path(config_path)
+    if not config_file.is_absolute():
+        config_file = Path(__file__).resolve().parent.parent / config_file
+
+    if not config_file.exists():
+        return None
+
+    with config_file.open("r", encoding="utf-8") as handle:
+        config = json.load(handle)
+
+    try:
+        return config[system_name][model_name][expansion_type][str(expansion_degree)]
+    except KeyError:
+        return None
 
 
 # --------------------------------------------------
@@ -230,6 +249,12 @@ def main():
     # --------------------------------------------------
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--outdir", type=str, default="data/models")
+    parser.add_argument(
+        "--config_path",
+        type=str,
+        default="configs/best_hyperparams.json",
+        help="JSON file with best lr/weight_decay values keyed by system/model/expansion config",
+    )
 
     args = parser.parse_args()
 
@@ -245,6 +270,22 @@ def main():
     meta = np.load(train_meta_path)
     system_name = str(meta["system"])
     state_dim = meta["X"].shape[-1]
+
+    best_hparams = load_best_hyperparams(
+        args.config_path,
+        system_name=system_name,
+        model_name=args.model,
+        expansion_type=args.expansion_type,
+        expansion_degree=args.expansion_degree,
+    )
+    if best_hparams is not None:
+        args.lr = float(best_hparams["lr"])
+        args.weight_decay = float(best_hparams["weight_decay"])
+        print(
+            "Loaded lr/weight_decay from config for "
+            f"{system_name}/{args.model}/{args.expansion_type}/{args.expansion_degree}: "
+            f"lr={args.lr}, weight_decay={args.weight_decay}"
+        )
     
     # Setup output directory
     run_name = args.name if args.name else "default"
