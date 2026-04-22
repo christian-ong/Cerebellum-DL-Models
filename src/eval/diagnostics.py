@@ -578,6 +578,7 @@ def plot_true_grid_heatmap(
     system: str,
     figdir: str,
     horizon: int,
+    trajectory_overlay: Optional[np.ndarray] = None,
 ) -> None:
     XX = grid_data["XX"]
     YY = grid_data["YY"]
@@ -594,6 +595,19 @@ def plot_true_grid_heatmap(
         shading="auto",
         norm=norm,
     )
+
+    # Optional overlay of true trajectory in the plotted phase plane
+    if trajectory_overlay is not None:
+        ax.plot(
+            trajectory_overlay[:, i],
+            trajectory_overlay[:, j],
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.65,
+            color="black",
+            label="True trajectory",
+        )
+        ax.legend(loc="upper right")
 
     ax.set_xlabel(f"x{i + 1}")
     ax.set_ylabel(f"x{j + 1}")
@@ -621,7 +635,7 @@ def run_diagnostics(
     figdir: str,
     horizon_metrics: Dict[str, np.ndarray],
     rollout_metrics: Dict[str, np.ndarray],
-    phase_horizons: List[int],
+    phase_horizons: Optional[List[int]],
     heatmap_horizon: int,
     heatmap_mode: str,
     linear_error_scale: bool = False,
@@ -629,23 +643,29 @@ def run_diagnostics(
     data_path: Optional[str] = None,
     run_true_grid_heatmap: bool = False,
     grid_resolution: int = 100,
+    true_grid_heatmap_horizons: Optional[List[int]] = None,
+    run_phase_maps: bool = True,
+    run_sampled_start_heatmap: bool = False,
+    overlay_true_trajectory_on_grid: bool = True,
 ) -> None:
-    phase_data = compute_phase_error_for_trajectory(
-        X=X,
-        traj_id=traj_id,
-        horizons=phase_horizons,
-        model_name=model_name,
-        model=model,
-        extras=extras,
-        rollout_cache=rollout_cache,
-    )
-
     plot_error_vs_horizon(horizon_metrics, figdir, logy=not linear_error_scale)
-    plot_phase_space_colored_errors(phase_data, system, figdir)
     plot_rollout_error_summary(rollout_metrics, figdir)
 
-    # Old sampled-start map: only plot when we are NOT using the full true-grid map
-    if not run_true_grid_heatmap:
+    # Optional phase-space error maps
+    if run_phase_maps and phase_horizons is not None and len(phase_horizons) > 0:
+        phase_data = compute_phase_error_for_trajectory(
+            X=X,
+            traj_id=traj_id,
+            horizons=phase_horizons,
+            model_name=model_name,
+            model=model,
+            extras=extras,
+            rollout_cache=rollout_cache,
+        )
+        plot_phase_space_colored_errors(phase_data, system, figdir)
+
+    # Optional sampled-start heatmap
+    if run_sampled_start_heatmap:
         heatmap_data = compute_initial_condition_heatmap_data(
             X=X,
             split_idx=split_idx,
@@ -658,17 +678,29 @@ def run_diagnostics(
         )
         plot_initial_condition_heatmap(heatmap_data, system, figdir, heatmap_horizon, heatmap_mode)
 
+    # True-grid heatmaps, potentially for multiple horizons
     if run_true_grid_heatmap:
         if data_path is None:
             raise ValueError("data_path is required when run_true_grid_heatmap=True")
 
-        grid_data = compute_true_grid_heatmap_data(
-            data_path=data_path,
-            X=X,
-            horizon=heatmap_horizon,
-            model_name=model_name,
-            model=model,
-            extras=extras,
-            grid_resolution=grid_resolution,
-        )
-        plot_true_grid_heatmap(grid_data, system, figdir, heatmap_horizon)
+        horizons_to_plot = [heatmap_horizon] if true_grid_heatmap_horizons is None else true_grid_heatmap_horizons
+        X_traj = X[:, traj_id, :]
+
+        for h in horizons_to_plot:
+            grid_data = compute_true_grid_heatmap_data(
+                data_path=data_path,
+                X=X,
+                horizon=h,
+                model_name=model_name,
+                model=model,
+                extras=extras,
+                grid_resolution=grid_resolution,
+            )
+
+            plot_true_grid_heatmap(
+                grid_data,
+                system,
+                figdir,
+                h,
+                trajectory_overlay=X_traj if overlay_true_trajectory_on_grid else None,
+            )
