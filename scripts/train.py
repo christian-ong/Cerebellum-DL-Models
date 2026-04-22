@@ -356,6 +356,8 @@ def main():
         
         # Only save what the model actually produces
         save_kwargs = dict(
+            train_args=vars(args),
+
             model="regression_dmd",
             system=system_name,
             state_dim=state_dim,
@@ -363,6 +365,7 @@ def main():
             bias=args.bias == "true",
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             expansion_type=args.expansion_type,
+            expand_names=model.expand_names,
             system_basis=system_name if args.expansion_type == "specific" else "",
             rollout_mode=args.regression_rollout_mode,
             ridge=args.ridge,
