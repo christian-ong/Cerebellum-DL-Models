@@ -41,8 +41,10 @@ parser.add_argument("--traj_id", type=int, default=0, help="ID of the trajectory
 args = parser.parse_args()
 
 ################################################################################################################
-
-model_path = f"data/models/{args.model_name}/{args.data_name}/{args.custom_name}/model.pt"
+if "ml" in args.model_name:
+    model_path = f"data/models/{args.model_name}/{args.data_name}/{args.custom_name}/model.pt"
+else:
+    model_path = f"data/models/{args.model_name}/{args.data_name}/{args.custom_name}/model.npz"
 if args.data_name in ["duffing", "vanderpol", "lorenz", "lotka_volterra", "pendulum"] or "koopman_poly" in args.custom_name:
     data_path = f"data/trajectories/nonlinear/{args.data_name}/test.npz"
 else:
@@ -91,8 +93,8 @@ if __name__ == "__main__":
 
     # Plot rollout vs ground truth
     plt.figure(figsize=(8, 6))
-    plt.plot(trajectory[:, 0], trajectory[:, 1], label='Model Rollout')
-    plt.plot(X[:, args.traj_id, 0], X[:, args.traj_id, 1], label='Ground Truth')
+    plt.plot(X[:, args.traj_id, 0], X[:, args.traj_id, 1], label='Ground Truth', linestyle='--', alpha=0.7)
+    plt.plot(trajectory[:, 0], trajectory[:, 1], label='Model Rollout',linestyle='--')
     plt.title(f"Trajectory Rollout vs Ground Truth\n{args.model_name}, {args.custom_name}\n{system}")
     plt.xlabel("x")
     plt.ylabel("y")
