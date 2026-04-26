@@ -351,10 +351,10 @@ class ML_DMD(ManualExpansion):
         # 4) Eigenvalue stability regularization
         # --------------------------------------------------
 
-        Phi_cols = self.Phi / (torch.linalg.norm(self.Phi, dim=0, keepdim=True) + 1e-8)
-        G = Phi_cols.mT @ Phi_cols
-        I = torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
-        loss_coherence = torch.mean((G - I) ** 2)
+        # Phi_cols = self.Phi / (torch.linalg.norm(self.Phi, dim=0, keepdim=True) + 1e-8)
+        # G = Phi_cols.mT @ Phi_cols
+        # I = torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
+        # loss_coherence = torch.mean((G - I) ** 2)
 
         # --------------------------------------------------
         # Total loss
@@ -364,7 +364,7 @@ class ML_DMD(ManualExpansion):
             loss_lift
             + 0.1 * loss_state
             + 1e-3 * loss_unit_length
-            + 1e-3 * loss_coherence
+            # + 1e-3 * loss_coherence
         )
         return (loss,)
 

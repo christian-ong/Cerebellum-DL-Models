@@ -60,10 +60,10 @@ System-specific parameters:
 Linear system  x' = A x
 --------------------------------------------------
 
-python -m scripts.simulate_data --system inward_spiral --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system harmonic_oscillator --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system saddle_point --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system degenerate_node --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10
+python -m scripts.simulate_data --system inward_spiral --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
+python -m scripts.simulate_data --system harmonic_oscillator --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
+python -m scripts.simulate_data --system saddle_point --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
+python -m scripts.simulate_data --system degenerate_node --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
 
 --------------------------------------------------
 Nonlinear systems (SHORT TRAJECTORIES, T_train=1.0)

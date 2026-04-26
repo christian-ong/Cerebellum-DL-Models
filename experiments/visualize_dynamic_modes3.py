@@ -47,7 +47,7 @@ def get_koopman_eigensystem(model):
     Left W -> Eigenfunctions (Linearizing Coordinates)
     Right V -> Modes (Physical Patterns)
     """
-    if hasattr(model, "Phi") and hasattr(model, "Lambda"):
+    if hasattr(model, "Phi"):
         Phi = model.get_Phi_true().detach().numpy()
         Lambda = model.get_Lambda().detach().numpy()
         K = model.get_K_true().detach().numpy()
@@ -482,10 +482,10 @@ def plot_mode_energy_vs_quality(V, scores, n_top=20):
 
 # Settings
 model_name = "ml_dmd"
-system_name = "harmonic_oscillator"
-custom_name = "default"
+system_name = "vanderpol"
+custom_name = "vanderpol_gen5"
 grid_res = 100
-n_top_modes = 4
+n_top_modes = 8
 
 # Load model and eigensystem
 model_path = f"data/models/{model_name}/{system_name}/{custom_name}/model.pt"

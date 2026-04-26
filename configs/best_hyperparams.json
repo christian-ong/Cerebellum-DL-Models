@@ -3,28 +3,36 @@
     "ml_dmd": {
       "general": {
         "10": {
-          "lr": 0.0001,
+          "lr": 1e-05,
           "weight_decay": 0.0
         },
         "3": {
-          "lr": 0.0001,
+          "lr": 1e-05,
           "weight_decay": 0.0
         },
         "5": {
+          "lr": 1e-05,
+          "weight_decay": 0.0
+        },
+        "7": {
           "lr": 0.0001,
           "weight_decay": 0.0
         }
       },
       "specific": {
         "10": {
-          "lr": 0.001,
-          "weight_decay": 1e-06
+          "lr": 0.0001,
+          "weight_decay": 0.0
         },
         "3": {
-          "lr": 0.001,
+          "lr": 0.0001,
           "weight_decay": 0.0
         },
         "5": {
+          "lr": 1e-05,
+          "weight_decay": 0.0
+        },
+        "7": {
           "lr": 0.0001,
           "weight_decay": 0.0
         }
@@ -33,7 +41,7 @@
     "ml_linear_dynamics": {
       "general": {
         "10": {
-          "lr": 0.001,
+          "lr": 0.0001,
           "weight_decay": 0.0
         },
         "3": {
@@ -41,6 +49,10 @@
           "weight_decay": 0.0
         },
         "5": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "7": {
           "lr": 0.001,
           "weight_decay": 0.0
         }
@@ -51,11 +63,15 @@
           "weight_decay": 0.0
         },
         "3": {
-          "lr": 0.001,
+          "lr": 1e-05,
           "weight_decay": 0.0
         },
         "5": {
           "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "7": {
+          "lr": 1e-05,
           "weight_decay": 0.0
         }
       }
@@ -69,12 +85,16 @@
           "weight_decay": 1e-06
         },
         "3": {
-          "lr": 0.001,
+          "lr": 0.0001,
           "weight_decay": 1e-06
         },
         "5": {
-          "lr": 0.001,
+          "lr": 0.0001,
           "weight_decay": 0.0
+        },
+        "7": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
         }
       },
       "specific": {
@@ -89,21 +109,29 @@
         "5": {
           "lr": 1e-05,
           "weight_decay": 1e-06
+        },
+        "7": {
+          "lr": 0.001,
+          "weight_decay": 0.0
         }
       }
     },
     "ml_linear_dynamics": {
       "general": {
         "10": {
-          "lr": 0.001,
-          "weight_decay": 1e-06
+          "lr": 0.0001,
+          "weight_decay": 0.0
         },
         "3": {
-          "lr": 0.001,
-          "weight_decay": 1e-06
+          "lr": 0.0001,
+          "weight_decay": 0.0
         },
         "5": {
-          "lr": 0.001,
+          "lr": 0.0001,
+          "weight_decay": 0.0
+        },
+        "7": {
+          "lr": 0.0001,
           "weight_decay": 0.0
         }
       },
@@ -118,6 +146,10 @@
         },
         "5": {
           "lr": 1e-05,
+          "weight_decay": 1e-06
+        },
+        "7": {
+          "lr": 0.001,
           "weight_decay": 1e-06
         }
       }
@@ -128,28 +160,36 @@
       "general": {
         "10": {
           "lr": 0.0001,
-          "weight_decay": 0.0
+          "weight_decay": 1e-06
         },
         "3": {
-          "lr": 0.0001,
+          "lr": 1e-05,
           "weight_decay": 0.0
         },
         "5": {
+          "lr": 1e-05,
+          "weight_decay": 0.0
+        },
+        "7": {
           "lr": 0.0001,
           "weight_decay": 0.0
         }
       },
       "specific": {
         "10": {
-          "lr": 0.0001,
+          "lr": 1e-05,
           "weight_decay": 1e-06
         },
         "3": {
-          "lr": 0.001,
+          "lr": 0.0001,
           "weight_decay": 1e-06
         },
         "5": {
-          "lr": 0.001,
+          "lr": 0.0001,
+          "weight_decay": 1e-06
+        },
+        "7": {
+          "lr": 0.0001,
           "weight_decay": 1e-06
         }
       }
@@ -167,6 +207,10 @@
         "5": {
           "lr": 0.0001,
           "weight_decay": 0.0
+        },
+        "7": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
         }
       },
       "specific": {
@@ -175,11 +219,15 @@
           "weight_decay": 1e-06
         },
         "3": {
-          "lr": 0.001,
+          "lr": 0.0001,
           "weight_decay": 1e-06
         },
         "5": {
           "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "7": {
+          "lr": 0.0001,
           "weight_decay": 1e-06
         }
       }
@@ -189,21 +237,25 @@
     "ml_dmd": {
       "general": {
         "10": {
-          "lr": 0.0001,
-          "weight_decay": 0.0
+          "lr": 1e-05,
+          "weight_decay": 1e-06
         },
         "3": {
-          "lr": 0.0001,
+          "lr": 1e-05,
           "weight_decay": 1e-06
         },
         "5": {
-          "lr": 0.0001,
+          "lr": 1e-05,
+          "weight_decay": 1e-06
+        },
+        "7": {
+          "lr": 1e-05,
           "weight_decay": 0.0
         }
       },
       "specific": {
         "10": {
-          "lr": 0.001,
+          "lr": 0.0001,
           "weight_decay": 0.0
         },
         "3": {
@@ -213,20 +265,28 @@
         "5": {
           "lr": 0.0001,
           "weight_decay": 1e-06
+        },
+        "7": {
+          "lr": 0.0001,
+          "weight_decay": 0.0
         }
       }
     },
     "ml_linear_dynamics": {
       "general": {
         "10": {
+          "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "3": {
           "lr": 0.0001,
           "weight_decay": 0.0
         },
-        "3": {
+        "5": {
           "lr": 0.001,
           "weight_decay": 0.0
         },
-        "5": {
+        "7": {
           "lr": 0.0001,
           "weight_decay": 0.0
         }
@@ -242,6 +302,10 @@
         },
         "5": {
           "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "7": {
+          "lr": 0.0001,
           "weight_decay": 1e-06
         }
       }
@@ -251,14 +315,18 @@
     "ml_dmd": {
       "general": {
         "10": {
-          "lr": 0.0001,
+          "lr": 1e-05,
           "weight_decay": 0.0
         },
         "3": {
-          "lr": 0.0001,
+          "lr": 1e-05,
           "weight_decay": 0.0
         },
         "5": {
+          "lr": 1e-05,
+          "weight_decay": 1e-06
+        },
+        "7": {
           "lr": 0.0001,
           "weight_decay": 0.0
         }
@@ -273,30 +341,38 @@
           "weight_decay": 0.0
         },
         "5": {
-          "lr": 0.001,
+          "lr": 0.0001,
           "weight_decay": 0.0
+        },
+        "7": {
+          "lr": 0.0001,
+          "weight_decay": 1e-06
         }
       }
     },
     "ml_linear_dynamics": {
       "general": {
         "10": {
-          "lr": 0.001,
-          "weight_decay": 1e-06
+          "lr": 0.0001,
+          "weight_decay": 0.0
         },
         "3": {
-          "lr": 0.001,
-          "weight_decay": 1e-06
+          "lr": 0.0001,
+          "weight_decay": 0.0
         },
         "5": {
+          "lr": 1e-05,
+          "weight_decay": 0.0
+        },
+        "7": {
           "lr": 0.001,
           "weight_decay": 0.0
         }
       },
       "specific": {
         "10": {
-          "lr": 0.001,
-          "weight_decay": 1e-06
+          "lr": 0.0001,
+          "weight_decay": 0.0
         },
         "3": {
           "lr": 0.001,
@@ -304,6 +380,10 @@
         },
         "5": {
           "lr": 0.001,
+          "weight_decay": 1e-06
+        },
+        "7": {
+          "lr": 0.0001,
           "weight_decay": 0.0
         }
       }

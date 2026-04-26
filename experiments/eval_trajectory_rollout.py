@@ -45,7 +45,7 @@ if "ml" in args.model_name:
     model_path = f"data/models/{args.model_name}/{args.data_name}/{args.custom_name}/model.pt"
 else:
     model_path = f"data/models/{args.model_name}/{args.data_name}/{args.custom_name}/model.npz"
-if args.data_name in ["duffing", "vanderpol", "lorenz", "lotka_volterra", "pendulum"] or "koopman_poly" in args.custom_name:
+if args.data_name in ["duffing", "vanderpol", "lorenz", "lotka_volterra", "pendulum"] or "koopman_poly" in args.data_name:
     data_path = f"data/trajectories/nonlinear/{args.data_name}/test.npz"
 else:
     data_path = f"data/trajectories/linear/{args.data_name}/test.npz"
@@ -93,7 +93,7 @@ if __name__ == "__main__":
 
     # Plot rollout vs ground truth
     plt.figure(figsize=(8, 6))
-    plt.plot(X[:, args.traj_id, 0], X[:, args.traj_id, 1], label='Ground Truth', linestyle='--', alpha=0.7)
+    plt.plot(X[:, args.traj_id, 0], X[:, args.traj_id, 1], label='Ground Truth', linestyle='-', alpha=0.7)
     plt.plot(trajectory[:, 0], trajectory[:, 1], label='Model Rollout',linestyle='--')
     plt.title(f"Trajectory Rollout vs Ground Truth\n{args.model_name}, {args.custom_name}\n{system}")
     plt.xlabel("x")
@@ -102,3 +102,10 @@ if __name__ == "__main__":
     plt.legend()
 
     plt.show()
+
+    # Save the plot
+    save_dir = f"experiments/figures/{args.model_name}/{args.data_name}/{args.custom_name}"
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, f"traj_id_{args.traj_id}.png")
+    plt.savefig(save_path)
+    print(f"Plot saved to: {save_path}")

@@ -10,8 +10,9 @@ sandbox/*
 sandbox_*
 
 
-# data (except .py files)
+# data
 /data/*
+!/data/sweeped_models/
 
 # hpc + wandb
 wandb/
