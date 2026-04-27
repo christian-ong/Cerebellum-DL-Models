@@ -381,18 +381,19 @@ def plot_mode_contributions_vs_quality(V, phi_traj, best_ids, scores, n_top=10):
     
     # 4. Normalize to show relative percentage
     total_energy = np.sum(mode_energies)
-    relative_contribution = (mode_energies / total_energy) * 100
+    relative_contribution = (mode_energies / (total_energy + 1e-12)) * 100
     
     # 5. Sort and Plot
     energy_sort_idx = np.argsort(relative_contribution)[::-1]
-    top_energy_idx = energy_sort_idx[:n_top]
+    n_show = min(n_top, len(energy_sort_idx))
+    top_energy_idx = energy_sort_idx[:n_show]
     
     fig, ax = plt.subplots(figsize=(10, 5))
     colors = plt.cm.viridis(scores[top_energy_idx])
     
-    bars = ax.bar(range(n_top), relative_contribution[top_energy_idx], color=colors)
+    bars = ax.bar(range(n_show), relative_contribution[top_energy_idx], color=colors)
     
-    ax.set_xticks(range(n_top))
+    ax.set_xticks(range(n_show))
     ax.set_xticklabels([f"Mode {i}" for i in top_energy_idx], rotation=45)
     ax.set_ylabel("Contribution to Reconstruction (%)")
     ax.set_title("Physical Mode Energy (Weighted by Average Activation)")
@@ -482,13 +483,13 @@ def plot_mode_energy_vs_quality(V, scores, n_top=20):
 
 # Settings
 model_name = "ml_dmd"
-system_name = "vanderpol"
-custom_name = "vanderpol_gen5"
+system_name = "closed_large"
+custom_name = "spec5"
 grid_res = 100
-n_top_modes = 8
+n_top_modes = 5
 
 # Load model and eigensystem
-model_path = f"data/models/{model_name}/{system_name}/{custom_name}/model.pt"
+model_path = f"data/models/{model_name}/{system_name}/{custom_name}/model_best.pt"
 ckpt = torch.load(model_path, map_location="cpu")
 model, model_type = build_model_from_checkpoint(ckpt)
 z_scale = model.z_scale.detach().cpu().numpy()

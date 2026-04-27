@@ -120,9 +120,11 @@ Global options (defaults):
     python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/inward_spiral --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
     python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/harmonic_oscillator --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
 
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_small --epochs 20 --expansion_type specific --expansion_degree 3 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec3
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_large --epochs 20 --expansion_type specific --expansion_degree 5 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec5
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig --epochs 20 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5 --name spec10_trig
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_small --epochs 20 --expansion_type specific --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec3
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_large --epochs 20 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec5
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_small --epochs 20 --expansion_type specific --expansion_degree 6 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec6_trig
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_medium --epochs 20 --expansion_type specific --expansion_degree 8 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec8_trig
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_large --epochs 20 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec10_trig
 
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol --epochs 20 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion false --name vanderpol_gen5
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name lotkavolterra_gen3
@@ -197,7 +199,9 @@ def resolve_ml_state_normalization(args, system_name):
     is_closed_benchmark = system_name in {
         "closed_small",
         "closed_large",
-        "closed_trig",
+        "closed_trig_small",
+        "closed_trig_medium",
+        "closed_trig_large",
     }
 
     if is_ml_model and is_specific and is_closed_benchmark:

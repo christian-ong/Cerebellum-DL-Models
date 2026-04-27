@@ -42,9 +42,9 @@ args = parser.parse_args()
 
 ################################################################################################################
 if "ml" in args.model_name:
-    model_path = f"data/models/{args.model_name}/{args.data_name}/{args.custom_name}/model.pt"
+    model_path = f"data/models/{args.model_name}/{args.data_name}/{args.custom_name}/model_best.pt"
 else:
-    model_path = f"data/models/{args.model_name}/{args.data_name}/{args.custom_name}/model.npz"
+    model_path = f"data/models/{args.model_name}/{args.data_name}/{args.custom_name}/model.pt"
 if args.data_name in ["duffing", "vanderpol", "lorenz", "lotka_volterra", "pendulum"] or "closed_" in args.data_name:
     data_path = f"data/trajectories/nonlinear/{args.data_name}/test.npz"
 else:
