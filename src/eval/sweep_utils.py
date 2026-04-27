@@ -125,6 +125,7 @@ def compute_rollout_metrics(
     Computes:
       - horizon-N RMSE
       - horizon-N NRMSE
+            - weighted cumulative horizon RMSE-prediction error
       - weighted cumulative horizon NRMSE-prediction error
 
     X expected shape: (T, N, d)
@@ -178,6 +179,7 @@ def compute_rollout_metrics(
                     if hh <= max_h:
                         results[f"rollout_rmse_h{hh}"] = np.nan
                         results[f"rollout_nrmse_h{hh}"] = np.nan
+                        results[f"discounted_mean_rmse_h{hh}_g{gamma:.2f}"] = np.nan
                         results[f"discounted_mean_nrmse_h{hh}_g{gamma:.2f}"] = np.nan
                 return results
 
@@ -206,8 +208,10 @@ def compute_rollout_metrics(
                 [gamma ** i for i in range(1, h + 1)],
                 device=device
             )
-            weighted = torch.sum(weights * nrmse_tensor[:h]) / torch.sum(weights)
+            weighted_rmse = torch.sum(weights * rmse_tensor[:h]) / torch.sum(weights)
+            weighted_nrmse = torch.sum(weights * nrmse_tensor[:h]) / torch.sum(weights)
 
-            results[f"discounted_mean_nrmse_h{h}_g{gamma:.2f}"] = float(weighted.item())
+            results[f"discounted_mean_rmse_h{h}_g{gamma:.2f}"] = float(weighted_rmse.item())
+            results[f"discounted_mean_nrmse_h{h}_g{gamma:.2f}"] = float(weighted_nrmse.item())
 
     return results

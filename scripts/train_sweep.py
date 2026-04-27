@@ -388,7 +388,10 @@ def main():
         final_epoch_metrics = dict(metric_candidates)
 
         wandb.log(log_dict, step=epoch)
-        scheduler.step()
+        if val_loss is not None:
+            scheduler.step(val_loss)
+        else:
+            scheduler.step(train_loss)
 
         print(f"Epoch time: {time.time() - epoch_start:.1f}s")
 
