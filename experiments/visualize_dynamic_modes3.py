@@ -43,19 +43,58 @@ def build_model_from_checkpoint(ckpt):
 
 def get_koopman_eigensystem(model):
     """
-    Extracts math: 
-    Left W -> Eigenfunctions (Linearizing Coordinates)
-    Right V -> Modes (Physical Patterns)
+    Extracts the Koopman modes and eigenfunctions STRICTLY from 
+    the neural network's learned parameters (Phi and Lambda).
     """
     if hasattr(model, "Phi"):
-        Phi = model.get_Phi_true().detach().numpy()
+        # 1. Extract the raw learned parameters
+        Phi_true = model.get_Phi_true().detach().numpy()
+        Phi_scaled = model.Phi.detach().numpy()
         Lambda = model.get_Lambda().detach().numpy()
-        K = model.get_K_true().detach().numpy()
+        K_true = model.get_K_true().detach().numpy()
+        
+        # 2. Eigendecompose the LEARNED Lambda
+        # This extracts the complex conjugate pairs from the model's internal representation
         eigvals, V_inner = np.linalg.eig(Lambda)
-        _, W_inner = np.linalg.eig(Lambda.T)
-        V = Phi @ V_inner
-        W = W_inner  # Project onto lifted states directly
-        return Phi, Lambda, eigvals, V, W, K
+        _, W_inner = np.linalg.eig(Lambda.T) 
+        
+        # 3. Right Eigenvectors (Physical Modes)
+        # Map the inner eigenvectors through the learned Phi
+        V = Phi_true @ V_inner
+        
+        # Normalize the physical modes for plotting
+        v_norms = np.linalg.norm(V, axis=0)
+        V = V / v_norms
+        
+        # 4. Left Eigenvectors (Eigenfunctions)
+        # Map the inner left-eigenvectors through the learned inverse
+        if hasattr(model, "Phi_inv"):
+            Phi_scaled_inv = model.Phi_inv.detach().numpy()
+        else:
+            Phi_scaled_inv = np.linalg.pinv(Phi_scaled)
+            
+        Phi_scaled_inv_T = Phi_scaled_inv.T
+        W = Phi_scaled_inv_T @ W_inner
+        
+        # Multiply W by v_norms to preserve the mathematical identity (W^T @ V = I)
+        W = W * v_norms
+        
+        # Multiply W by v_norms to preserve the mathematical identity (W^T @ V = I)
+        W = W * v_norms
+        
+        # ---------------------------------------------------------
+        # ALIGNMENT: Sort modes to match the physical basis
+        # Find the row index of the maximum absolute value for each column
+        # and reorder everything so the diagonal is dominant.
+        # ---------------------------------------------------------
+        dominant_rows = np.argmax(np.abs(V), axis=0)
+        sort_idx = np.argsort(dominant_rows)
+        
+        eigvals = eigvals[sort_idx]
+        V = V[:, sort_idx]
+        W = W[:, sort_idx]
+        
+        return Phi_true, Lambda, eigvals, V, W, K_true
     
     raise ValueError("Model format not recognized for eigensystem extraction.")
 
@@ -65,8 +104,8 @@ def plot_transition_matrices(matrices, title, expansion_names):
     fig, axes = plt.subplots(num_rows, 2, figsize=(10, 5 * num_rows))
     fig.suptitle(f"Koopman Operator Matrices, {system_name}", fontsize=16)
     for ax, (M, title) in zip(axes.flat, matrices):
-        M_real = np.real(M)
-        im = ax.imshow(M_real)
+        M_mag = np.abs(M)  # Use absolute magnitude to visualize complex matrices
+        im = ax.imshow(M_mag)
         ax.set_title(title)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         
@@ -484,7 +523,7 @@ def plot_mode_energy_vs_quality(V, scores, n_top=20):
 # Settings
 model_name = "ml_dmd"
 system_name = "closed_large"
-custom_name = "spec5"
+custom_name = "spec5_new"
 grid_res = 100
 n_top_modes = 5
 
@@ -521,9 +560,9 @@ top_n_modes = best_ids[:n_top_modes]
 # Plot Koopman Operator Matrices
 # --------------------------------------------------
 matrices = [
-    (Phi, "$\Phi$"),
-    (Lambda, "$\Lambda$"),
-    (K, r"K = $\Phi \Lambda \Phi^{-1}$")]
+    (V, "Extracted Koopman Modes (V)"),
+    (np.diag(eigvals), "True Complex $\Lambda$"),
+    (K, r"Operator K")]
 plot_transition_matrices(matrices, f"Koopman Operator Matrices, {system_name}", model.expand_names)
 
 # --------------------------------------------------
