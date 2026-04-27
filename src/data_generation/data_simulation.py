@@ -113,7 +113,7 @@ def duffing_system(alpha=1.0, beta=1.0, delta=0.2,
 
     return f
 
-def koopman_poly_system(mu=0.1, alpha=-1.0):
+def closed_small_system(mu=0.1, alpha=-1.0):
     def f(t, x):
         x = np.asarray(x, dtype=float)
         x1 = x[..., 0]
@@ -123,7 +123,7 @@ def koopman_poly_system(mu=0.1, alpha=-1.0):
         return np.stack([dx1, dx2], axis=-1)
     return f
 
-def koopman_poly_system_large(mu=0.1, alpha=-1.0, beta=0.8, gamma=-0.4, delta=0.2):
+def closed_large_system(mu=0.1, alpha=-1.0, beta=0.8, gamma=-0.4, delta=0.2):
     """
     2D nonlinear system with exact finite-dimensional polynomial closure:
         x' = mu * x
@@ -143,7 +143,7 @@ def koopman_poly_system_large(mu=0.1, alpha=-1.0, beta=0.8, gamma=-0.4, delta=0.
 
     return f
 
-def koopman_poly_trig_system(
+def closed_trig_system(
     omega=1.0,
     alpha=-0.8,
     beta_s1=0.7,

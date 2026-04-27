@@ -10,9 +10,9 @@ from src.data_generation.data_simulation import (
     pendulum_system,
     lorenz_system,
     duffing_system,
-    koopman_poly_system,
-    koopman_poly_system_large,
-    koopman_poly_trig_system
+    closed_small_system,
+    closed_large_system,
+    closed_trig_system,
 )
 from src.data_generation.plot_data import (
     plot_init_conditions,
@@ -74,9 +74,9 @@ python -m scripts.simulate_data --system lotka_volterra --n_traj_train 5000 --n_
 python -m scripts.simulate_data --system pendulum --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
 python -m scripts.simulate_data --system duffing --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
 python -m scripts.simulate_data --system lorenz --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system koopman_poly --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 1 --T_test 1０ --dt 0.０１ --mu_KP ０.１ --alpha_KP -１.０
-python -m scripts.simulate_data --system koopman_poly_large --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --dt 0.01
-python -m scripts.simulate_data --system koopman_poly_trig --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --dt 0.01
+python -m scripts.simulate_data --system closed_small --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 1 --T_test 1０ --dt 0.０１ --mu_KP ０.１ --alpha_KP -１.０
+python -m scripts.simulate_data --system closed_large --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --dt 0.01
+python -m scripts.simulate_data --system closed_trig --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --dt 0.01
 
 --------------------------------------------------
 Nonlinear systems (LONG TRAJECTORIES, T_train=10.0)
@@ -87,9 +87,9 @@ python -m scripts.simulate_data --system lotka_volterra --n_traj_train 500 --n_t
 python -m scripts.simulate_data --system pendulum --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10
 python -m scripts.simulate_data --system duffing --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10
 python -m scripts.simulate_data --system lorenz --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system koopman_poly --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --dt 0.01 --mu_KP 0.1 --alpha_KP -1.0
-python -m scripts.simulate_data --system koopman_poly_large --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --dt 0.01
-python -m scripts.simulate_data --system koopman_poly_trig --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --dt 0.01
+python -m scripts.simulate_data --system closed_small --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --dt 0.01 --mu_KP 0.1 --alpha_KP -1.0
+python -m scripts.simulate_data --system closed_large --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --dt 0.01
+python -m scripts.simulate_data --system closed_trig --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --dt 0.01
 
 --------------------------------------------------
 Output
@@ -410,8 +410,8 @@ def build_lorenz(args, rng):
     meta = {"sigma": args.sigma, "rho": args.rho, "beta": args.beta_LZ}
     return f, x0, meta
 
-def build_koopman_poly(args, rng):
-    f = koopman_poly_system(mu=args.mu_KP, alpha=args.alpha_KP)
+def build_closed_small(args, rng):
+    f = closed_small_system(mu=args.mu_KP, alpha=args.alpha_KP)
 
     n_traj = resolve_n_traj(args)
 
@@ -434,8 +434,8 @@ def build_koopman_poly(args, rng):
         "A_lift": A_lift,
     }
 
-def build_koopman_poly_large(args, rng):
-    f = koopman_poly_system_large(
+def build_closed_large(args, rng):
+    f = closed_large_system(
         mu=args.mu_K234,
         alpha=args.alpha_K234,
         beta=args.beta_K234,
@@ -470,8 +470,8 @@ def build_koopman_poly_large(args, rng):
         "A_lift": A_lift,
     }
 
-def build_koopman_poly_trig(args, rng):
-    f = koopman_poly_trig_system(
+def build_closed_trig(args, rng):
+    f = closed_trig_system(
         omega=args.omega_KPT,
         alpha=args.alpha_KPT,
         beta_s1=args.beta_s1_KPT,
@@ -523,9 +523,9 @@ SYSTEMS = {
     "pendulum": build_pendulum,
     "lorenz": build_lorenz,
     "duffing": build_duffing,
-    "koopman_poly": build_koopman_poly,
-    "koopman_poly_large": build_koopman_poly_large,
-    "koopman_poly_trig": build_koopman_poly_trig
+    "closed_small": build_closed_small,
+    "closed_large": build_closed_large,
+    "closed_trig": build_closed_trig
 }
 LINEAR_SYSTEMS = {
     "linear",
@@ -740,7 +740,7 @@ def main():
                 zlim=(0, 50),
                 outdir=debug_outdir,
             )
-        if args.system in ["koopman_poly", "koopman_poly_large"]:
+        if args.system in ["closed_small", "closed_large"]:
             plot_flow_map_displacement(
                 f=f,
                 state_dim=state_dim,
@@ -751,7 +751,7 @@ def main():
             )
 
 
-        if args.system in ["koopman_poly_trig"]:
+        if args.system in ["closed_trig"]:
             plot_flow_map_displacement(
                 f=f,
                 state_dim=state_dim,

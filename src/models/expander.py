@@ -5,6 +5,7 @@ from itertools import product
 
 
 VANDERPOL_BASIS = [
+    "1",
     "x",
     "y",
     "x^2*y",
@@ -18,6 +19,7 @@ VANDERPOL_BASIS = [
 ]
 
 LOTKA_BASIS = [
+    "1",
     "x",
     "y",
     "x*y",
@@ -33,6 +35,7 @@ LOTKA_BASIS = [
 ]
 
 PENDULUM_BASIS = [
+    "1",
     "x",
     "y",
     "sin(x)",
@@ -47,6 +50,7 @@ PENDULUM_BASIS = [
 ]
 
 DUFFING_BASIS = [
+    "1",
     "x",
     "y",
     "x^3",
@@ -62,6 +66,7 @@ DUFFING_BASIS = [
 ]
 
 LORENZ_BASIS = [
+    "1",
     "x",
     "y",
     "z",
@@ -74,13 +79,13 @@ LORENZ_BASIS = [
     "x^2*z",
 ]
 
-KOOPMAN_POLY_BASIS = [
+CLOSED_SMALL_BASIS = [
     "x",
     "y",
     "x^2"
 ]
 
-KOOPMAN_POLY_LARGE_BASIS = [
+CLOSED_LARGE_BASIS = [
     "x",
     "y",
     "x^2",
@@ -88,7 +93,7 @@ KOOPMAN_POLY_LARGE_BASIS = [
     "x^4"
 ]
 
-KOOPMAN_POLY_TRIG_BASIS = [
+CLOSED_TRIG_BASIS = [
     "1",
     "x",
     "x^2",
@@ -107,9 +112,9 @@ SPECIFIC_BASES = {
     "pendulum": PENDULUM_BASIS,
     "duffing": DUFFING_BASIS,
     "lorenz": LORENZ_BASIS,
-    "koopman_poly": KOOPMAN_POLY_BASIS,
-    "koopman_poly_large": KOOPMAN_POLY_LARGE_BASIS,
-    "koopman_poly_trig": KOOPMAN_POLY_TRIG_BASIS,
+    "closed_small": CLOSED_SMALL_BASIS,
+    "closed_large": CLOSED_LARGE_BASIS,
+    "closed_trig": CLOSED_TRIG_BASIS,
 }
 
 
@@ -152,6 +157,11 @@ class ManualExpansion(nn.Module):
                 )
 
             selected_basis = basis_list[:expansion_degree]
+
+            # For specific bases, respect bias by explicitly adding a constant term
+            # without consuming one of the selected system-specific terms.
+            if bias and "1" not in selected_basis:
+                selected_basis = ["1"] + selected_basis
 
             self.expand_names = selected_basis
             self.expanded_basis = selected_basis

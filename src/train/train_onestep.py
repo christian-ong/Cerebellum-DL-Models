@@ -21,10 +21,12 @@ def train_onestep(
         weight_decay=weight_decay,
     )
 
-    scheduler = torch.optim.lr_scheduler.StepLR(
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
-        step_size=100,
-        gamma=0.5,
+        mode="min",
+        factor=0.5,
+        patience=5,
+        min_lr=1e-7,
     )
 
     loss_fn = torch.nn.MSELoss()
@@ -32,6 +34,9 @@ def train_onestep(
     all_train_losses = []
     epoch_val_losses = []
     batch_val_losses = []
+    best_state_dict = None
+    best_epoch = -1
+    best_val_loss = float("inf")
 
     for epoch in range(epochs):
 
@@ -162,7 +167,18 @@ def train_onestep(
 
         epoch_val_losses.append(val_loss)
 
-        scheduler.step()
+        if val_loss is not None and val_loss < best_val_loss:
+            best_val_loss = float(val_loss)
+            best_epoch = epoch
+            best_state_dict = {
+                key: value.detach().cpu().clone()
+                for key, value in model.state_dict().items()
+            }
+
+        if val_loss is not None:
+            scheduler.step(val_loss)
+        else:
+            scheduler.step(train_loss)
 
         current_lr = optimizer.param_groups[0]["lr"]
 
@@ -187,4 +203,18 @@ def train_onestep(
         None,
     )
 
-    return model, losses
+    if best_state_dict is None:
+        best_state_dict = {
+            key: value.detach().cpu().clone()
+            for key, value in model.state_dict().items()
+        }
+        best_epoch = epochs - 1
+        best_val_loss = None
+
+    best_checkpoint = {
+        "state_dict": best_state_dict,
+        "epoch": best_epoch,
+        "val_loss": best_val_loss,
+    }
+
+    return model, losses, best_checkpoint

@@ -53,9 +53,9 @@ Global options (defaults):
     python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/inward_spiral --epochs 10
     python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/harmonic_oscillator --epochs 10
 
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly --epochs 10
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_large --epochs 10
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_trig --epochs 10
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_small --epochs 10
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_large --epochs 10
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_trig --epochs 10
 
     python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/vanderpol --epochs 10
     python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lotka_volterra --epochs 10
@@ -70,9 +70,9 @@ Global options (defaults):
     python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/inward_spiral --epochs 10
     python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/harmonic_oscillator --epochs 10
 
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly --epochs 10
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_large --epochs 10
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig --epochs 10
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_small --epochs 10
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_large --epochs 10
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig --epochs 10
 
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol --epochs 10
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra --epochs 10
@@ -88,14 +88,15 @@ Global options (defaults):
     python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/inward_spiral --bias true --normalize_state true
     python -m scripts.train --model regression_dmd --data_path data/trajectories/linear/harmonic_oscillator --bias true --normalize_state true
 
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/closed_small --expansion_type specific --expansion_degree 3
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/closed_large --expansion_type specific --expansion_degree 5
+    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/closed_trig --expansion_type specific --expansion_degree 10
+
     python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/vanderpol --expansion_type specific --expansion_degree 10
     python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/lotka_volterra --expansion_type specific --expansion_degree 10
     python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/pendulum --expansion_type specific --expansion_degree 10
     python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/duffing --expansion_type specific --expansion_degree 10
     python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/lorenz --expansion_type specific --expansion_degree 10
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/koopman_poly --expansion_type specific --expansion_degree 3
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/koopman_poly_large --expansion_type specific --expansion_degree 5
-    python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig --expansion_type specific --expansion_degree 10
 
 # ML Linear Dynamics + Manual Expansion
     python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/saddle_point --epochs 10 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
@@ -103,9 +104,9 @@ Global options (defaults):
     python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/inward_spiral --epochs 10 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
     python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/harmonic_oscillator --epochs 10 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
 
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly --epochs 10 --expansion_type specific --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_large --epochs 10 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/koopman_poly_trig --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_small --epochs 10 --expansion_type specific --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_large --epochs 10 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_trig --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5
 
     python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/vanderpol --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false
     python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lotka_volterra --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false
@@ -119,9 +120,9 @@ Global options (defaults):
     python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/inward_spiral --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
     python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/harmonic_oscillator --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
 
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly --epochs 20 --expansion_type specific --expansion_degree 3 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec3
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_large --epochs 20 --expansion_type specific --expansion_degree 5 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec5
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/koopman_poly_trig --epochs 20 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5 --name spec10_trig
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_small --epochs 20 --expansion_type specific --expansion_degree 3 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec3
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_large --epochs 20 --expansion_type specific --expansion_degree 5 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec5
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig --epochs 20 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5 --name spec10_trig
 
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol --epochs 20 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion false --name vanderpol_gen5
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name lotkavolterra_gen3
@@ -135,14 +136,15 @@ Global options (defaults):
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/linear/inward_spiral --sindy_discrete_time true --sindy_poly_order 1 --sindy_threshold 0.0 --sindy_alpha 0.0
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/linear/harmonic_oscillator --sindy_discrete_time true --sindy_poly_order 1 --sindy_threshold 0.0 --sindy_alpha 0.0
 
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/closed_small --sindy_discrete_time true --sindy_poly_order 2 --sindy_threshold 0.0 --sindy_alpha 0.0
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/closed_large --sindy_discrete_time true --sindy_poly_order 4 --sindy_threshold 0.0 --sindy_alpha 0.0
+    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/closed_trig --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6    
+
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/vanderpol --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 1e-4 --sindy_alpha 1e-6 --sindy_library_type specific --sindy_specific_basis_size 10
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/lotka_volterra --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/pendulum --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/duffing --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
     python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/lorenz --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
-    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/koopman_poly --sindy_discrete_time true --sindy_poly_order 2 --sindy_threshold 0.0 --sindy_alpha 0.0
-    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/koopman_poly_large --sindy_discrete_time true --sindy_poly_order 4 --sindy_threshold 0.0 --sindy_alpha 0.0
-    python -m scripts.train --model sindy_baseline --data_path data/trajectories/nonlinear/koopman_poly_trig --sindy_discrete_time true --sindy_poly_order 3 --sindy_threshold 0.01 --sindy_alpha 1e-6
 
 ---------------------------------------------------------------------------------------------
 
@@ -178,6 +180,30 @@ def load_best_hyperparams(config_path, system_name, model_name, expansion_type, 
         return config[system_name][model_name][expansion_type][str(expansion_degree)]
     except KeyError:
         return None
+
+
+def resolve_ml_state_normalization(args, system_name):
+    """
+    Decide whether to standardize state before expansion for ML models.
+
+    auto: disable for exact Koopman benchmark systems when using specific basis,
+    enable otherwise.
+    """
+    if args.normalize_state_for_ml != "auto":
+        return args.normalize_state_for_ml == "true"
+
+    is_ml_model = args.model in {"ml_lineardynamics", "ml_dmd"}
+    is_specific = args.expansion_type == "specific"
+    is_closed_benchmark = system_name in {
+        "closed_small",
+        "closed_large",
+        "closed_trig",
+    }
+
+    if is_ml_model and is_specific and is_closed_benchmark:
+        return False
+
+    return True
 
 
 # --------------------------------------------------
@@ -217,6 +243,16 @@ def main():
     parser.add_argument("--batch_size", type=int, default=2048)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=0.0)
+    parser.add_argument(
+        "--normalize_state_for_ml",
+        type=str.lower,
+        choices=["true", "false", "auto"],
+        default="auto",
+        help=(
+            "Whether ML models standardize state before expansion. "
+            "auto disables this for closed_* with specific basis and enables otherwise."
+        ),
+    )
 
     # --------------------------------------------------
     # DMD / EDMD hyperparameters
@@ -302,9 +338,11 @@ def main():
     train_state_mean = torch.tensor(np.mean(meta["X"], axis=(0, 1)), dtype=torch.float32, device=device)
     train_state_scale = torch.tensor(np.std(meta["X"], axis=(0, 1)), dtype=torch.float32, device=device)
     train_state_scale = torch.clamp(train_state_scale, min=1e-6)
+
+    normalize_state_for_ml = resolve_ml_state_normalization(args, system_name)
     
 
-# Get training data
+    # Get training data
     X, Y = dataloader_to_numpy(train_loader)
     
     # ==================================================
@@ -527,7 +565,9 @@ def main():
     if hasattr(model, "expansion_type"):
         print(f"Expand names: {model.expand_names}")
 
-    if hasattr(model, "set_state_scale"):
+    print(f"ML state normalization before expansion: {normalize_state_for_ml}")
+
+    if normalize_state_for_ml and hasattr(model, "set_state_scale"):
         model.set_state_scale(train_state_mean, train_state_scale)
 
     # --------------------------------------------------
@@ -537,27 +577,60 @@ def main():
     maybe_set_z_scale(model, train_loader, device)
     
     # Train
-    model, (train_losses, batch_val_losses, epoch_val_losses, loss_components_val) = train_onestep(
+    model, (train_losses, batch_val_losses, epoch_val_losses, loss_components_val), best_checkpoint = train_onestep(
         model=model, train_loader=train_loader, val_loader=val_loader,
         device=device, epochs=args.epochs, lr=args.lr, weight_decay=args.weight_decay)
-    
-    # Save
-    save_path = os.path.join(save_dir, "model.pt")
-    torch.save({
-        "model_state_dict": model.state_dict(),
+
+    # Save both best-by-validation and final epoch checkpoints.
+    checkpoint_base = {
         "model": args.model,
         "system": system_name,
         "state_dim": state_dim,
         "train_args": vars(args),
         "data_path": args.data_path,
         "expand_names": model.expand_names if hasattr(model, "expand_names") else None,
-    }, save_path)
+        "best_epoch": best_checkpoint["epoch"],
+        "best_val_loss": best_checkpoint["val_loss"],
+    }
+
+    best_save_path = os.path.join(save_dir, "model_best.pt")
+    torch.save(
+        {
+            **checkpoint_base,
+            "model_state_dict": best_checkpoint["state_dict"],
+            "checkpoint_type": "best",
+        },
+        best_save_path,
+    )
+
+    last_save_path = os.path.join(save_dir, "model_last.pt")
+    torch.save(
+        {
+            **checkpoint_base,
+            "model_state_dict": model.state_dict(),
+            "checkpoint_type": "last",
+        },
+        last_save_path,
+    )
+
+    # Keep backward-compatible default path, now pointing to best checkpoint.
+    save_path = os.path.join(save_dir, "model.pt")
+    torch.save(
+        {
+            **checkpoint_base,
+            "model_state_dict": best_checkpoint["state_dict"],
+            "checkpoint_type": "best",
+        },
+        save_path,
+    )
     
     loss_path = os.path.join(save_dir, "losses.npz")
     np.savez(loss_path, train_losses=train_losses, batch_val_losses=batch_val_losses,
              epoch_val_losses=epoch_val_losses, loss_components_val=loss_components_val)
     
-    print(f"Saved model to {save_path}")
+    print(f"Saved best model to {best_save_path}")
+    print(f"Saved last model to {last_save_path}")
+    print(f"Saved default model to {save_path}")
     print(f"Saved losses to {loss_path}")
 
 

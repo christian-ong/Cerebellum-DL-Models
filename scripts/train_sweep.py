@@ -17,7 +17,6 @@ from src.eval.sweep_utils import (
 
 
 EVAL_HORIZONS = [10, 100, 500]
-SELECTION_HORIZON = 100  # choose 100, 200, or 500 depending on what you want to optimize
 
 
 def fmt_metric(x):
@@ -32,12 +31,14 @@ def print_multi_horizon_metrics(metrics_dict, gamma, prefix=""):
     for h in EVAL_HORIZONS:
         rmse = metrics_dict.get(f"rollout_rmse_h{h}")
         nrmse = metrics_dict.get(f"rollout_nrmse_h{h}")
+        w_rmse = metrics_dict.get(f"discounted_mean_rmse_h{h}_g{gamma:.2f}")
         w_nrmse = metrics_dict.get(f"discounted_mean_nrmse_h{h}_g{gamma:.2f}")
 
         print(
             f"{prefix}h={h:3d} | "
             f"RMSE: {fmt_metric(rmse)} | "
             f"NRMSE: {fmt_metric(nrmse)} | "
+            f"W-RMSE: {fmt_metric(w_rmse)} | "
             f"W-NRMSE: {fmt_metric(w_nrmse)}"
         )
 
@@ -50,12 +51,33 @@ def add_prefixed_metrics(log_dict, metrics_dict, prefix):
         log_dict[f"{prefix}{k}"] = v
 
 
-def get_selection_metric(metrics_dict, gamma, selection_horizon):
-    if metrics_dict is None:
-        return None
-    return metrics_dict.get(
-        f"discounted_mean_nrmse_h{selection_horizon}_g{gamma:.2f}"
-    )
+def _is_scalar_number(v):
+    return isinstance(v, (int, float, np.floating)) and np.isfinite(v)
+
+
+def update_best_metrics(best_metrics, current_metrics, current_epoch):
+    for key, value in current_metrics.items():
+        if not _is_scalar_number(value):
+            continue
+        if key not in best_metrics or value < best_metrics[key]["value"]:
+            best_metrics[key] = {"value": float(value), "epoch": int(current_epoch)}
+
+def resolve_ml_state_normalization(args, system_name):
+    if args.normalize_state_for_ml != "auto":
+        return args.normalize_state_for_ml == "true"
+
+    is_ml_model = args.model in {"ml_linear_dynamics", "ml_dmd"}
+    is_specific = args.expansion_type == "specific"
+    is_closed_benchmark = system_name in {
+        "closed_small",
+        "closed_large",
+        "closed_trig",
+    }
+
+    if is_ml_model and is_specific and is_closed_benchmark:
+        return False
+
+    return True
 
 def main():
     parser = argparse.ArgumentParser(description="Fast W&B sweep training for Koopman models")
@@ -79,6 +101,7 @@ def main():
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-6)
+    parser.add_argument("--normalize_state_for_ml", type=str.lower, choices=["true", "false", "auto"], default="auto")
 
     # model hyperparameters
     parser.add_argument("--bias", type=str.lower, choices=["true", "false"], default="true")
@@ -147,18 +170,18 @@ def main():
     print(f"Val trajectory tensor shape:   {val_X.shape}")
     print(f"Test trajectory tensor shape:  {test_X.shape}")
 
+    normalize_state_for_ml = resolve_ml_state_normalization(args, system_name)
+    print(f"ML state normalization before expansion: {normalize_state_for_ml}")
+
     # --------------------------------------------------
     # W&B init
     # --------------------------------------------------
-    selection_metric_name = f"val_discounted_mean_nrmse_h{SELECTION_HORIZON}_g{args.rollout_gamma:.2f}"
-
     run = wandb.init(
         project="koopman-operator-learning",
         config=vars(args),
         group=f"{system_name}_{args.model}",
         tags=[system_name, args.model, args.expansion_type, args.trajectory_length],
     )
-    wandb.define_metric(selection_metric_name, summary="min")
 
     config = wandb.config
     for key, value in config.items():
@@ -172,11 +195,10 @@ def main():
             **vars(args),
             "system": system_name,
             "state_dim": int(state_dim),
+            "effective_normalize_state_for_ml": normalize_state_for_ml,            
             "group_name": f"{system_name}_{args.model}",
             "model_name": args.model,
             "system_name": system_name,
-            "selection_horizon": SELECTION_HORIZON,
-            "selection_metric_name": selection_metric_name,
             "trajectory_length": args.trajectory_length
         },
         allow_val_change=True,
@@ -229,7 +251,7 @@ def main():
     if hasattr(model, "expand_names"):
         print(f"Expanded features: {len(model.expand_names)}")
         print(model.expand_names)
-    if hasattr(model, "set_state_scale"):
+    if normalize_state_for_ml and hasattr(model, "set_state_scale"):
         model.set_state_scale(train_state_mean, train_state_scale)
 
     maybe_set_z_scale(model, train_loader, device)
@@ -243,17 +265,18 @@ def main():
         weight_decay=args.weight_decay,
     )
 
-    scheduler = torch.optim.lr_scheduler.StepLR(
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
-        step_size=100,
-        gamma=0.5,
+        mode="min",
+        factor=0.5,
+        patience=5,
+        min_lr=1e-7,
     )
 
     loss_fn = torch.nn.MSELoss()
 
-    best_metric = np.inf
-    best_epoch = -1
-    best_state = None
+    best_metrics = {}
+    final_epoch_metrics = {}
 
     # --------------------------------------------------
     # Training
@@ -353,54 +376,46 @@ def main():
         if val_rollout_metrics is not None:
             add_prefixed_metrics(log_dict, val_rollout_metrics, "val_")
 
-            selection_metric = get_selection_metric(
-                val_rollout_metrics,
-                gamma=args.rollout_gamma,
-                selection_horizon=SELECTION_HORIZON,
-            )
+        # Track best value seen for each metric over training.
+        metric_candidates = {
+            k: v
+            for k, v in log_dict.items()
+            if k not in {"epoch", "lr"}
+        }
+        update_best_metrics(best_metrics, metric_candidates, epoch)
 
-            if selection_metric is not None:
-                log_dict[selection_metric_name] = selection_metric
-
-            if selection_metric is not None and selection_metric < best_metric:
-                print(f"New best model based on {selection_metric_name}.")
-                best_metric = selection_metric
-                best_epoch = epoch
-                best_state = {
-                    k: v.detach().cpu().clone()
-                    for k, v in model.state_dict().items()
-                }
+        # Keep all metrics from the final training epoch.
+        final_epoch_metrics = dict(metric_candidates)
 
         wandb.log(log_dict, step=epoch)
         scheduler.step()
 
         print(f"Epoch time: {time.time() - epoch_start:.1f}s")
 
-    # --------------------------------------------------
-    # Restore best model
-    # --------------------------------------------------
-    if best_state is not None:
-        print(f"\nRestoring best model from epoch {best_epoch}...")
-        model.load_state_dict(best_state)
-    else:
-        print("\nNo rollout checkpoint was saved. Keeping last epoch weights.")
-
     model.eval()
 
-    wandb.log({
-        "best_epoch": best_epoch,
-        f"best_{selection_metric_name}": float(best_metric) if np.isfinite(best_metric) else None,
-    })
+    # Log compact best-metric summary and final-epoch metrics.
+    best_metrics_log = {}
+    for metric_name, payload in best_metrics.items():
+        best_metrics_log[f"best/{metric_name}"] = payload["value"]
+        best_metrics_log[f"best_epoch/{metric_name}"] = payload["epoch"]
+
+    final_epoch_log = {f"final_epoch/{k}": v for k, v in final_epoch_metrics.items()}
+
+    if best_metrics_log:
+        wandb.log(best_metrics_log)
+    if final_epoch_log:
+        wandb.log(final_epoch_log)
 
     # --------------------------------------------------
-    # Final validation
+    # Final validation (last epoch weights)
     # --------------------------------------------------
-    print("\n===== BEST MODEL VALIDATION =====")
-    val_best_loss, val_best_one_step_rmse, val_best_one_step_nrmse = compute_loader_metrics(
+    print("\n===== FINAL EPOCH VALIDATION =====")
+    val_final_loss, val_final_one_step_rmse, val_final_one_step_nrmse = compute_loader_metrics(
         model, val_loader, device, state_scale=train_state_scale
     )
 
-    val_best_rollout_metrics = compute_rollout_metrics(
+    val_final_rollout_metrics = compute_rollout_metrics(
         model=model,
         X=val_X,
         device=device,
@@ -410,22 +425,22 @@ def main():
         state_scale=train_state_scale,
     )
 
-    print(f"val_best_loss:          {fmt_metric(val_best_loss)}")
-    print(f"val_best_one_step_rmse: {fmt_metric(val_best_one_step_rmse)}")
-    print(f"val_best_one_step_nrmse:{fmt_metric(val_best_one_step_nrmse)}")
+    print(f"val_final_loss:          {fmt_metric(val_final_loss)}")
+    print(f"val_final_one_step_rmse: {fmt_metric(val_final_one_step_rmse)}")
+    print(f"val_final_one_step_nrmse:{fmt_metric(val_final_one_step_nrmse)}")
     print_multi_horizon_metrics(
-        val_best_rollout_metrics,
+        val_final_rollout_metrics,
         gamma=args.rollout_gamma,
-        prefix="val_best ",
+        prefix="val_final ",
     )
 
-    val_best_log = {
-        "val_best_loss": val_best_loss,
-        "val_best_one_step_rmse": val_best_one_step_rmse,
-        "val_best_one_step_nrmse": val_best_one_step_nrmse,
+    val_final_log = {
+        "val_final_loss": val_final_loss,
+        "val_final_one_step_rmse": val_final_one_step_rmse,
+        "val_final_one_step_nrmse": val_final_one_step_nrmse,
     }
-    add_prefixed_metrics(val_best_log, val_best_rollout_metrics, "val_best_")
-    wandb.log(val_best_log)
+    add_prefixed_metrics(val_final_log, val_final_rollout_metrics, "val_final_")
+    wandb.log(val_final_log)
 
     # --------------------------------------------------
     # Final test
@@ -465,23 +480,25 @@ def main():
     # --------------------------------------------------
     # Summary
     # --------------------------------------------------
-    wandb.summary["best_epoch"] = best_epoch
-    wandb.summary[f"best_{selection_metric_name}"] = (
-        float(best_metric) if np.isfinite(best_metric) else None
-    )
-
-    wandb.summary["val_best_one_step_rmse"] = val_best_one_step_rmse
+    wandb.summary["val_final_one_step_rmse"] = val_final_one_step_rmse
     wandb.summary["test_one_step_rmse"] = test_one_step_rmse
 
-    wandb.summary["val_best_one_step_nrmse"] = val_best_one_step_nrmse
+    wandb.summary["val_final_one_step_nrmse"] = val_final_one_step_nrmse
     wandb.summary["test_one_step_nrmse"] = test_one_step_nrmse
 
-    wandb.summary["val_best_loss"] = val_best_loss
+    wandb.summary["val_final_loss"] = val_final_loss
     wandb.summary["test_loss"] = test_loss
 
-    if val_best_rollout_metrics is not None:
-        for k, v in val_best_rollout_metrics.items():
-            wandb.summary[f"val_best_{k}"] = v
+    for metric_name, payload in best_metrics.items():
+        wandb.summary[f"best/{metric_name}"] = payload["value"]
+        wandb.summary[f"best_epoch/{metric_name}"] = payload["epoch"]
+
+    for metric_name, value in final_epoch_metrics.items():
+        wandb.summary[f"final_epoch/{metric_name}"] = value
+
+    if val_final_rollout_metrics is not None:
+        for k, v in val_final_rollout_metrics.items():
+            wandb.summary[f"val_final_{k}"] = v
 
     if test_rollout_metrics is not None:
         for k, v in test_rollout_metrics.items():
