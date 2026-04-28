@@ -1,6 +1,7 @@
 import os
 import torch
 import numpy as np
+import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 from src.models.ml_dmd import ML_DMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
@@ -88,37 +89,114 @@ def get_koopman_eigensystem(model):
 
 
 def plot_transition_matrices(matrices, title, expansion_names):
-    num_rows = int(np.ceil(len(matrices) / 2))
-    fig, axes = plt.subplots(num_rows, 2, figsize=(10, 5 * num_rows))
-    fig.suptitle(title, fontsize=16)
-    for ax, (M, subtitle) in zip(axes.flat, matrices):
+    # If we have exactly our 5 main matrices, use the custom GridSpec dashboard layout
+    if len(matrices) == 5:
+        fig = plt.figure(figsize=(18, 10))
+        # Create a 2x3 grid. The 3rd column is slightly wider for the master K matrix
+        gs = gridspec.GridSpec(2, 3, width_ratios=[1, 1, 1.2])
+        
+        axes = [
+            fig.add_subplot(gs[0, 0]), # Top Left: Complex V
+            fig.add_subplot(gs[0, 1]), # Top Mid: Complex Lambda
+            fig.add_subplot(gs[1, 0]), # Bottom Left: Real Phi
+            fig.add_subplot(gs[1, 1]), # Bottom Mid: Real Lambda
+            fig.add_subplot(gs[:, 2])  # Right Side: Operator K (Spans both rows)
+        ]
+    else:
+        # Fallback standard layout if a different number of matrices is passed
+        num_rows = int(np.ceil(len(matrices) / 2))
+        fig, axes_flat = plt.subplots(num_rows, 2, figsize=(14, 6 * num_rows))
+        axes = axes_flat.flat
+
+    fig.suptitle(title, fontsize=18, fontweight='bold', y=0.96)
+    
+    for i, (M, subtitle) in enumerate(matrices):
+        ax = axes[i]
         M_mag = np.abs(M) 
         im = ax.imshow(M_mag)
-        ax.set_title(subtitle)
+        ax.set_title(subtitle, fontsize=14)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         
-        ax.set_xlabel("Column Index")
-        ax.set_ylabel("Row Index")
+        # ax.set_xlabel("Column Index")
+        # ax.set_ylabel("Row Index")
         ax.set_xticks(range(len(expansion_names)))
-        ax.set_xticklabels(expansion_names, rotation=70, fontsize=6)
+        ax.set_xticklabels(expansion_names, rotation=60, fontsize=9)
         ax.set_yticks(range(len(expansion_names)))
-        ax.set_yticklabels(expansion_names, fontsize=6)
+        ax.set_yticklabels(expansion_names, fontsize=9)
 
-        for (i, j), v in np.ndenumerate(M):
+        # Dynamically scale font size based on matrix dimension
+        n_cols = M.shape[1]
+        f_size = 10 if n_cols <= 5 else (8 if n_cols <= 8 else 6)
+
+        for (row, col), v in np.ndenumerate(M):
             if abs(v) > 1e-3:
+                r, im_val = np.real(v), np.imag(v)
+                
+                # Smart formatting to prevent text overlap
+                if abs(im_val) < 1e-3:
+                    txt = f"{r:.2f}"
+                elif abs(r) < 1e-3:
+                    txt = f"{im_val:.2f}j"
+                else:
+                    # Stack complex numbers vertically
+                    sign = "+" if im_val > 0 else "-"
+                    txt = f"{r:.2f}\n{sign}{abs(im_val):.2f}j"
+
                 ax.text(
-                    j, i, f"{v:.3f}",
+                    col, row, txt,
                     ha="center", va="center",
-                    rotation=20, fontsize=7, color="red"
+                    fontsize=f_size, color="red"
                 )
 
-    for i in range(len(matrices), axes.shape[0] * axes.shape[1]):
-        axes.flat[i].axis("off")
+    if len(matrices) != 5:
+        for i in range(len(matrices), len(axes)):
+            axes[i].axis("off")
 
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.13, top=0.9, hspace=0.43)
+    if len(matrices) == 5:
+        plt.subplots_adjust(top=0.90, hspace=0.3, wspace=0.25)
+    else:
+        plt.subplots_adjust(bottom=0.1, top=0.92, hspace=0.4, wspace=0.2)
+        
     plt.show()
 
+def get_real_representation(V, eigvals):
+    """
+    Converts complex Koopman modes and eigenvalues into their 
+    real-valued block-diagonal form.
+    """
+    V_real = np.zeros_like(V, dtype=np.float64)
+    Lambda_real = np.zeros((len(eigvals), len(eigvals)), dtype=np.float64)
+    
+    i = 0
+    while i < len(eigvals):
+        if abs(np.imag(eigvals[i])) < 1e-5:
+            # Strictly real eigenvalue
+            V_real[:, i] = np.real(V[:, i])
+            Lambda_real[i, i] = np.real(eigvals[i])
+            i += 1
+        else:
+            # Complex conjugate pair
+            # Our custom sorting guarantees the conjugate is adjacent
+            if i + 1 < len(eigvals):
+                V_real[:, i] = np.real(V[:, i])
+                V_real[:, i+1] = np.imag(V[:, i])  # Split into Real and Imaginary vectors
+                
+                a = np.real(eigvals[i])
+                b = np.imag(eigvals[i])
+                
+                # Build the 2x2 rotation block
+                Lambda_real[i, i] = a
+                Lambda_real[i, i+1] = b
+                Lambda_real[i+1, i] = -b
+                Lambda_real[i+1, i+1] = a
+                i += 2
+            else:
+                V_real[:, i] = np.real(V[:, i])
+                Lambda_real[i, i] = np.real(eigvals[i])
+                i += 1
+                
+    return V_real, Lambda_real
 
 def plot_complex_field(points, values, title, cmap="inferno"):
     grid_n = int(np.sqrt(len(points)))
@@ -413,8 +491,8 @@ def plot_mode_energy_vs_quality(V, scores, state_dim, n_top=20):
 if __name__ == "__main__":
     # Settings
     model_name = "ml_dmd"
-    system_name = "closed_large"
-    custom_name = "spec5_new"
+    system_name = "closed_trig_large"
+    custom_name = "spec10_trig"
     grid_res = 100
     n_top_modes = 5
     
@@ -461,10 +539,17 @@ if __name__ == "__main__":
     # --------------------------------------------------
     # Plot Koopman Operator Matrices
     # --------------------------------------------------
+    
+    # Extract the real block-diagonal representation
+    V_real, Lambda_real = get_real_representation(V, eigvals)
+    
     matrices = [
-        (V, "Extracted Koopman Modes (V)"),
+        (V, "Extracted Koopman Modes (Complex V)"),
         (np.diag(eigvals), "True Complex $\Lambda$"),
-        (K, r"Operator K")]
+        (V_real, "Real Koopman Modes ($\Phi_{real}$)"),
+        (Lambda_real, "Real Block-Diagonal $\Lambda_{real}$"),
+        (K, r"Operator K")
+    ]
     plot_transition_matrices(matrices, f"Koopman Operator Matrices, {system_name}", model.expand_names)
     
     # --------------------------------------------------
