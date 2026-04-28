@@ -337,8 +337,10 @@ class ML_DMD(ManualExpansion):
 
         z_next_pred_raw = z_next_pred * self.z_scale
         x_next_pred_scaled = self.de_expand(z_next_pred_raw)
-        x_next_pred = self.unscale_state(x_next_pred_scaled)
-        loss_state = nn.MSELoss()(x_next_pred, x_next_true)
+        
+        # FIX: Compare scaled prediction against scaled ground truth target
+        x_next_true_scaled = self.scale_state(x_next_true)
+        loss_state = nn.MSELoss()(x_next_pred_scaled, x_next_true_scaled)
 
         # --------------------------------------------------
         # 3) Φ conditioning regularization

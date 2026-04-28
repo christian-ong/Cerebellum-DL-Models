@@ -63,18 +63,20 @@ def update_best_metrics(best_metrics, current_metrics, current_epoch):
             best_metrics[key] = {"value": float(value), "epoch": int(current_epoch)}
 
 def resolve_ml_state_normalization(args, system_name):
+    """
+    Decide whether to standardize state before expansion for ML models.
+
+    auto: defaults to False for ML Koopman models (since mean-shifting 
+    corrupts polynomial basis independence), true otherwise.
+    """
     if args.normalize_state_for_ml != "auto":
         return args.normalize_state_for_ml == "true"
 
-    is_ml_model = args.model in {"ml_linear_dynamics", "ml_dmd"}
-    is_specific = args.expansion_type == "specific"
-    is_closed_benchmark = system_name in {
-        "closed_small",
-        "closed_large",
-        "closed_trig",
-    }
+    is_ml_model = args.model in {"ml_lineardynamics", "ml_dmd"}
 
-    if is_ml_model and is_specific and is_closed_benchmark:
+    # Mathematically, shifting state variables before applying polynomial 
+    # dictionaries creates parasitic lower-degree terms. Disable by default.
+    if is_ml_model:
         return False
 
     return True

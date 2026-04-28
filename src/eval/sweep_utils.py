@@ -7,7 +7,7 @@ from src.models.ml_dmd import ML_DMD
 
 def maybe_set_z_scale(model, train_loader, device):
     if hasattr(model, "expand") and hasattr(model, "set_z_scale"):
-        print("Setting z_scale from training data...")
+        print("Setting z_scale from training data (Max-Abs)...")
         with torch.no_grad():
             zs = []
             for x_batch, _ in train_loader:
@@ -19,7 +19,8 @@ def maybe_set_z_scale(model, train_loader, device):
 
             if len(zs) > 0:
                 z_all = torch.cat(zs, dim=0)
-                z_scale = torch.clamp(torch.mean(torch.abs(z_all), dim=0), min=1e-5)
+                # FIX: Use max() instead of mean() to strictly bound high-degree polynomials
+                z_scale = torch.clamp(torch.max(torch.abs(z_all), dim=0)[0], min=1e-5)
                 model.set_z_scale(z_scale)
         print("z_scale set.")
 

@@ -188,23 +188,17 @@ def resolve_ml_state_normalization(args, system_name):
     """
     Decide whether to standardize state before expansion for ML models.
 
-    auto: disable for exact Koopman benchmark systems when using specific basis,
-    enable otherwise.
+    auto: defaults to False for ML Koopman models (since mean-shifting 
+    corrupts polynomial basis independence), true otherwise.
     """
     if args.normalize_state_for_ml != "auto":
         return args.normalize_state_for_ml == "true"
 
     is_ml_model = args.model in {"ml_lineardynamics", "ml_dmd"}
-    is_specific = args.expansion_type == "specific"
-    is_closed_benchmark = system_name in {
-        "closed_small",
-        "closed_large",
-        "closed_trig_small",
-        "closed_trig_medium",
-        "closed_trig_large",
-    }
 
-    if is_ml_model and is_specific and is_closed_benchmark:
+    # Mathematically, shifting state variables before applying polynomial 
+    # dictionaries creates parasitic lower-degree terms. Disable by default.
+    if is_ml_model:
         return False
 
     return True
@@ -263,7 +257,7 @@ def main():
     # --------------------------------------------------
     parser.add_argument("--rank", type=int, default=None)
     parser.add_argument("--ridge", type=float, default=0.0)
-    parser.add_argument("--bias", type=str.lower, choices=["true", "false"], default="false", help="Include bias term in polynomial expansion")
+    parser.add_argument("--bias", type=str.lower, choices=["true", "false"], default="true", help="Include bias term in polynomial expansion")
     parser.add_argument("--expansion_type", type=str, default="general", choices=["general", "specific"], help="Whether to use general polynomial expansion (all combinations up to degree) or specific expansion (e.g. only x^2, y^2, xy) for the manual expansion models")
     parser.add_argument("--expansion_degree", type=int, default=1)
     parser.add_argument("--sine_cosine_expansion", type=str.lower,choices=["true", "false"], default="false",help="Include sin(x_i) and cos(x_i) terms in the manual expansion basis")

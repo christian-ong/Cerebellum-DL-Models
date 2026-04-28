@@ -1,8 +1,10 @@
 import os
+import argparse
 import torch
 import numpy as np
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
+from src.data_generation.load_data import resolve_split_npz_path
 from src.models.ml_dmd import ML_DMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 
@@ -88,7 +90,7 @@ def get_koopman_eigensystem(model):
     raise ValueError("Model format not recognized for eigensystem extraction.")
 
 
-def plot_transition_matrices(matrices, title, expansion_names):
+def plot_transition_matrices(matrices, title, expansion_names, save_path=None):
     # If we have exactly our 5 main matrices, use the custom GridSpec dashboard layout
     if len(matrices) == 5:
         fig = plt.figure(figsize=(18, 10))
@@ -117,8 +119,6 @@ def plot_transition_matrices(matrices, title, expansion_names):
         ax.set_title(subtitle, fontsize=14)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         
-        # ax.set_xlabel("Column Index")
-        # ax.set_ylabel("Row Index")
         ax.set_xticks(range(len(expansion_names)))
         ax.set_xticklabels(expansion_names, rotation=60, fontsize=9)
         ax.set_yticks(range(len(expansion_names)))
@@ -132,13 +132,11 @@ def plot_transition_matrices(matrices, title, expansion_names):
             if abs(v) > 1e-3:
                 r, im_val = np.real(v), np.imag(v)
                 
-                # Smart formatting to prevent text overlap
                 if abs(im_val) < 1e-3:
                     txt = f"{r:.2f}"
                 elif abs(r) < 1e-3:
                     txt = f"{im_val:.2f}j"
                 else:
-                    # Stack complex numbers vertically
                     sign = "+" if im_val > 0 else "-"
                     txt = f"{r:.2f}\n{sign}{abs(im_val):.2f}j"
 
@@ -158,7 +156,11 @@ def plot_transition_matrices(matrices, title, expansion_names):
     else:
         plt.subplots_adjust(bottom=0.1, top=0.92, hspace=0.4, wspace=0.2)
         
-    plt.show()
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
 
 def get_real_representation(V, eigvals):
     """
@@ -171,21 +173,17 @@ def get_real_representation(V, eigvals):
     i = 0
     while i < len(eigvals):
         if abs(np.imag(eigvals[i])) < 1e-5:
-            # Strictly real eigenvalue
             V_real[:, i] = np.real(V[:, i])
             Lambda_real[i, i] = np.real(eigvals[i])
             i += 1
         else:
-            # Complex conjugate pair
-            # Our custom sorting guarantees the conjugate is adjacent
             if i + 1 < len(eigvals):
                 V_real[:, i] = np.real(V[:, i])
-                V_real[:, i+1] = np.imag(V[:, i])  # Split into Real and Imaginary vectors
+                V_real[:, i+1] = np.imag(V[:, i]) 
                 
                 a = np.real(eigvals[i])
                 b = np.imag(eigvals[i])
                 
-                # Build the 2x2 rotation block
                 Lambda_real[i, i] = a
                 Lambda_real[i, i+1] = b
                 Lambda_real[i+1, i] = -b
@@ -198,7 +196,7 @@ def get_real_representation(V, eigvals):
                 
     return V_real, Lambda_real
 
-def plot_complex_field(points, values, title, cmap="inferno"):
+def plot_complex_field(points, values, title, cmap="inferno", save_path=None):
     grid_n = int(np.sqrt(len(points)))
     extent = [points[:,0].min(), points[:,0].max(), points[:,1].min(), points[:,1].max()]
     num_modes = values.shape[-1]
@@ -220,7 +218,12 @@ def plot_complex_field(points, values, title, cmap="inferno"):
     
     fig.suptitle(title)
     plt.tight_layout()
-    plt.show()
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
 
 
 def calculate_mode_quality(model, W, eigvals, z_scale, state_bounds, n_modes_to_keep=8):
@@ -257,10 +260,18 @@ def calculate_mode_quality(model, W, eigvals, z_scale, state_bounds, n_modes_to_
 
     residual_mean = residual_accum / max(1, n_eval_traj)
 
+    # Calculate Spatial Score (Taking a 2D slice if state_dim > 2)
     x_range = np.linspace(state_bounds[0][0], state_bounds[0][1], 50)
     y_range = np.linspace(state_bounds[1][0], state_bounds[1][1], 50)
     X_grid, Y_grid = np.meshgrid(x_range, y_range)
-    pts = np.column_stack([X_grid.ravel(), Y_grid.ravel()])
+    
+    grid_cols = [X_grid.ravel(), Y_grid.ravel()]
+    # Pad higher dimensions with their median values
+    for dim in range(2, model.state_dim):
+        dim_mean = (state_bounds[dim][0] + state_bounds[dim][1]) / 2.0
+        grid_cols.append(np.full_like(X_grid.ravel(), dim_mean))
+        
+    pts = np.column_stack(grid_cols)
     
     with torch.no_grad():
         z_grid = model.expand(torch.as_tensor(pts, dtype=torch.float32)).cpu().numpy() / z_scale
@@ -280,7 +291,7 @@ def calculate_mode_quality(model, W, eigvals, z_scale, state_bounds, n_modes_to_
     return ranked_indices[:n_modes_to_keep], mode_score, residual_mean
 
 
-def plot_quality_spectrum(eigvals, mode_scores, theme="dark"):
+def plot_quality_spectrum(eigvals, mode_scores, theme="dark", save_path=None):
     fig, ax = plt.subplots(figsize=(6, 6))
     
     circle_color = "#9ca3af" if theme == "dark" else "#374151"
@@ -312,10 +323,15 @@ def plot_quality_spectrum(eigvals, mode_scores, theme="dark"):
     
     plt.grid(True, linestyle=':', alpha=0.3)
     plt.tight_layout()
-    plt.show()
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
 
 
-def plot_freq_magnitude(eigvals, mode_scores, theme="dark"):
+def plot_freq_magnitude(eigvals, mode_scores, theme="dark", save_path=None):
     magnitudes = np.abs(eigvals)
     frequencies = np.abs(np.angle(eigvals)) / np.pi 
     
@@ -360,10 +376,15 @@ def plot_freq_magnitude(eigvals, mode_scores, theme="dark"):
     
     plt.grid(True, linestyle=':', alpha=0.3)
     plt.tight_layout()
-    plt.show()
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
 
 
-def plot_mode_trajectories(model, W, eigvals, z_scale, best_ids, real_traj):
+def plot_mode_trajectories(model, W, eigvals, z_scale, best_ids, real_traj, save_path=None):
     n_steps = real_traj.shape[0]
     t = np.arange(n_steps)
     
@@ -402,10 +423,15 @@ def plot_mode_trajectories(model, W, eigvals, z_scale, best_ids, real_traj):
     axes[-1].set_xlabel("Time Steps")
     fig.suptitle("Koopman Mode Evolution: Reality vs. Model vs. Theory", fontsize=14)
     plt.tight_layout()
-    plt.show()
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
 
 
-def plot_mode_contributions_vs_quality(V, phi_traj, best_ids, scores, state_dim, n_top=10):
+def plot_mode_contributions_vs_quality(V, phi_traj, best_ids, scores, state_dim, n_top=10, save_path=None):
     amplitudes = np.mean(np.abs(phi_traj), axis=0)
     v_norms = np.linalg.norm(V[:state_dim, :], axis=0)
     
@@ -434,10 +460,15 @@ def plot_mode_contributions_vs_quality(V, phi_traj, best_ids, scores, state_dim,
 
     plt.colorbar(plt.cm.ScalarMappable(cmap='viridis'), ax=ax, label="Quality Score")
     plt.tight_layout()
-    plt.show()
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
 
 
-def plot_mode_energy_vs_quality(V, scores, state_dim, n_top=20):
+def plot_mode_energy_vs_quality(V, scores, state_dim, n_top=20, save_path=None):
     mode_energies = np.linalg.norm(V[:state_dim, :], axis=0)
     energy_norm = (mode_energies - mode_energies.min()) / (mode_energies.max() - mode_energies.min() + 1e-12)
 
@@ -481,7 +512,12 @@ def plot_mode_energy_vs_quality(V, scores, state_dim, n_top=20):
     
     plt.grid(True, linestyle=':', alpha=0.3)
     plt.tight_layout()
-    plt.show()
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
 
 
 # --------------------------------------------------
@@ -489,36 +525,54 @@ def plot_mode_energy_vs_quality(V, scores, state_dim, n_top=20):
 # --------------------------------------------------
 
 if __name__ == "__main__":
-    # Settings
-    model_name = "ml_dmd"
-    system_name = "closed_trig_large"
-    custom_name = "spec10_trig"
+    parser = argparse.ArgumentParser(description="Visualize Koopman dynamic modes and eigensystems.")
+    parser.add_argument("--model_name", type=str, default="ml_dmd", help="Name of the model type")
+    parser.add_argument("--custom_name", type=str, default="default", help="Custom name of the trained model")
+    parser.add_argument("--data_path", type=str, required=True, help="Path to the dataset directory")
+    args = parser.parse_args()
+
     grid_res = 100
     n_top_modes = 5
     
-    # 1. Load test trajectories FIRST to find true boundaries
-    data_path = f"data/trajectories/linear/{system_name}/test.npz" if system_name in ["degenerate_node", "harmonic_oscillator", "inward_spiral", "saddle_point"] else f"data/trajectories/nonlinear/{system_name}/test.npz"
-    data = np.load(data_path)
+    # 1. Load test trajectories FIRST to find true boundaries and system name dynamically
+    test_data_path = resolve_split_npz_path(args.data_path, "test")
+    data = np.load(test_data_path)
     trajectories = data['X'] 
     single_trajectory = trajectories[:, 0, :] 
+    system = str(data["system"])
+    state_dim = trajectories.shape[-1]
     
-    # Find min and max dynamically
-    x_min, x_max = trajectories[:, :, 0].min(), trajectories[:, :, 0].max()
-    y_min, y_max = trajectories[:, :, 1].min(), trajectories[:, :, 1].max()
-    state_bounds = [(x_min, x_max), (y_min, y_max)]
+    print(f"Visualizing for System: {system}")
+
+    # Find min and max dynamically for ALL dimensions
+    state_bounds = []
+    for dim in range(state_dim):
+        dim_min, dim_max = trajectories[:, :, dim].min(), trajectories[:, :, dim].max()
+        state_bounds.append((dim_min, dim_max))
     
     # 2. Load model and eigensystem
-    model_path = f"data/models/{model_name}/{system_name}/{custom_name}/model_best.pt"
+    if "ml" in args.model_name:
+        model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model_best.pt"
+    else:
+        model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model.pt"
+
     ckpt = torch.load(model_path, map_location="cpu")
     model, model_type = build_model_from_checkpoint(ckpt)
     z_scale = model.z_scale.detach().cpu().numpy()
     Phi, Lambda, eigvals, V, W, K = get_koopman_eigensystem(model)
     
-    # 3. Dynamic Grid setup based on true boundaries
-    x_range = np.linspace(x_min, x_max, grid_res)
-    y_range = np.linspace(y_min, y_max, grid_res)
+    # 3. Dynamic Grid setup based on true boundaries (taking 2D slice for 3D+ systems)
+    x_range = np.linspace(state_bounds[0][0], state_bounds[0][1], grid_res)
+    y_range = np.linspace(state_bounds[1][0], state_bounds[1][1], grid_res)
     X, Y = np.meshgrid(x_range, y_range)
-    grid_points = np.column_stack([X.ravel(), Y.ravel()])
+    
+    grid_cols = [X.ravel(), Y.ravel()]
+    # Pad higher dimensions with their mean trajectory values
+    for dim in range(2, state_dim):
+        dim_mean = trajectories[:, :, dim].mean()
+        grid_cols.append(np.full_like(X.ravel(), dim_mean))
+        
+    grid_points = np.column_stack(grid_cols)
     
     with torch.no_grad():
         z = model.expand(torch.as_tensor(grid_points, dtype=torch.float32)).cpu().numpy() / z_scale
@@ -536,13 +590,14 @@ if __name__ == "__main__":
     print(f"Top {n_top_modes} modes scores: {[f'{s:.3f}' for s in scores[best_ids[:n_top_modes]]]}")
     top_n_modes = best_ids[:n_top_modes]
     
+    # Create the output directory for figures
+    save_dir = f"experiments/figures/{args.model_name}/{system}/{args.custom_name}"
+    os.makedirs(save_dir, exist_ok=True)
+
     # --------------------------------------------------
     # Plot Koopman Operator Matrices
     # --------------------------------------------------
-    
-    # Extract the real block-diagonal representation
     V_real, Lambda_real = get_real_representation(V, eigvals)
-    
     matrices = [
         (V, "Extracted Koopman Modes (Complex V)"),
         (np.diag(eigvals), "True Complex $\Lambda$"),
@@ -550,29 +605,34 @@ if __name__ == "__main__":
         (Lambda_real, "Real Block-Diagonal $\Lambda_{real}$"),
         (K, r"Operator K")
     ]
-    plot_transition_matrices(matrices, f"Koopman Operator Matrices, {system_name}", model.expand_names)
+    plot_transition_matrices(matrices, f"Koopman Operator Matrices, {system}", model.expand_names, 
+                             save_path=os.path.join(save_dir, "transition_matrices.png"))
     
     # --------------------------------------------------
     # Plot eigenfunctions (top N modes)
     # --------------------------------------------------
     phi_vals = z @ W[:, top_n_modes] 
-    plot_complex_field(grid_points, phi_vals, f"Eigenfunctions {top_n_modes} (Score: {[f'{e:.1f}' for e in scores[top_n_modes]]})")
+    plot_complex_field(grid_points, phi_vals, f"Eigenfunctions {top_n_modes} (Score: {[f'{e:.1f}' for e in scores[top_n_modes]]})", 
+                       save_path=os.path.join(save_dir, "eigenfunctions.png"))
     
     # --------------------------------------------------
     # Spectrum plot with quality coloring
     # --------------------------------------------------
     best_ids, scores, residuals = calculate_mode_quality(model, W, eigvals, z_scale, state_bounds=state_bounds)
-    plot_quality_spectrum(eigvals, scores, theme="dark")
+    plot_quality_spectrum(eigvals, scores, theme="dark", 
+                          save_path=os.path.join(save_dir, "quality_spectrum.png"))
     
     # --------------------------------------------------
     # Visualize eigenvalue frequencies vs magnitudes
     # --------------------------------------------------
-    plot_freq_magnitude(eigvals, scores, theme="dark")
+    plot_freq_magnitude(eigvals, scores, theme="dark", 
+                        save_path=os.path.join(save_dir, "freq_magnitude.png"))
     
     # --------------------------------------------------
     # Visualize mode trajectories
     # --------------------------------------------------
-    plot_mode_trajectories(model, W, eigvals, z_scale, best_ids[:n_top_modes], single_trajectory)
+    plot_mode_trajectories(model, W, eigvals, z_scale, best_ids[:n_top_modes], single_trajectory, 
+                           save_path=os.path.join(save_dir, "mode_trajectories.png"))
     
     # --------------------------------------------------
     # Visualize mode contributions to state reconstruction
@@ -580,9 +640,13 @@ if __name__ == "__main__":
     with torch.no_grad():
         z_real = model.expand(torch.as_tensor(single_trajectory)).cpu().numpy() / z_scale
         phi_real_traj = z_real @ W
-    plot_mode_contributions_vs_quality(V, phi_real_traj, best_ids, scores, model.state_dim, n_top=10) 
+    plot_mode_contributions_vs_quality(V, phi_real_traj, best_ids, scores, model.state_dim, n_top=10, 
+                                       save_path=os.path.join(save_dir, "mode_contributions.png")) 
     
     # --------------------------------------------------
     # Visualize mode energy vs quality
     # --------------------------------------------------
-    plot_mode_energy_vs_quality(V, scores, model.state_dim, n_top=10)
+    plot_mode_energy_vs_quality(V, scores, model.state_dim, n_top=10, 
+                                save_path=os.path.join(save_dir, "mode_energy.png"))
+    
+    print(f"All visualizations successfully saved to: {save_dir}")
