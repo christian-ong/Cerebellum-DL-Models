@@ -143,7 +143,77 @@ def closed_large_system(mu=0.1, alpha=-1.0, beta=0.8, gamma=-0.4, delta=0.2):
 
     return f
 
-def closed_trig_system(
+def closed_trig_small_system(
+    omega=1.0,
+    alpha=-0.8,
+    beta_s1=0.7,
+    beta_c1=-0.5,
+    beta_x=0.3,
+    beta_x2=-0.08,
+):
+    """
+    2D nonlinear system with an exact finite-dimensional closure in a
+    custom polynomial + trigonometric observable dictionary.
+    Dynamics:
+    x' = omega
+    y' = alpha*y + beta_s1*sin(x) + beta_c1*cos(x) + beta_x*x + beta_x2*x^2
+    A suitable exact lifted dictionary is for example:
+    [1, x, y, x^2, sin(x), cos(x)]
+    """
+    def f(t, x):
+        x = np.asarray(x, dtype=float)
+        x1 = x[..., 0]
+        x2 = x[..., 1]
+
+        dx1 = np.full_like(x1, omega, dtype=float)
+        dx2 = alpha * x2 + beta_s1 * np.sin(x1) + beta_c1 * np.cos(x1) + beta_x * x1 + beta_x2 * x1**2
+
+        return np.stack([dx1, dx2], axis=-1)
+
+    return f
+
+def closed_trig_medium_system(
+    omega=1.0,
+    alpha=-0.8,
+    beta_s1=0.7,
+    beta_c1=-0.5,
+    beta_s2=0.4,
+    beta_c2=0.2,
+    beta_x=0.3,
+    beta_x2=-0.08,
+):
+    """
+    2D nonlinear system with an exact finite-dimensional closure in a
+    custom polynomial + trigonometric observable dictionary.
+    Dynamics:
+    x' = omega
+    y' = alpha*y + beta_s1*sin(x) + beta_c1*cos(x) + beta_s2*sin(2x) + beta_c2*cos(2x) + 
+    A suitable exact lifted dictionary is for example:
+    [1, x, y, x^2, sin(x), cos(x), sin(2x), cos(2x)]
+    """
+
+    def f(t, x):
+        x = np.asarray(x, dtype=float)
+        x1 = x[..., 0]
+        x2 = x[..., 1]
+
+        dx1 = np.full_like(x1, omega, dtype=float)
+        dx2 = (
+            alpha * x2
+            + beta_s1 * np.sin(x1)
+            + beta_c1 * np.cos(x1)
+            + beta_s2 * np.sin(2.0 * x1)
+            + beta_c2 * np.cos(2.0 * x1)
+            + beta_x * x1
+            + beta_x2 * x1**2
+        )
+
+        return np.stack([dx1, dx2], axis=-1)
+
+    return f
+
+
+def closed_trig_large_system(
     omega=1.0,
     alpha=-0.8,
     beta_s1=0.7,
@@ -168,7 +238,7 @@ def closed_trig_system(
              + beta_x*x + beta_x2*x^2
 
     A suitable exact lifted dictionary is for example:
-        [1, x, x^2, y, sin(x), cos(x), sin(2x), cos(2x), sin(3x), cos(3x)]
+        [1, x, y, x^2, sin(x), cos(x), sin(2x), cos(2x), sin(3x), cos(3x)]
     """
     def f(t, x):
         x = np.asarray(x, dtype=float)
