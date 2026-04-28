@@ -5,7 +5,6 @@ from itertools import product
 
 
 VANDERPOL_BASIS = [
-    "1",
     "x",
     "y",
     "x^2*y",
@@ -19,7 +18,6 @@ VANDERPOL_BASIS = [
 ]
 
 LOTKA_BASIS = [
-    "1",
     "x",
     "y",
     "x*y",
@@ -35,7 +33,6 @@ LOTKA_BASIS = [
 ]
 
 PENDULUM_BASIS = [
-    "1",
     "x",
     "y",
     "sin(x)",
@@ -50,7 +47,6 @@ PENDULUM_BASIS = [
 ]
 
 DUFFING_BASIS = [
-    "1",
     "x",
     "y",
     "x^3",
@@ -66,7 +62,6 @@ DUFFING_BASIS = [
 ]
 
 LORENZ_BASIS = [
-    "1",
     "x",
     "y",
     "z",
