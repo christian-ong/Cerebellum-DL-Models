@@ -19,7 +19,9 @@ from src.data_generation.data_simulation import (
     duffing_system,
     closed_small_system,
     closed_large_system,
-    closed_trig_system,
+    closed_trig_small_system,
+    closed_trig_medium_system,
+    closed_trig_large_system,
 )
 
 def parse_int_list(text: str) -> List[int]:
@@ -66,6 +68,37 @@ def compute_regression_mode_ranking_by_amplitude(
         "scores": scores,
     }
 
+def compute_ml_dmd_mode_ranking_by_amplitude(
+    *,
+    X: np.ndarray,
+    traj_id: int,
+    model,
+) -> Dict[str, np.ndarray]:
+    """Calculates the activation amplitude of each mode specifically for the ML_DMD model."""
+    X_traj = X[:, traj_id, :]
+    x0 = torch.as_tensor(X_traj[0], dtype=torch.float32)
+    if x0.ndim == 1:
+        x0 = x0.unsqueeze(0)
+
+    # Replicate the ML-DMD lifting pipeline
+    x0_scaled = model.scale_state(x0)
+    z0 = model.expand(x0_scaled)
+    z0_norm = z0 / model.z_scale
+
+    # Project to modes
+    Phi = model.Phi
+    Phi_inv = model.Phi_inv if hasattr(model, "Phi_inv") else torch.linalg.pinv(Phi)
+    b0 = (Phi_inv @ z0_norm.T).squeeze()
+    
+    # Rank by magnitude of activation
+    scores = torch.abs(b0).detach().cpu().numpy()
+    ranked_indices = np.argsort(-scores)
+
+    return {
+        "ranked_indices": ranked_indices,
+        "scores": scores,
+    }
+
 def resolve_mode_subsets(
     *,
     model_name: str,
@@ -93,20 +126,22 @@ def resolve_mode_subsets(
         return {"manual": ranked_indices}
 
     if subset_strategy == "amplitude":
-        info = compute_regression_mode_ranking_by_amplitude(
-            X=X,
-            traj_id=traj_id,
-            model=model,
-        )
-        ranked_indices = info["ranked_indices"]
-        print("[diagnostics] Mode ranking strategy: amplitude")
-        print("[diagnostics] Top ranked modes:", ranked_indices[: min(10, len(ranked_indices))].tolist())
+            if model_name == "regression_dmd":
+                info = compute_regression_mode_ranking_by_amplitude(X=X, traj_id=traj_id, model=model)
+            elif model_name == "ml_dmd":
+                info = compute_ml_dmd_mode_ranking_by_amplitude(X=X, traj_id=traj_id, model=model)
+            else:
+                raise ValueError(f"Amplitude ranking not implemented for {model_name}")
+                
+            ranked_indices = info["ranked_indices"]
+            print(f"[diagnostics] Mode ranking strategy: amplitude ({model_name})")
+            print("[diagnostics] Top ranked modes:", ranked_indices[: min(10, len(ranked_indices))].tolist())
 
-        subsets = {}
-        for k in subset_sizes:
-            if k > 0:
-                subsets[f"top{k}_amplitude"] = ranked_indices[:k]
-        return subsets
+            subsets = {}
+            for k in subset_sizes:
+                if k > 0:
+                    subsets[f"top{k}_amplitude"] = ranked_indices[:k]
+            return subsets
 
     raise ValueError(f"Unknown subset strategy: {subset_strategy}")
 
@@ -452,13 +487,13 @@ def build_true_dynamics_from_dataset(data_path: str):
             omega=float(_np_scalar(data, "omega")),
         )
     
-    if system in {"koopman_poly", "closed_small"}:
+    if system in {"closed_small"}:
         return closed_small_system(
             mu=float(_np_scalar(data, "mu")),
             alpha=float(_np_scalar(data, "alpha")),
         )
 
-    if system in {"koopman_poly_large", "closed_large"}:
+    if system in {"closed_large"}:
         return closed_large_system(
             mu=float(_np_scalar(data, "mu")),
             alpha=float(_np_scalar(data, "alpha")),
@@ -467,8 +502,30 @@ def build_true_dynamics_from_dataset(data_path: str):
             delta=float(_np_scalar(data, "delta")),
         )
 
-    if system in {"koopman_poly_trig", "closed_trig"}:
-        return closed_trig_system(
+    if system in {"closed_trig_small"}:
+        return closed_trig_small_system(
+            omega=float(_np_scalar(data, "omega")),
+            alpha=float(_np_scalar(data, "alpha")),
+            beta_s1=float(_np_scalar(data, "beta_s1")),
+            beta_c1=float(_np_scalar(data, "beta_c1")),
+            beta_x=float(_np_scalar(data, "beta_x")),
+            beta_x2=float(_np_scalar(data, "beta_x2")),
+        )
+    
+    if system in {"closed_trig_medium"}:
+        return closed_trig_medium_system(
+            omega=float(_np_scalar(data, "omega")),
+            alpha=float(_np_scalar(data, "alpha")),
+            beta_s1=float(_np_scalar(data, "beta_s1")),
+            beta_c1=float(_np_scalar(data, "beta_c1")),
+            beta_s2=float(_np_scalar(data, "beta_s2")),
+            beta_c2=float(_np_scalar(data, "beta_c2")),
+            beta_x=float(_np_scalar(data, "beta_x")),
+            beta_x2=float(_np_scalar(data, "beta_x2")),
+        )
+    
+    if system in {"closed_trig_large"}:
+        return closed_trig_large_system(
             omega=float(_np_scalar(data, "omega")),
             alpha=float(_np_scalar(data, "alpha")),
             beta_s1=float(_np_scalar(data, "beta_s1")),

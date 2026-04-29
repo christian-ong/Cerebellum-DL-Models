@@ -220,6 +220,14 @@ def load_model(
     raise ValueError(f"Unknown model: {model_name}")
 
 
+def supports_mode_subset_rollout(model_name: str, model, extras: Dict[str, Any]) -> bool:
+    if model_name == "regression_dmd":
+        rollout_mode = extras.get("rollout_mode", "DMD")
+        return rollout_mode in {"DMD", "projected_DMD"}
+    if model_name == "ml_dmd":
+        return True
+    return False
+
 def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indices=None):
     if model_name == "linear_baseline":
         return rollout_linear_map(extras["M"], x0=x0, steps=steps)
@@ -228,26 +236,59 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
         return rollout_dmd_eig(extras["Lambda"], extras["Phi"], x0=x0, steps=steps)
 
     if model_name == "regression_dmd":
-            rollout_mode = extras.get("rollout_mode", "DMD")
-            rollout = model.rollout(
-                x0=x0,
-                steps=steps,
-                mode=rollout_mode,
-                mode_indices=mode_indices,
-            )
-            # CONVERSION FIX: Ensure we return NumPy to satisfy metrics.py
-            if torch.is_tensor(rollout):
-                return rollout.detach().cpu().numpy()
-            return rollout
+        rollout_mode = extras.get("rollout_mode", "DMD")
+        rollout = model.rollout(
+            x0=x0,
+            steps=steps,
+            mode=rollout_mode,
+            mode_indices=mode_indices,
+        )
+        if torch.is_tensor(rollout):
+            return rollout.detach().cpu().numpy()
+        return rollout
 
     if model_name == "sindy_baseline":
         return model.rollout(x0, steps=steps)
 
     with torch.inference_mode():
-        return model.rollout(x0=x0, steps=steps).detach().cpu().numpy()
-    
-def supports_mode_subset_rollout(model_name: str, model, extras: Dict[str, Any]) -> bool:
-    if model_name == "regression_dmd":
-        rollout_mode = extras.get("rollout_mode", "DMD")
-        return rollout_mode in {"DMD", "projected_DMD"}
-    return False
+        # --- NEW: Native Mode Subsetting for ML-DMD ---
+        if model_name == "ml_dmd" and mode_indices is not None:
+            x0_t = torch.as_tensor(x0, dtype=torch.float32, device=next(model.parameters()).device)
+            if x0_t.ndim == 1:
+                x0_t = x0_t.unsqueeze(0)
+                
+            # 1. Expand and scale the input
+            x_scaled = model.scale_state(x0_t)
+            z = model.expand(x_scaled)
+            z_norm = z / model.z_scale
+            
+            # 2. Project into modal coordinates (b)
+            Phi = model.Phi
+            Phi_inv = model.Phi_inv if hasattr(model, "Phi_inv") else torch.linalg.pinv(Phi)
+            b = (Phi_inv @ z_norm.T).T 
+            
+            # 3. Mask unwanted modes
+            mask = torch.zeros_like(b)
+            mask[:, mode_indices] = 1.0
+            b = b * mask
+            
+            # 4. Rollout entirely in the latent space
+            Lambda = model.get_Lambda()
+            trajectory = [x0_t.squeeze(0).cpu().numpy()]
+            
+            for _ in range(steps):
+                b = b @ Lambda.T
+                b = b * mask  # Keep masked modes exactly at 0
+                
+                # 5. Reconstruct back to physical space
+                z_norm_next = b @ Phi.T
+                z_next = z_norm_next * model.z_scale
+                x_next_scaled = model.de_expand(z_next)
+                x_next = model.unscale_state(x_next_scaled)
+                
+                trajectory.append(x_next.squeeze(0).cpu().numpy())
+                
+            return np.array(trajectory)
+            
+        else:
+            return model.rollout(x0=x0, steps=steps).detach().cpu().numpy()
