@@ -14,6 +14,9 @@ sandbox_*
 /data/*
 !/data/sweeped_models/
 
+# experiments
+/experiments/figures/*
+
 # hpc + wandb
 wandb/
 hpc/runs/*.err

@@ -120,9 +120,11 @@ Global options (defaults):
     python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/inward_spiral --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
     python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/harmonic_oscillator --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
 
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_small --epochs 20 --expansion_type specific --expansion_degree 3 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec3
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_large --epochs 20 --expansion_type specific --expansion_degree 5 --bias false --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec5
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig --epochs 20 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5 --name spec10_trig
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_small --epochs 20 --expansion_type specific --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec3
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_large --epochs 20 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec5
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_small --epochs 20 --expansion_type specific --expansion_degree 6 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec6_trig
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_medium --epochs 20 --expansion_type specific --expansion_degree 8 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec8_trig
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_large --epochs 20 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec10_trig
 
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol --epochs 20 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion false --name vanderpol_gen5
     python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name lotkavolterra_gen3
@@ -186,21 +188,17 @@ def resolve_ml_state_normalization(args, system_name):
     """
     Decide whether to standardize state before expansion for ML models.
 
-    auto: disable for exact Koopman benchmark systems when using specific basis,
-    enable otherwise.
+    auto: defaults to False for ML Koopman models (since mean-shifting 
+    corrupts polynomial basis independence), true otherwise.
     """
     if args.normalize_state_for_ml != "auto":
         return args.normalize_state_for_ml == "true"
 
     is_ml_model = args.model in {"ml_lineardynamics", "ml_dmd"}
-    is_specific = args.expansion_type == "specific"
-    is_closed_benchmark = system_name in {
-        "closed_small",
-        "closed_large",
-        "closed_trig",
-    }
 
-    if is_ml_model and is_specific and is_closed_benchmark:
+    # Mathematically, shifting state variables before applying polynomial 
+    # dictionaries creates parasitic lower-degree terms. Disable by default.
+    if is_ml_model:
         return False
 
     return True
@@ -259,7 +257,7 @@ def main():
     # --------------------------------------------------
     parser.add_argument("--rank", type=int, default=None)
     parser.add_argument("--ridge", type=float, default=0.0)
-    parser.add_argument("--bias", type=str.lower, choices=["true", "false"], default="false", help="Include bias term in polynomial expansion")
+    parser.add_argument("--bias", type=str.lower, choices=["true", "false"], default="true", help="Include bias term in polynomial expansion")
     parser.add_argument("--expansion_type", type=str, default="general", choices=["general", "specific"], help="Whether to use general polynomial expansion (all combinations up to degree) or specific expansion (e.g. only x^2, y^2, xy) for the manual expansion models")
     parser.add_argument("--expansion_degree", type=int, default=1)
     parser.add_argument("--sine_cosine_expansion", type=str.lower,choices=["true", "false"], default="false",help="Include sin(x_i) and cos(x_i) terms in the manual expansion basis")

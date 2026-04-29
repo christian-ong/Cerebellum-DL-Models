@@ -12,7 +12,10 @@ from src.data_generation.data_simulation import (
     duffing_system,
     closed_small_system,
     closed_large_system,
-    closed_trig_system,
+    closed_trig_small_system,
+    closed_trig_medium_system,
+    closed_trig_large_system,
+    
 )
 from src.data_generation.plot_data import (
     plot_init_conditions,
@@ -60,36 +63,49 @@ System-specific parameters:
 Linear system  x' = A x
 --------------------------------------------------
 
-python -m scripts.simulate_data --system inward_spiral --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system harmonic_oscillator --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system saddle_point --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system degenerate_node --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
+#### SHORT TRAJECTORIES (T_train=1.0) ####
+python -m scripts.simulate_data --system inward_spiral --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+python -m scripts.simulate_data --system harmonic_oscillator --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+python -m scripts.simulate_data --system saddle_point --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+python -m scripts.simulate_data --system degenerate_node --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+
+#### LONG TRAJECTORIES (T_train=10.0) ####
+python -m scripts.simulate_data --system inward_spiral --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system harmonic_oscillator --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system saddle_point --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system degenerate_node --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
 
 --------------------------------------------------
 Nonlinear systems (SHORT TRAJECTORIES, T_train=1.0)
 --------------------------------------------------
 
-python -m scripts.simulate_data --system vanderpol --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system lotka_volterra --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system pendulum --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system duffing --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system lorenz --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system closed_small --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 1 --T_test 1０ --dt 0.０１ --mu_KP ０.１ --alpha_KP -１.０
-python -m scripts.simulate_data --system closed_large --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --dt 0.01
-python -m scripts.simulate_data --system closed_trig --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --dt 0.01
+python -m scripts.simulate_data --system closed_small --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 1 --T_test 10 --name short
+python -m scripts.simulate_data --system closed_large --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+python -m scripts.simulate_data --system closed_trig_small --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+python -m scripts.simulate_data --system closed_trig_medium --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+python -m scripts.simulate_data --system closed_trig_large --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+
+python -m scripts.simulate_data --system vanderpol --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+python -m scripts.simulate_data --system lotka_volterra --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+python -m scripts.simulate_data --system pendulum --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+python -m scripts.simulate_data --system duffing --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+python -m scripts.simulate_data --system lorenz --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
 
 --------------------------------------------------
 Nonlinear systems (LONG TRAJECTORIES, T_train=10.0)
 --------------------------------------------------
 
-python -m scripts.simulate_data --system vanderpol --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system lotka_volterra --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system pendulum --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system duffing --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system lorenz --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10
-python -m scripts.simulate_data --system closed_small --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --dt 0.01 --mu_KP 0.1 --alpha_KP -1.0
-python -m scripts.simulate_data --system closed_large --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --dt 0.01
-python -m scripts.simulate_data --system closed_trig --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --dt 0.01
+python -m scripts.simulate_data --system closed_small --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system closed_large --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system closed_trig_small --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system closed_trig_medium --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system closed_trig_large --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+
+python -m scripts.simulate_data --system vanderpol --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system lotka_volterra --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system pendulum --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system duffing --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system lorenz --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
 
 --------------------------------------------------
 Output
@@ -470,8 +486,69 @@ def build_closed_large(args, rng):
         "A_lift": A_lift,
     }
 
-def build_closed_trig(args, rng):
-    f = closed_trig_system(
+def build_closed_trig_small(args, rng):
+    f = closed_trig_small_system(
+        omega=args.omega_KPT,
+        alpha=args.alpha_KPT,
+        beta_s1=args.beta_s1_KPT,
+        beta_c1=args.beta_c1_KPT,
+        beta_x=args.beta_x_KPT,
+        beta_x2=args.beta_x2_KPT,
+    )
+
+    n_traj = resolve_n_traj(args)
+
+    if n_traj == 1:
+        x0 = np.array([0.8, 0.4], dtype=float)
+    else:
+        x_init = rng.uniform(-1.0, 1.0, size=n_traj)
+        y_init = rng.uniform(-1.0, 1.5, size=n_traj)
+        x0 = np.stack([x_init, y_init], axis=1)
+
+    return f, x0, {
+        "omega": args.omega_KPT,
+        "alpha": args.alpha_KPT,
+        "beta_s1": args.beta_s1_KPT,
+        "beta_c1": args.beta_c1_KPT,
+        "beta_x": args.beta_x_KPT,
+        "beta_x2": args.beta_x2_KPT,
+    }
+
+def build_closed_trig_medium(args, rng):
+    f = closed_trig_medium_system(
+        omega=args.omega_KPT,
+        alpha=args.alpha_KPT,
+        beta_s1=args.beta_s1_KPT,
+        beta_c1=args.beta_c1_KPT,
+        beta_s2=args.beta_s2_KPT,
+        beta_c2=args.beta_c2_KPT,
+        beta_x=args.beta_x_KPT,
+        beta_x2=args.beta_x2_KPT,
+    )
+
+    n_traj = resolve_n_traj(args)
+
+    if n_traj == 1:
+        x0 = np.array([0.8, 0.4], dtype=float)
+    else:
+        x_init = rng.uniform(-1.0, 1.0, size=n_traj)
+        y_init = rng.uniform(-1.0, 1.5, size=n_traj)
+        x0 = np.stack([x_init, y_init], axis=1)
+
+    return f, x0, {
+        "omega": args.omega_KPT,
+        "alpha": args.alpha_KPT,
+        "beta_s1": args.beta_s1_KPT,
+        "beta_c1": args.beta_c1_KPT,
+        "beta_s2": args.beta_s2_KPT,
+        "beta_c2": args.beta_c2_KPT,
+        "beta_x": args.beta_x_KPT,
+        "beta_x2": args.beta_x2_KPT,
+    }
+
+
+def build_closed_trig_large(args, rng):
+    f = closed_trig_large_system(
         omega=args.omega_KPT,
         alpha=args.alpha_KPT,
         beta_s1=args.beta_s1_KPT,
@@ -525,8 +602,11 @@ SYSTEMS = {
     "duffing": build_duffing,
     "closed_small": build_closed_small,
     "closed_large": build_closed_large,
-    "closed_trig": build_closed_trig
+    "closed_trig_small": build_closed_trig_small,
+    "closed_trig_medium": build_closed_trig_medium,
+    "closed_trig_large": build_closed_trig_large
 }
+
 LINEAR_SYSTEMS = {
     "linear",
     "inward_spiral",
@@ -751,7 +831,7 @@ def main():
             )
 
 
-        if args.system in ["closed_trig"]:
+        if args.system in ["closed_trig_small", "closed_trig_medium", "closed_trig_large"]:
             plot_flow_map_displacement(
                 f=f,
                 state_dim=state_dim,

@@ -5,7 +5,6 @@ from itertools import product
 
 
 VANDERPOL_BASIS = [
-    "1",
     "x",
     "y",
     "x^2*y",
@@ -19,7 +18,6 @@ VANDERPOL_BASIS = [
 ]
 
 LOTKA_BASIS = [
-    "1",
     "x",
     "y",
     "x*y",
@@ -35,7 +33,6 @@ LOTKA_BASIS = [
 ]
 
 PENDULUM_BASIS = [
-    "1",
     "x",
     "y",
     "sin(x)",
@@ -50,7 +47,6 @@ PENDULUM_BASIS = [
 ]
 
 DUFFING_BASIS = [
-    "1",
     "x",
     "y",
     "x^3",
@@ -66,7 +62,6 @@ DUFFING_BASIS = [
 ]
 
 LORENZ_BASIS = [
-    "1",
     "x",
     "y",
     "z",
@@ -93,11 +88,31 @@ CLOSED_LARGE_BASIS = [
     "x^4"
 ]
 
-CLOSED_TRIG_BASIS = [
+CLOSED_TRIG_SMALL_BASIS = [
     "1",
     "x",
-    "x^2",
     "y",
+    "x^2",    
+    "sin(x)",
+    "cos(x)"
+]
+
+CLOSED_TRIG_MEDIUM_BASIS = [
+    "1",
+    "x",
+    "y",
+    "x^2",
+    "sin(x)",
+    "cos(x)",
+    "sin(2*x)",
+    "cos(2*x)"
+]
+
+CLOSED_TRIG_LARGE_BASIS = [
+    "1",
+    "x",
+    "y",
+    "x^2",    
     "sin(x)",
     "cos(x)",
     "sin(2*x)",
@@ -114,7 +129,9 @@ SPECIFIC_BASES = {
     "lorenz": LORENZ_BASIS,
     "closed_small": CLOSED_SMALL_BASIS,
     "closed_large": CLOSED_LARGE_BASIS,
-    "closed_trig": CLOSED_TRIG_BASIS,
+    "closed_trig_small": CLOSED_TRIG_SMALL_BASIS,
+    "closed_trig_medium": CLOSED_TRIG_MEDIUM_BASIS,
+    "closed_trig_large": CLOSED_TRIG_LARGE_BASIS
 }
 
 
