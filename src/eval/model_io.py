@@ -220,7 +220,7 @@ def load_model(
     raise ValueError(f"Unknown model: {model_name}")
 
 
-def predict_rollout_from_x0(*, x0, steps, model_name, model, extras):
+def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indices=None):
     if model_name == "linear_baseline":
         return rollout_linear_map(extras["M"], x0=x0, steps=steps)
 
@@ -233,6 +233,7 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras):
                 x0=x0,
                 steps=steps,
                 mode=rollout_mode,
+                mode_indices=mode_indices,
             )
             # CONVERSION FIX: Ensure we return NumPy to satisfy metrics.py
             if torch.is_tensor(rollout):
@@ -244,3 +245,9 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras):
 
     with torch.inference_mode():
         return model.rollout(x0=x0, steps=steps).detach().cpu().numpy()
+    
+def supports_mode_subset_rollout(model_name: str, model, extras: Dict[str, Any]) -> bool:
+    if model_name == "regression_dmd":
+        rollout_mode = extras.get("rollout_mode", "DMD")
+        return rollout_mode in {"DMD", "projected_DMD"}
+    return False

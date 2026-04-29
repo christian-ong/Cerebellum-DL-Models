@@ -1,12 +1,12 @@
 import os
 from typing import Dict, List, Tuple
-
+import torch
+from src.eval.model_io import predict_rollout_from_x0, supports_mode_subset_rollout
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import FixedLocator, FuncFormatter
 
-from src.eval.model_io import predict_rollout_from_x0
 from typing import Optional
 
 from src.data_generation.data_simulation import (
@@ -17,9 +17,9 @@ from src.data_generation.data_simulation import (
     pendulum_system,
     lorenz_system,
     duffing_system,
-    koopman_poly_system,
-    koopman_poly_system_large,
-    koopman_poly_trig_system,
+    closed_small_system,
+    closed_large_system,
+    closed_trig_system,
 )
 
 def parse_int_list(text: str) -> List[int]:
@@ -40,6 +40,75 @@ def get_phase_dims(system: str, state_dim: int) -> Tuple[int, int]:
         raise ValueError("Phase-space plots require state_dim >= 2.")
     return 0, 1
 
+def compute_regression_mode_ranking_by_amplitude(
+    *,
+    X: np.ndarray,
+    traj_id: int,
+    model,
+) -> Dict[str, np.ndarray]:
+    X_traj = X[:, traj_id, :]
+    x0 = torch.as_tensor(X_traj[0], dtype=torch.float64)
+
+    if x0.ndim == 1:
+        x0 = x0.unsqueeze(0)
+
+    x0_n = model._normalize_x(x0)
+    z0 = (model.expand(x0_n) / model.psi_scale)[0].to(torch.complex128)
+
+    Phi = model.Phi_lift_fitted.to(torch.complex128)
+    b0 = torch.linalg.pinv(Phi) @ z0
+    scores = torch.abs(b0).detach().cpu().numpy()
+
+    ranked_indices = np.argsort(-scores)
+
+    return {
+        "ranked_indices": ranked_indices,
+        "scores": scores,
+    }
+
+def resolve_mode_subsets(
+    *,
+    model_name: str,
+    model,
+    extras: Dict[str, np.ndarray],
+    X: np.ndarray,
+    traj_id: int,
+    subset_sizes: List[int],
+    subset_strategy: str,
+    manual_indices: Optional[List[int]] = None,
+) -> Dict[str, np.ndarray]:
+    if len(subset_sizes) == 0 and subset_strategy != "manual":
+        return {}
+
+    if not supports_mode_subset_rollout(model_name, model, extras):
+        raise ValueError(
+            f"Mode-subset heatmaps are not supported for model '{model_name}' "
+            f"with rollout mode '{extras.get('rollout_mode', 'n/a')}'."
+        )
+
+    if subset_strategy == "manual":
+        if manual_indices is None or len(manual_indices) == 0:
+            raise ValueError("subset_strategy='manual' requires mode_subset_indices.")
+        ranked_indices = np.asarray(manual_indices, dtype=int)
+        return {"manual": ranked_indices}
+
+    if subset_strategy == "amplitude":
+        info = compute_regression_mode_ranking_by_amplitude(
+            X=X,
+            traj_id=traj_id,
+            model=model,
+        )
+        ranked_indices = info["ranked_indices"]
+        print("[diagnostics] Mode ranking strategy: amplitude")
+        print("[diagnostics] Top ranked modes:", ranked_indices[: min(10, len(ranked_indices))].tolist())
+
+        subsets = {}
+        for k in subset_sizes:
+            if k > 0:
+                subsets[f"top{k}_amplitude"] = ranked_indices[:k]
+        return subsets
+
+    raise ValueError(f"Unknown subset strategy: {subset_strategy}")
 
 def compute_phase_error_for_trajectory(
     X: np.ndarray,
@@ -106,6 +175,7 @@ def compute_initial_condition_heatmap_data(
     extras: Dict[str, np.ndarray],
     mode: str = "traj_initials",
     rollout_cache: Dict[int, Dict[str, np.ndarray]] = None,
+    mode_indices: Optional[np.ndarray] = None,
 ) -> Dict[str, np.ndarray]:
     starts = []
     errors = []
@@ -145,6 +215,7 @@ def compute_initial_condition_heatmap_data(
                     model_name=model_name,
                     model=model,
                     extras=extras,
+                    mode_indices=mode_indices,
                 )
                 starts.append(X_traj[t0].copy())
                 errors.append(np.mean((rollout[horizon] - X_traj[t0 + horizon]) ** 2))
@@ -296,6 +367,8 @@ def plot_initial_condition_heatmap(
     figdir: str,
     horizon: int,
     mode: str,
+    filename_suffix: str = "",
+    title_suffix: str = "",
 ) -> None:
     starts = heatmap_data["starts"]
     errors = heatmap_data["errors"]
@@ -317,14 +390,17 @@ def plot_initial_condition_heatmap(
     plt.ylabel(f"x{j + 1}")
     plt.title(
         f"{_pretty_system_name(system)} — sampled-start error map\n"
-        f"(h={horizon}, mode={_pretty_heatmap_mode(mode)})"
+        f"(h={horizon}, mode={_pretty_heatmap_mode(mode)}){title_suffix}"
     )
 
     cbar = plt.colorbar(sc, label="Terminal h-step MSE")
     _format_three_tick_colorbar(cbar, vmin, vmax, use_log)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(figdir, f"initial_condition_error_map_h{horizon}_{mode}.png"), dpi=200)
+    plt.savefig(
+        os.path.join(figdir, f"initial_condition_error_map_h{horizon}_{mode}{filename_suffix}.png"),
+        dpi=200,
+    )
     plt.close()
 
 def _np_scalar(data, key: str, default=None):
@@ -375,15 +451,15 @@ def build_true_dynamics_from_dataset(data_path: str):
             gamma=float(_np_scalar(data, "gamma")),
             omega=float(_np_scalar(data, "omega")),
         )
-
-    if system == "koopman_poly":
-        return koopman_poly_system(
+    
+    if system in {"koopman_poly", "closed_small"}:
+        return closed_small_system(
             mu=float(_np_scalar(data, "mu")),
             alpha=float(_np_scalar(data, "alpha")),
         )
 
-    if system == "koopman_poly_large":
-        return koopman_poly_system_large(
+    if system in {"koopman_poly_large", "closed_large"}:
+        return closed_large_system(
             mu=float(_np_scalar(data, "mu")),
             alpha=float(_np_scalar(data, "alpha")),
             beta=float(_np_scalar(data, "beta")),
@@ -391,8 +467,8 @@ def build_true_dynamics_from_dataset(data_path: str):
             delta=float(_np_scalar(data, "delta")),
         )
 
-    if system == "koopman_poly_trig":
-        return koopman_poly_trig_system(
+    if system in {"koopman_poly_trig", "closed_trig"}:
+        return closed_trig_system(
             omega=float(_np_scalar(data, "omega")),
             alpha=float(_np_scalar(data, "alpha")),
             beta_s1=float(_np_scalar(data, "beta_s1")),
@@ -411,9 +487,12 @@ def _pretty_system_name(system: str) -> str:
     special = {
         "vanderpol": "Van der Pol",
         "lotka_volterra": "Lotka–Volterra",
-        "koopman_poly": "Koopman Poly",
-        "koopman_poly_large": "Koopman Poly Large",
-        "koopman_poly_trig": "Koopman Poly Trig",
+        "koopman_poly": "Closed Small",
+        "closed_small": "Closed Small",
+        "koopman_poly_large": "Closed Large",
+        "closed_large": "Closed Large",
+        "koopman_poly_trig": "Closed Trig",
+        "closed_trig": "Closed Trig",
     }
     return special.get(system, system.replace("_", " ").title())
 
@@ -456,13 +535,13 @@ def _default_grid_bounds_from_dataset(data, X: np.ndarray, i: int, j: int):
             return (-(x_eq + 0.6), x_eq + 0.6), (-1.2, 1.2)
 
     # Closed-form Koopman test systems
-    if system == "koopman_poly":
+    if system in {"koopman_poly", "closed_small"}:
         return (-1.0, 1.0), (-1.0, 1.5)
 
-    if system == "koopman_poly_large":
+    if system in {"koopman_poly_large", "closed_large"}:
         return (-1.0, 1.0), (-1.0, 1.0)
 
-    if system == "koopman_poly_trig":
+    if system in {"koopman_poly_trig", "closed_trig"}:
         return (-2.0, 2.0), (-1.0, 1.0)
 
     # Lorenz or any future system: fallback to data-driven bounds
@@ -493,6 +572,7 @@ def compute_true_grid_heatmap_data(
     model,
     extras: Dict[str, np.ndarray],
     grid_resolution: int = 100,
+    mode_indices: Optional[np.ndarray] = None,
 ) -> Dict[str, np.ndarray]:
     data = np.load(data_path, allow_pickle=True)
     dt = float(_np_scalar(data, "dt"))
@@ -535,10 +615,36 @@ def compute_true_grid_heatmap_data(
             model_name=model_name,
             model=model,
             extras=extras,
+            mode_indices=mode_indices,
         )
         pred_terminal[k] = rollout[horizon]
 
-    errors = np.mean((pred_terminal - true_terminal) ** 2, axis=1).reshape(XX.shape)
+    diff = pred_terminal - true_terminal
+
+    # Mark invalid or extreme predictions before squaring
+    invalid_mask = ~np.isfinite(diff).all(axis=1)
+
+    # Optional: treat absurdly large values as unstable too
+    large_mask = np.max(np.abs(diff), axis=1) > 1e150
+
+    bad_mask = invalid_mask | large_mask
+
+    errors_flat = np.empty(diff.shape[0], dtype=np.float64)
+    errors_flat.fill(np.inf)
+
+    good_mask = ~bad_mask
+    if np.any(good_mask):
+        diff_good = diff[good_mask]
+        errors_flat[good_mask] = np.mean(diff_good * diff_good, axis=1)
+
+    n_bad = int(np.sum(bad_mask))
+    if n_bad > 0:
+        print(
+            f"[diagnostics] Warning: {n_bad}/{diff.shape[0]} grid points produced non-finite "
+            f"or overflow-prone errors for horizon h={horizon}."
+        )
+
+    errors = errors_flat.reshape(XX.shape)
 
     return {
         "XX": XX,
@@ -551,15 +657,15 @@ def compute_true_grid_heatmap_data(
     }
 
 def _make_error_norm(errors: np.ndarray):
-    positive_errors = errors[errors > 0]
+    finite_errors = errors[np.isfinite(errors)]
+    positive_errors = finite_errors[finite_errors > 0]
 
     if positive_errors.size == 0:
         vmin, vmax = 1e-16, 1.0
         return mcolors.Normalize(vmin=vmin, vmax=vmax), vmin, vmax, False
 
     vmin = max(np.percentile(positive_errors, 1.0), 1e-16)
-    vmax = np.percentile(errors, 99.0)
-
+    vmax = np.percentile(finite_errors, 99.0) if finite_errors.size > 0 else 1.0
     if vmax <= vmin:
         vmax = positive_errors.max()
     if vmax <= vmin:
@@ -579,6 +685,8 @@ def plot_true_grid_heatmap(
     figdir: str,
     horizon: int,
     trajectory_overlay: Optional[np.ndarray] = None,
+    filename_suffix: str = "",
+    title_suffix: str = "",
 ) -> None:
     XX = grid_data["XX"]
     YY = grid_data["YY"]
@@ -613,14 +721,17 @@ def plot_true_grid_heatmap(
     ax.set_ylabel(f"x{j + 1}")
     ax.set_xlim(grid_data["xlim"])
     ax.set_ylim(grid_data["ylim"])
-    ax.set_title(f"{_pretty_system_name(system)} — true grid error heatmap (h={horizon})")
+    ax.set_title(f"{_pretty_system_name(system)} — true grid error heatmap (h={horizon}){title_suffix}")
 
     cbar = fig.colorbar(mesh, ax=ax)
     cbar.set_label("Terminal h-step MSE")
     _format_three_tick_colorbar(cbar, vmin, vmax, use_log)
 
     fig.tight_layout()
-    fig.savefig(os.path.join(figdir, f"true_grid_error_heatmap_h{horizon}.png"), dpi=220)
+    fig.savefig(
+        os.path.join(figdir, f"true_grid_error_heatmap_h{horizon}{filename_suffix}.png"),
+        dpi=220,
+    )
     plt.close(fig)
 
 def run_diagnostics(
@@ -647,7 +758,13 @@ def run_diagnostics(
     run_phase_maps: bool = True,
     run_sampled_start_heatmap: bool = False,
     overlay_true_trajectory_on_grid: bool = True,
+    mode_subset_sizes: Optional[List[int]] = None,
+    mode_subset_strategy: str = "amplitude",
+    mode_subset_indices: Optional[List[int]] = None,
 ) -> None:
+    if mode_subset_sizes is None:
+        mode_subset_sizes = []
+
     plot_error_vs_horizon(horizon_metrics, figdir, logy=not linear_error_scale)
     plot_rollout_error_summary(rollout_metrics, figdir)
 
@@ -704,3 +821,72 @@ def run_diagnostics(
                 h,
                 trajectory_overlay=X_traj if overlay_true_trajectory_on_grid else None,
             )
+    # --------------------------------------------------
+    # Additional mode-subset heatmaps (optional)
+    # --------------------------------------------------
+    if len(mode_subset_sizes) > 0 or (mode_subset_strategy == "manual" and mode_subset_indices):
+        print("[diagnostics] Computing additional mode-subset heatmaps...")
+
+        subsets = resolve_mode_subsets(
+            model_name=model_name,
+            model=model,
+            extras=extras,
+            X=X,
+            traj_id=traj_id,
+            subset_sizes=mode_subset_sizes,
+            subset_strategy=mode_subset_strategy,
+            manual_indices=mode_subset_indices,
+        )
+
+        for subset_name, subset_idx in subsets.items():
+            print(f"[diagnostics] Subset '{subset_name}' uses mode indices: {subset_idx.tolist()}")
+
+            if not run_true_grid_heatmap:
+                heatmap_data_subset = compute_initial_condition_heatmap_data(
+                    X=X,
+                    split_idx=split_idx,
+                    horizon=heatmap_horizon,
+                    model_name=model_name,
+                    model=model,
+                    extras=extras,
+                    mode=heatmap_mode,
+                    rollout_cache=None,
+                    mode_indices=subset_idx,
+                )
+                plot_initial_condition_heatmap(
+                    heatmap_data_subset,
+                    system,
+                    figdir,
+                    heatmap_horizon,
+                    heatmap_mode,
+                    filename_suffix=f"__{subset_name}",
+                    title_suffix=f" | {subset_name}",
+                )
+
+            if run_true_grid_heatmap:
+                if data_path is None:
+                    raise ValueError("data_path is required when run_true_grid_heatmap=True")
+
+                horizons_to_plot = [heatmap_horizon] if true_grid_heatmap_horizons is None else true_grid_heatmap_horizons
+                X_traj = X[:, traj_id, :]
+
+                for h in horizons_to_plot:
+                    grid_data_subset = compute_true_grid_heatmap_data(
+                        data_path=data_path,
+                        X=X,
+                        horizon=h,
+                        model_name=model_name,
+                        model=model,
+                        extras=extras,
+                        grid_resolution=grid_resolution,
+                        mode_indices=subset_idx,
+                    )
+                    plot_true_grid_heatmap(
+                        grid_data_subset,
+                        system,
+                        figdir,
+                        h,
+                        trajectory_overlay=X_traj if overlay_true_trajectory_on_grid else None,
+                        filename_suffix=f"__{subset_name}",
+                        title_suffix=f" | {subset_name}",
+                    )

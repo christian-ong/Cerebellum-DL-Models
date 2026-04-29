@@ -167,7 +167,20 @@ class Regression_DMD(ManualExpansion):
 
         # General fallback
         return torch.linalg.lstsq(Phi, z0.unsqueeze(1)).solution.squeeze(1)
+    
+    def _prepare_mode_subset(self, mode_indices):
+        if mode_indices is None:
+            return None
 
+        idx = torch.as_tensor(np.array(mode_indices, copy=True), dtype=torch.long)
+
+        if idx.ndim != 1:
+            raise ValueError("mode_indices must be a 1D list/array of indices.")
+        if torch.any(idx < 0):
+            raise ValueError("mode_indices must be nonnegative.")
+
+        return idx
+    
     def fit(self, x, x_next):
         x = self._to_tensor(x)
         x_next = self._to_tensor(x_next)
@@ -280,7 +293,7 @@ class Regression_DMD(ManualExpansion):
 
         return torch.stack(traj, dim=0)
 
-    def _rollout_DMD(self, x0, steps): # lambda^k step
+    def _rollout_DMD(self, x0, steps, mode_indices=None):  # lambda^k step
         if (
             self.Lambda_fitted is None
             or self.Phi_lift_fitted is None
@@ -295,16 +308,19 @@ class Regression_DMD(ManualExpansion):
         x0_n = self._normalize_x(x0)
         z0 = (self.expand(x0_n) / self.psi_scale)[0].to(torch.complex128)
 
-        # IMPORTANT:
-        # exact-mode amplitudes must be solved against Phi_lift,
-        # not via W^{-1} U^* z0
-        b0 = self._solve_modal_coeffs_exact(z0)
-
         traj = [x0[0].clone()]
 
         Phi_lift = self.Phi_lift_fitted.to(torch.complex128)
         Lambda = self.Lambda_fitted.to(torch.complex128)
         C = self.C_fitted.to(torch.complex128)
+
+        idx = self._prepare_mode_subset(mode_indices)
+        if idx is not None:
+            Phi_lift = Phi_lift[:, idx]
+            Lambda = Lambda[idx]
+            b0 = torch.linalg.pinv(Phi_lift) @ z0
+        else:
+            b0 = self._solve_modal_coeffs_exact(z0)
 
         for k in range(1, steps + 1):
             z_k = Phi_lift @ ((Lambda ** k) * b0)
@@ -314,7 +330,7 @@ class Regression_DMD(ManualExpansion):
 
         return torch.stack(traj, dim=0)
 
-    def _rollout_projected_DMD(self, x0, steps): # phi lambda phi^-1 step
+    def _rollout_projected_DMD(self, x0, steps, mode_indices=None):  # phi lambda phi^-1 step
         if (
             self.Phi_lift_fitted is None
             or self.Phi_pinv_fitted is None
@@ -330,25 +346,26 @@ class Regression_DMD(ManualExpansion):
         traj = [x0[0].clone()]
 
         Phi = self.Phi_lift_fitted.to(torch.complex128)
-        Phi_pinv = self.Phi_pinv_fitted.to(torch.complex128)
         Lambda = self.Lambda_fitted.to(torch.complex128)
         C = self.C_fitted.to(torch.complex128)
+
+        idx = self._prepare_mode_subset(mode_indices)
+        if idx is not None:
+            Phi = Phi[:, idx]
+            Lambda = Lambda[idx]
+            Phi_pinv = torch.linalg.pinv(Phi)
+        else:
+            Phi_pinv = self.Phi_pinv_fitted.to(torch.complex128)
 
         x = x0.clone()
 
         for _ in range(steps):
-            # current normalized state
             x_n = self._normalize_x(x)
-
-            # lift current state
             z = (self.expand(x_n) / self.psi_scale)[0].to(torch.complex128)
 
-            # one-step DMD map in lifted space:
-            # z_next = Phi Λ Phi^+ z
             b = Phi_pinv @ z
             z_next = Phi @ (Lambda * b)
 
-            # decode normalized state using fixed/manual decoder
             x_next_n = C @ z_next
             x_next = self._denormalize_x(x_next_n.real.to(torch.float64)).unsqueeze(0)
 
@@ -357,14 +374,17 @@ class Regression_DMD(ManualExpansion):
 
         return torch.stack(traj, dim=0)
 
-    def rollout(self, x0, steps, mode=None):
+    def rollout(self, x0, steps, mode=None, mode_indices=None):
         mode = self._canonical_mode(mode)
+
+        if mode_indices is not None and mode not in {"DMD", "projected_DMD"}:
+            raise ValueError("mode_indices are only supported for DMD and projected_DMD rollouts.")
 
         if mode == "linear_dynamics":
             return self._rollout_linear_dynamics(x0, steps)
         if mode == "DMD":
-            return self._rollout_DMD(x0, steps)
+            return self._rollout_DMD(x0, steps, mode_indices=mode_indices)
         if mode == "projected_DMD":
-            return self._rollout_projected_DMD(x0, steps)
+            return self._rollout_projected_DMD(x0, steps, mode_indices=mode_indices)
 
         raise ValueError(f"Unknown rollout mode: {mode}")
