@@ -12,6 +12,7 @@ from src.models.linear_baseline import fit_linear_map
 from src.models.dmd_baseline import fit_dmd
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.regression_dmd import Regression_DMD
+from src.models.ml_dmd_band import ML_DMD_BAND
 from src.models.ml_dmd_free import ML_DMD
 from src.train.train_onestep import train_onestep
 from src.models.sindy_baseline import SINDyBaseline
@@ -194,7 +195,7 @@ def resolve_ml_state_normalization(args, system_name):
     if args.normalize_state_for_ml != "auto":
         return args.normalize_state_for_ml == "true"
 
-    is_ml_model = args.model in {"ml_lineardynamics", "ml_dmd"}
+    is_ml_model = args.model in {"ml_lineardynamics", "ml_dmd", "ml_dmd_band"}
 
     # Mathematically, shifting state variables before applying polynomial 
     # dictionaries creates parasitic lower-degree terms. Disable by default.
@@ -226,6 +227,7 @@ def main():
             "regression_dmd",
             "ml_lineardynamics",
             "ml_dmd",
+            "ml_dmd_band",
             "sindy_baseline",
         ],
     )
@@ -545,6 +547,16 @@ def main():
     
     elif args.model == "ml_dmd":
         model = ML_DMD(
+            state_dim=state_dim,
+            expansion_degree=args.expansion_degree,
+            bias=args.bias == "true",
+            sine_cosine_expansion=args.sine_cosine_expansion == "true",
+            expansion_type=args.expansion_type,
+            system=system_name if args.expansion_type == "specific" else None,
+        ).to(device)
+
+    elif args.model == "ml_dmd_band":
+        model = ML_DMD_BAND(
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
             bias=args.bias == "true",

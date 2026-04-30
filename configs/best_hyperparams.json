@@ -29,7 +29,7 @@
           "weight_decay": 0.0
         },
         "5": {
-          "lr": 1e-05,
+          "lr": 1e-03,
           "weight_decay": 0.0
         },
         "7": {
