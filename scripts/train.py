@@ -12,7 +12,7 @@ from src.models.linear_baseline import fit_linear_map
 from src.models.dmd_baseline import fit_dmd
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.regression_dmd import Regression_DMD
-from src.models.ml_dmd import ML_DMD
+from src.models.ml_dmd_free import ML_DMD
 from src.train.train_onestep import train_onestep
 from src.models.sindy_baseline import SINDyBaseline
 

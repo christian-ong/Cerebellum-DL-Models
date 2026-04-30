@@ -11,7 +11,7 @@ from src.models.dmd_baseline import rollout_dmd_eig
 # from src.models.deprecated.ml_eigen_dmd import MLEigenDMD
 from src.models.regression_dmd import Regression_DMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
-from src.models.ml_dmd import ML_DMD
+from src.models.ml_dmd_free import ML_DMD
 from src.models.sindy_baseline import SINDyBaseline
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
 

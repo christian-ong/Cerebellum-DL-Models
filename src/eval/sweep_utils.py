@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from src.models.ml_linear_dynamics import ML_LinearDynamics
-from src.models.ml_dmd import ML_DMD
+from src.models.ml_dmd_free import ML_DMD
 
 
 def maybe_set_z_scale(model, train_loader, device):

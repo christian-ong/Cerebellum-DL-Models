@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 from src.data_generation.load_data import resolve_split_npz_path
-from src.models.ml_dmd import ML_DMD
+from src.models.ml_dmd_free import ML_DMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 
 """
@@ -50,7 +50,6 @@ def get_koopman_eigensystem(model):
     """
     if hasattr(model, "Phi"):
         Phi_true = model.get_Phi_true().detach().numpy()
-        Phi_scaled = model.Phi.detach().numpy()
         Lambda = model.get_Lambda().detach().numpy()
         K_true = model.get_K_true().detach().numpy()
         
@@ -61,14 +60,9 @@ def get_koopman_eigensystem(model):
         
         v_norms = np.linalg.norm(V, axis=0)
         V = V / v_norms
-        
-        if hasattr(model, "Phi_inv"):
-            Phi_scaled_inv = model.Phi_inv.detach().numpy()
-        else:
-            Phi_scaled_inv = np.linalg.pinv(Phi_scaled)
             
-        Phi_scaled_inv_T = Phi_scaled_inv.T
-        W = Phi_scaled_inv_T @ W_inner
+        Phi_inv_T = np.linalg.pinv(Phi_true).T
+        W = Phi_inv_T @ W_inner
         
         W = W * v_norms
         
@@ -559,7 +553,7 @@ if __name__ == "__main__":
     ckpt = torch.load(model_path, map_location="cpu")
     model, model_type = build_model_from_checkpoint(ckpt)
     z_scale = model.z_scale.detach().cpu().numpy()
-    Phi, Lambda, eigvals, V, W, K = get_koopman_eigensystem(model)
+    Phi_true, Lambda, eigvals, V, W, K = get_koopman_eigensystem(model)
     
     # 3. Dynamic Grid setup based on true boundaries (taking 2D slice for 3D+ systems)
     x_range = np.linspace(state_bounds[0][0], state_bounds[0][1], grid_res)
@@ -577,7 +571,7 @@ if __name__ == "__main__":
     with torch.no_grad():
         z = model.expand(torch.as_tensor(grid_points, dtype=torch.float32)).cpu().numpy() / z_scale
     
-    print("Phi shape:", Phi.shape)
+    print("Phi shape:", Phi_true.shape)
     print("Eigvals shape:", eigvals.shape)
     
     # 4. Calculate mode qualities using true boundaries
@@ -597,21 +591,28 @@ if __name__ == "__main__":
     # --------------------------------------------------
     # Plot Koopman Operator Matrices
     # --------------------------------------------------
-    V_real, Lambda_real = get_real_representation(V, eigvals)
+# --------------------------------------------------
+    # Plot Koopman Operator Matrices
+    # --------------------------------------------------
     matrices = [
+        (Phi_true, "Raw $\Phi_{true}$ (Model Output)"),
+        (Lambda, "Raw $\Lambda$ (Model Inner Evolution)"),
         (V, "Extracted Koopman Modes (Complex V)"),
-        (np.diag(eigvals), "True Complex $\Lambda$"),
-        (V_real, "Real Koopman Modes ($\Phi_{real}$)"),
-        (Lambda_real, "Real Block-Diagonal $\Lambda_{real}$"),
+        (np.diag(eigvals), "True Complex $\Lambda$ (Diagonalized)"),
         (K, r"Operator K")
     ]
-    plot_transition_matrices(matrices, f"Koopman Operator Matrices, {system}", model.expand_names, 
-                             save_path=os.path.join(save_dir, "transition_matrices.png"))
+    
+    plot_transition_matrices(
+        matrices, 
+        f"Koopman Operator Matrices, {system}", 
+        model.expand_names, 
+        save_path=os.path.join(save_dir, "transition_matrices.png")
+    )
     
     # --------------------------------------------------
     # Plot eigenfunctions (top N modes)
     # --------------------------------------------------
-    phi_vals = z @ W[:, top_n_modes] 
+    phi_vals = z @ Phi_true[:, top_n_modes] 
     plot_complex_field(grid_points, phi_vals, f"Eigenfunctions {top_n_modes} (Score: {[f'{e:.1f}' for e in scores[top_n_modes]]})", 
                        save_path=os.path.join(save_dir, "eigenfunctions.png"))
     
