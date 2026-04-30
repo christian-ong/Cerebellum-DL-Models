@@ -48,39 +48,87 @@ def get_koopman_eigensystem(model):
     Extracts the Koopman modes and eigenfunctions STRICTLY from 
     the neural network's learned parameters (Phi and Lambda).
     """
-    if hasattr(model, "Phi"):
-        Phi_true = model.get_Phi_true().detach().numpy()
-        Lambda = model.get_Lambda().detach().numpy()
-        K_true = model.get_K_true().detach().numpy()
-        
+    # Case 1: Models that expose Phi_true and Lambda (e.g., ML_DMD)
+    if hasattr(model, "get_Phi_true") and hasattr(model, "get_Lambda"):
+        Phi_true_obj = model.get_Phi_true()
+        Lambda_obj = model.get_Lambda()
+        K_obj = model.get_K_true() if hasattr(model, "get_K_true") else None
+
+        Phi_true = (
+            Phi_true_obj.detach().cpu().numpy()
+            if hasattr(Phi_true_obj, "detach")
+            else np.array(Phi_true_obj)
+        )
+        Lambda = (
+            Lambda_obj.detach().cpu().numpy()
+            if hasattr(Lambda_obj, "detach")
+            else np.array(Lambda_obj)
+        )
+        K_true = (
+            K_obj.detach().cpu().numpy()
+            if (K_obj is not None and hasattr(K_obj, "detach"))
+            else (np.array(K_obj) if K_obj is not None else None)
+        )
+
         eigvals, V_inner = np.linalg.eig(Lambda)
-        _, W_inner = np.linalg.eig(Lambda.T) 
-        
+        _, W_inner = np.linalg.eig(Lambda.T)
+
         V = Phi_true @ V_inner
-        
+
         v_norms = np.linalg.norm(V, axis=0)
-        V = V / v_norms
-            
+        V = V / (v_norms + 1e-12)
+
         Phi_inv_T = np.linalg.pinv(Phi_true).T
         W = Phi_inv_T @ W_inner
-        
-        W = W * v_norms
-        
+
+        W = W * (v_norms + 1e-12)
+
         dominant_rows = np.argmax(np.abs(V), axis=0)
         sort_idx = np.argsort(dominant_rows)
-        
+
         eigvals = eigvals[sort_idx]
         V = V[:, sort_idx]
         W = W[:, sort_idx]
-        
+
         for i in range(V.shape[1]):
             dom_idx = np.argmax(np.abs(V[:, i]))
             if np.real(V[dom_idx, i]) < 0:
                 V[:, i] *= -1
-                W[:, i] *= -1 
-                
+                W[:, i] *= -1
+
         return Phi_true, Lambda, eigvals, V, W, K_true
-    
+
+    # Case 2: Models that expose only the Koopman operator K (e.g., ML_LinearDynamics)
+    if hasattr(model, "get_K_true"):
+        K_obj = model.get_K_true()
+        K_true = K_obj.detach().cpu().numpy() if hasattr(K_obj, "detach") else np.array(K_obj)
+
+        eigvals, V = np.linalg.eig(K_true)
+        _, W = np.linalg.eig(K_true.T)
+
+        # Without an explicit Phi mapping, treat Phi_true as identity in lifted space
+        Phi_true = np.eye(K_true.shape[0])
+        Lambda = np.diag(eigvals)
+
+        v_norms = np.linalg.norm(V, axis=0)
+        V = V / (v_norms + 1e-12)
+        W = W * (v_norms + 1e-12)
+
+        dominant_rows = np.argmax(np.abs(V), axis=0)
+        sort_idx = np.argsort(dominant_rows)
+
+        eigvals = eigvals[sort_idx]
+        V = V[:, sort_idx]
+        W = W[:, sort_idx]
+
+        for i in range(V.shape[1]):
+            dom_idx = np.argmax(np.abs(V[:, i]))
+            if np.real(V[dom_idx, i]) < 0:
+                V[:, i] *= -1
+                W[:, i] *= -1
+
+        return Phi_true, Lambda, eigvals, V, W, K_true
+
     raise ValueError("Model format not recognized for eigensystem extraction.")
 
 
@@ -127,12 +175,12 @@ def plot_transition_matrices(matrices, title, expansion_names, save_path=None):
                 r, im_val = np.real(v), np.imag(v)
                 
                 if abs(im_val) < 1e-3:
-                    txt = f"{r:.2f}"
+                    txt = f"{r:.3f}"
                 elif abs(r) < 1e-3:
-                    txt = f"{im_val:.2f}j"
+                    txt = f"{im_val:.3f}j"
                 else:
                     sign = "+" if im_val > 0 else "-"
-                    txt = f"{r:.2f}\n{sign}{abs(im_val):.2f}j"
+                    txt = f"{r:.3f}\n{sign}{abs(im_val):.3f}j"
 
                 ax.text(
                     col, row, txt,
@@ -589,9 +637,6 @@ if __name__ == "__main__":
     os.makedirs(save_dir, exist_ok=True)
 
     # --------------------------------------------------
-    # Plot Koopman Operator Matrices
-    # --------------------------------------------------
-# --------------------------------------------------
     # Plot Koopman Operator Matrices
     # --------------------------------------------------
     matrices = [
