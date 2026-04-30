@@ -6,6 +6,7 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 from src.data_generation.load_data import resolve_split_npz_path
 from src.models.ml_dmd_free import ML_DMD
+from src.models.ml_dmd_band import ML_DMD_BAND
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 
 """
@@ -33,6 +34,8 @@ def build_model_from_checkpoint(ckpt):
 
     if model_name == "ml_dmd":
         model = ML_DMD(**kwargs)
+    elif model_name == "ml_dmd_band":
+        model = ML_DMD_BAND(**kwargs)
     elif model_name == "ml_lineardynamics":
         model = ML_LinearDynamics(**kwargs)
     else:
