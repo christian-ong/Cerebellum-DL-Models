@@ -279,11 +279,15 @@ class ML_DMD_BAND(ManualExpansion):
         # mathematically pure complex rotation: [a, b; -b, a]
         
         # Force off-diagonals to be exact opposites: s = -u
-        loss_antisym = torch.mean(torch.abs(self.eig_sub) * (self.eig_super + self.eig_sub)**2)
+        loss_antisym = torch.mean(torch.abs(self.eig_sub) * torch.abs(self.eig_super + self.eig_sub))
         
         # Force neighboring diagonals to be equal: d_i = d_{i+1}
         diag_diff = self.eig_diag[:-1] - self.eig_diag[1:]
-        loss_diag_match = torch.mean(torch.abs(self.eig_sub) * diag_diff**2)
+        loss_diag_match = torch.mean(torch.abs(self.eig_sub) * torch.abs(diag_diff))
+
+        # Force Single Canonical Orientation
+        loss_sign_sub = torch.mean(torch.relu(self.eig_sub))
+        loss_sign_super = torch.mean(torch.relu(-self.eig_super))
 
         # --------------------------------------------------
         # Total loss
@@ -292,8 +296,10 @@ class ML_DMD_BAND(ManualExpansion):
             loss_lift
             + 0.1 * loss_state
             + 1e-3 * loss_unit_length
-            + 0.05 * loss_antisym         # Mathematically required for complex pairs
-            + 0.05 * loss_diag_match      # Mathematically required for complex pairs
+            + 1.0 * loss_antisym          # Bumped to 1.0 (Safe because it zeroes out for Jordan blocks)
+            + 1.0 * loss_diag_match       # Bumped to 1.0 
+            + 0.1 * loss_sign_sub         # Locks orientation: eig_sub <= 0
+            + 0.1 * loss_sign_super       # Locks orientation: eig_super >= 0
         )
         return (loss,)
 
