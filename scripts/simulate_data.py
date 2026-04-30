@@ -79,7 +79,7 @@ python -m scripts.simulate_data --system degenerate_node --n_traj_train 500 --n_
 Nonlinear systems (SHORT TRAJECTORIES, T_train=1.0)
 --------------------------------------------------
 
-python -m scripts.simulate_data --system closed_small --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 1 --T_test 10 --name short
+python -m scripts.simulate_data --system closed_small --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
 python -m scripts.simulate_data --system closed_large --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
 python -m scripts.simulate_data --system closed_trig_small --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
 python -m scripts.simulate_data --system closed_trig_medium --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short

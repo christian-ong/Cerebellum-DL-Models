@@ -72,7 +72,7 @@ class ML_DMD(ManualExpansion):
         # ------------------------------------------------
         # Columns correspond to Koopman modes.
         # Initialized close to identity for stability.
-        self.Phi = nn.Parameter(
+        self.Phi_scaled = nn.Parameter(
             torch.eye(self.latent_dim)
             + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
         )
@@ -162,7 +162,7 @@ class ML_DMD(ManualExpansion):
         """
 
         if not torch.is_tensor(z_scale):
-            z_scale = torch.tensor(z_scale, dtype=self.Phi.dtype)
+            z_scale = torch.tensor(z_scale, dtype=self.Phi_scaled.dtype)
 
         self.z_scale.copy_(z_scale.to(self.z_scale.device))
 
@@ -181,14 +181,14 @@ class ML_DMD(ManualExpansion):
         """
         Return Phi in scaled lifted coordinates.
         """
-        return self.Phi
+        return self.Phi_scaled
 
 
     def get_Phi_scaled_inv(self):
         """
         Return pseudo-inverse of Phi in scaled lifted coordinates.
         """
-        return torch.linalg.pinv(self.Phi, rcond=1e-6)
+        return torch.linalg.pinv(self.Phi_scaled, rcond=1e-6)
 
 
     def get_Lambda(self):
@@ -204,8 +204,8 @@ class ML_DMD(ManualExpansion):
 
             K_scaled = Phi Lambda Phi^{-1}
         """
-        Phi_inv = self.get_Phi_scaled_inv()
-        return self.Phi @ self.Lambda @ Phi_inv
+        Phi_inv_scaled = self.get_Phi_scaled_inv()
+        return self.Phi_scaled @ self.Lambda @ Phi_inv_scaled
 
 
     def get_Phi_true(self):
@@ -220,7 +220,7 @@ class ML_DMD(ManualExpansion):
         before expansion.
         """
         S = self.get_scaling_matrix()
-        return S @ self.Phi
+        return S @ self.Phi_scaled
 
 
     def get_K_true(self):
@@ -268,11 +268,11 @@ class ML_DMD(ManualExpansion):
         # Normalize lifted coordinates
         z = torch.clamp(z_raw / self.z_scale, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
 
-        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
-        Phi_reg = self.Phi + I_eps
-        cond_number = torch.linalg.cond(self.Phi)
+        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi_scaled.device, dtype=self.Phi_scaled.dtype)
+        Phi_reg = self.Phi_scaled + I_eps
+        cond_number = torch.linalg.cond(self.Phi_scaled)
         if cond_number > 1e6:
-            print(f"Warning: High condition number for Phi: {cond_number:.2e}")
+            print(f"Warning: High condition number for Phi_scaled: {cond_number:.2e}")
 
         # Convert to modal coordinates
         b = torch.linalg.solve(Phi_reg, z.mT).mT
@@ -281,7 +281,7 @@ class ML_DMD(ManualExpansion):
         b_next = b @ self.Lambda.mT
 
         # Convert back to lifted coordinates
-        z_next = b_next @ self.Phi.mT
+        z_next = b_next @ self.Phi_scaled.mT
 
         # De-normalize lifted observables
         z_next_raw = z_next * self.z_scale
@@ -312,8 +312,8 @@ class ML_DMD(ManualExpansion):
             max=self.max_abs_z_norm,
         )
 
-        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
-        Phi_reg = self.Phi + I_eps
+        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi_scaled.device, dtype=self.Phi_scaled.dtype)
+        Phi_reg = self.Phi_scaled + I_eps
 
         # Convert to modal coordinates
         b = torch.linalg.solve(Phi_reg, z.mT).mT
@@ -322,7 +322,7 @@ class ML_DMD(ManualExpansion):
         b_next = b @ self.Lambda.mT
 
         # Convert back to lifted coordinates
-        z_next_pred = b_next @ self.Phi.mT
+        z_next_pred = b_next @ self.Phi_scaled.mT
 
         # --------------------------------------------------
         # 1) Weighted lifted loss
@@ -346,16 +346,16 @@ class ML_DMD(ManualExpansion):
         # 3) Φ conditioning regularization
         # --------------------------------------------------
 
-        col_norms = torch.linalg.norm(self.Phi, dim=0)
+        col_norms = torch.linalg.norm(self.get_Phi_true(), dim=0)
         loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
 
         # --------------------------------------------------
         # 4) Eigenvalue stability regularization
         # --------------------------------------------------
 
-        # Phi_cols = self.Phi / (torch.linalg.norm(self.Phi, dim=0, keepdim=True) + 1e-8)
+        # Phi_cols = self.Phi_scaled / (torch.linalg.norm(self.Phi_scaled, dim=0, keepdim=True) + 1e-8)
         # G = Phi_cols.mT @ Phi_cols
-        # I = torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
+        # I = torch.eye(self.latent_dim, device=self.Phi_scaled.device, dtype=self.Phi_scaled.dtype)
         # loss_coherence = torch.mean((G - I) ** 2)
 
         # --------------------------------------------------
