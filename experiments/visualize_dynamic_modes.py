@@ -24,7 +24,7 @@ python -m experiments.visualize_dynamic_modes --model_path data\sweeped_models\l
 # --------------------------------------------------
 
 parser = argparse.ArgumentParser(description="Visualize Koopman dynamic modes and eigensystems.")
-parser.add_argument("--model_path", type=str, help="Path to the trained model checkpoint (overrides model_name and custom_name if provided)")
+parser.add_argument("--model_name", type=str, help="Name of the trained model (overrides model_path if provided)")
 parser.add_argument("--custom_name", type=str, default="default", help="Custom name of the trained model")
 parser.add_argument("--data_path", type=str, required=True, help="Path to the dataset directory")
 args = parser.parse_args()
@@ -38,13 +38,13 @@ state_dim = trajectories.shape[-1]
 print(f"Visualizing for System: {system}")
 
 # Load model and eigensystem
-model, model_type = build_model_from_checkpoint(args.model_path)
+model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model_best.pt"
+model, model_type = build_model_from_checkpoint(model_path)
 z_scale = model.z_scale.detach().cpu().numpy()
 Phi_true, Lambda, eigvals, V, W, K = get_koopman_eigensystem(model)
 
 # Create the output directory for figures
-specific_name = '_'.join([system, args.custom_name])
-save_dir = f"experiments/figures/{specific_name}"
+save_dir = f"experiments/figures/{args.model_name}/{system}/{args.custom_name}"
 os.makedirs(save_dir, exist_ok=True)
 
 # --------------------------------------------------
