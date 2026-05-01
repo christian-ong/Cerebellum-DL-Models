@@ -4,6 +4,7 @@ import torch
 import numpy as np
 from src.data_generation.load_data import resolve_split_npz_path
 from src.eval.visualize_modes import *
+from src.eval.translate_transition_matrix import get_system_matrices
 
 """
 This script visualizes the dynamic modes and eigensystem of a trained Koopman model.
@@ -12,6 +13,10 @@ This script visualizes the dynamic modes and eigensystem of a trained Koopman mo
 python -m experiments.visualize_dynamic_modes --model_path data\sweeped_models\local2\ml_dmd\closed_trig_large\free_long_spec10\model_best.pt --data_path data/trajectories/nonlinear/closed_trig_large/long/test.npz
 
 """
+
+# TODO
+# order modes by abs(lambda) or power or smt - can incorporate into an ordering function
+
 
 
 # --------------------------------------------------
@@ -24,27 +29,61 @@ parser.add_argument("--custom_name", type=str, default="default", help="Custom n
 parser.add_argument("--data_path", type=str, required=True, help="Path to the dataset directory")
 args = parser.parse_args()
 
-# 1. Load test trajectories to find true boundaries and system name dynamically
+# Load test trajectories to find true boundaries and system name dynamically
 test_data_path = resolve_split_npz_path(args.data_path, "test")
 data = np.load(test_data_path)
 trajectories = data['X'] 
 system = str(data["system"])
 state_dim = trajectories.shape[-1]
-
 print(f"Visualizing for System: {system}")
 
+# Load model and eigensystem
+model, model_type = build_model_from_checkpoint(args.model_path)
+z_scale = model.z_scale.detach().cpu().numpy()
+Phi_true, Lambda, eigvals, V, W, K = get_koopman_eigensystem(model)
+
+# Create the output directory for figures
+specific_name = '_'.join([system, args.custom_name])
+save_dir = f"experiments/figures/{specific_name}"
+os.makedirs(save_dir, exist_ok=True)
+
+# --------------------------------------------------
+# Plot Koopman Operator Matrices
+# --------------------------------------------------
+
+# Model matrices to plot
+model_matrices_to_plot = [
+    (K, "Operator K"),
+    (Lambda, "Raw $\Lambda$ (Model Inner Evolution)"),
+    (Phi_true, "Raw $\Phi_{true}$ (Model Output)"),
+]
+
+# Get analytical matrices for the system
+analytical_matrices = get_system_matrices(system) # A_c, A_d, eigvals, eigvecs
+analytical_matrices_to_plot = [
+    (analytical_matrices[1], "Analytical $K$"),
+    (np.diag(analytical_matrices[2]), "Analytical $\Lambda$ (Diagonalized)"),
+    (analytical_matrices[3], "Analytical $\Phi_{true}$"),
+]
+
+matrices_to_plot = model_matrices_to_plot + analytical_matrices_to_plot
+plot_transition_matrices(
+    matrices_to_plot, 
+    f"Koopman Operator Matrices, {system}", 
+    model.expand_names, 
+    save_path=os.path.join(save_dir, "transition_matrices.png")
+)
+
+# --------------------------------------------------
+# Plot eigenfunctions (top N modes)
+# --------------------------------------------------
 # Find min and max dynamically for ALL dimensions
 state_bounds = []
 for dim in range(state_dim):
     dim_min, dim_max = trajectories[:, :, dim].min(), trajectories[:, :, dim].max()
     state_bounds.append((dim_min, dim_max))
 
-# 2. Load model and eigensystem
-model, model_type = build_model_from_checkpoint(args.model_path)
-z_scale = model.z_scale.detach().cpu().numpy()
-Phi_true, Lambda, eigvals, V, W, K = get_koopman_eigensystem(model)
-
-# 3. Dynamic Grid setup based on true boundaries (taking 2D slice for 3D+ systems)
+# Dynamic Grid setup based on true boundaries (taking 2D slice for 3D+ systems)
 grid_res = 100
 n_top_modes = 5
 x_range = np.linspace(state_bounds[0][0], state_bounds[0][1], grid_res)
@@ -61,45 +100,15 @@ grid_points = np.column_stack(grid_cols)
 with torch.no_grad():
     z = model.expand(torch.as_tensor(grid_points, dtype=torch.float32)).cpu().numpy() / z_scale
 
-print("Phi shape:", Phi_true.shape)
-print("Eigvals shape:", eigvals.shape)
-
-# 4. Calculate mode qualities using true boundaries
+# Calculate mode qualities using true boundaries
 best_ids, scores, residuals = calculate_mode_quality(
     model, W, eigvals, z_scale, state_bounds=state_bounds)
-
 num_modes = len(eigvals)
 print(f"Total modes: {num_modes}")
 print(f"Top {n_top_modes} modes indices: {best_ids[:n_top_modes]}")
 print(f"Top {n_top_modes} modes scores: {[f'{s:.3f}' for s in scores[best_ids[:n_top_modes]]]}")
 top_n_modes = best_ids[:n_top_modes]
 
-# Create the output directory for figures
-specific_name = '_'.join([system, args.custom_name])
-save_dir = f"experiments/figures/{specific_name}"
-os.makedirs(save_dir, exist_ok=True)
-
-# --------------------------------------------------
-# Plot Koopman Operator Matrices
-# --------------------------------------------------
-matrices = [
-    (Phi_true, "Raw $\Phi_{true}$ (Model Output)"),
-    (Lambda, "Raw $\Lambda$ (Model Inner Evolution)"),
-    (V, "Extracted Koopman Modes (Complex V)"),
-    (np.diag(eigvals), "True Complex $\Lambda$ (Diagonalized)"),
-    (K, r"Operator K")
-]
-
-plot_transition_matrices(
-    matrices, 
-    f"Koopman Operator Matrices, {system}", 
-    model.expand_names, 
-    save_path=os.path.join(save_dir, "transition_matrices.png")
-)
-
-# --------------------------------------------------
-# Plot eigenfunctions (top N modes)
-# --------------------------------------------------
 phi_vals = z @ Phi_true[:, top_n_modes] 
 plot_complex_field(grid_points, phi_vals, f"Eigenfunctions {top_n_modes} (Score: {[f'{e:.1f}' for e in scores[top_n_modes]]})", 
                     save_path=os.path.join(save_dir, "eigenfunctions.png"))

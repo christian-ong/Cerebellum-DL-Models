@@ -7,6 +7,7 @@ from src.models.ml_dmd_band import ML_DMD_BAND
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 
 
+
 def build_model_from_checkpoint(model_path):
     ckpt = torch.load(model_path, map_location="cpu")
     model_name = ckpt.get("model", "ml_dmd")
@@ -125,30 +126,19 @@ def get_koopman_eigensystem(model):
 
 
 def plot_transition_matrices(matrices, title, expansion_names, save_path=None):
-    # If we have exactly our 5 main matrices, use the custom GridSpec dashboard layout
-    if len(matrices) == 5:
-        fig = plt.figure(figsize=(18, 10))
-        # Create a 2x3 grid. The 3rd column is slightly wider for the master K matrix
-        gs = gridspec.GridSpec(2, 3, width_ratios=[1, 1, 1.2])
-        
-        axes = [
-            fig.add_subplot(gs[0, 0]), # Top Left: Complex V
-            fig.add_subplot(gs[0, 1]), # Top Mid: Complex Lambda
-            fig.add_subplot(gs[1, 0]), # Bottom Left: Real Phi
-            fig.add_subplot(gs[1, 1]), # Bottom Mid: Real Lambda
-            fig.add_subplot(gs[:, 2])  # Right Side: Operator K (Spans both rows)
-        ]
-    else:
-        # Fallback standard layout if a different number of matrices is passed
-        num_rows = int(np.ceil(len(matrices) / 2))
-        fig, axes_flat = plt.subplots(num_rows, 2, figsize=(14, 6 * num_rows))
-        axes = axes_flat.flat
+
+    fig = plt.figure(figsize=(18, 10))
+    # Create a 2x3 grid
+    gs = gridspec.GridSpec(2, 3, width_ratios=[1, 1, 1])
+    axes = [fig.add_subplot(gs[i,j]) for i in range(2) for j in range(3)]
 
     fig.suptitle(title, fontsize=18, fontweight='bold', y=0.96)
     
     for i, (M, subtitle) in enumerate(matrices):
+        print(f"Plotting matrix: {subtitle}, shape: {M.shape}")
+
         ax = axes[i]
-        M_mag = np.abs(M) 
+        M_mag = np.abs(M)
         im = ax.imshow(M_mag)
         ax.set_title(subtitle, fontsize=14)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
