@@ -135,8 +135,6 @@ def plot_transition_matrices(matrices, title, expansion_names, save_path=None):
     fig.suptitle(title, fontsize=18, fontweight='bold', y=0.96)
     
     for i, (M, subtitle) in enumerate(matrices):
-        print(f"Plotting matrix: {subtitle}, shape: {M.shape}")
-
         ax = axes[i]
         M_mag = np.abs(M)
         im = ax.imshow(M_mag)
