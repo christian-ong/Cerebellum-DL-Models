@@ -40,7 +40,13 @@ print(f"Visualizing for System: {system}")
 # Load model and eigensystem
 model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model_best.pt"
 model, model_type = build_model_from_checkpoint(model_path)
-z_scale = model.z_scale.detach().cpu().numpy()
+
+# NEW: Handle the removed z_scale gracefully
+if hasattr(model, "z_scale"):
+    z_scale = model.z_scale.detach().cpu().numpy()
+else:
+    z_scale = np.ones(model.latent_dim) # Fallback for pure unscaled models
+
 Phi_true, Lambda, eigvals, V, W, K = get_koopman_eigensystem(model)
 
 # Create the output directory for figures
@@ -59,11 +65,21 @@ model_matrices_to_plot = [
 ]
 
 # Get analytical matrices for the system
-analytical_matrices = get_system_matrices(system) # A_c, A_d, eigvals, eigvecs
+A_c, A_d, a_eigvals, a_eigvecs = get_system_matrices(system) 
+
+# --- NEW CODE: Sort analytical truth by frequency to match the Neural Network ---
+sort_idx = np.argsort(np.abs(np.imag(a_eigvals)))
+a_eigvals = a_eigvals[sort_idx]
+a_eigvecs = a_eigvecs[:, sort_idx]
+# --------------------------------------------------------------------------------
+
+# Transform the analytical complex eigendecomposition into real blocks
+Phi_analytical_real, Lambda_analytical_real = get_real_representation(a_eigvecs, a_eigvals)
+
 analytical_matrices_to_plot = [
-    (analytical_matrices[1], "Analytical $K$"),
-    (np.diag(analytical_matrices[2]), "Analytical $\Lambda$ (Diagonalized)"),
-    (analytical_matrices[3], "Analytical $\Phi_{true}$"),
+    (A_d, "Analytical $K$"),
+    (Lambda_analytical_real, "Analytical $\Lambda$ (Real Block)"),
+    (Phi_analytical_real, "Analytical $\Phi_{true}$ (Real Block)"),
 ]
 
 matrices_to_plot = model_matrices_to_plot + analytical_matrices_to_plot
@@ -98,7 +114,7 @@ for dim in range(2, state_dim):
 grid_points = np.column_stack(grid_cols)
 
 with torch.no_grad():
-    z = model.expand(torch.as_tensor(grid_points, dtype=torch.float32)).cpu().numpy() / z_scale
+    z_raw = model.expand(torch.as_tensor(grid_points, dtype=torch.float32)).cpu().numpy()
 
 # Calculate mode qualities using true boundaries
 best_ids, scores, residuals = calculate_mode_quality(
@@ -109,7 +125,8 @@ print(f"Top {n_top_modes} modes indices: {best_ids[:n_top_modes]}")
 print(f"Top {n_top_modes} modes scores: {[f'{s:.3f}' for s in scores[best_ids[:n_top_modes]]]}")
 top_n_modes = best_ids[:n_top_modes]
 
-phi_vals = z @ Phi_true[:, top_n_modes] 
+Phi_inv = model.get_Phi_inv().detach().cpu().numpy()
+phi_vals = z_raw @ Phi_inv.T[:, top_n_modes]
 plot_complex_field(grid_points, phi_vals, f"Eigenfunctions {top_n_modes} (Score: {[f'{e:.1f}' for e in scores[top_n_modes]]})", 
                     save_path=os.path.join(save_dir, "eigenfunctions.png"))
 

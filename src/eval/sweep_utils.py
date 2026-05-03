@@ -10,7 +10,8 @@ def maybe_set_z_scale(model, train_loader, device):
         print("Setting z_scale from training data (Max-Abs)...")
         with torch.no_grad():
             zs = []
-            for x_batch, _ in train_loader:
+            for batch in train_loader:
+                x_batch = batch[0]
                 x_batch = x_batch.to(device)
                 if hasattr(model, "scale_state"):
                     x_batch = model.scale_state(x_batch)

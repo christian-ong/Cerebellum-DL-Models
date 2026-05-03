@@ -41,7 +41,68 @@ def get_koopman_eigensystem(model):
     Extracts the Koopman modes and eigenfunctions STRICTLY from 
     the neural network's learned parameters (Phi and Lambda).
     """
-    # Case 1: Models that expose Phi_true and Lambda (e.g., ML_DMD)
+    # ------------------------------------------------------------------
+    # Case 1b: Models that expose getters `get_Phi` / `get_Phi_inv` / `get_Lambda`
+    # (handles the updated ML_DMD_BAND implementation)
+    # ------------------------------------------------------------------
+    if hasattr(model, "get_Phi") and hasattr(model, "get_Phi_inv") and hasattr(model, "get_Lambda"):
+        Phi_obj = model.get_Phi()
+        Lambda_obj = model.get_Lambda()
+        K_obj = model.get_K() if hasattr(model, "get_K") else None
+
+        Phi_true = (
+            Phi_obj.detach().cpu().numpy()
+            if hasattr(Phi_obj, "detach")
+            else np.array(Phi_obj)
+        )
+        Lambda = (
+            Lambda_obj.detach().cpu().numpy()
+            if hasattr(Lambda_obj, "detach")
+            else np.array(Lambda_obj)
+        )
+        K_true = (
+            K_obj.detach().cpu().numpy()
+            if (K_obj is not None and hasattr(K_obj, "detach"))
+            else (np.array(K_obj) if K_obj is not None else None)
+        )
+
+        Phi_inv_obj = model.get_Phi_inv()
+        Phi_inv = (
+            Phi_inv_obj.detach().cpu().numpy()
+            if hasattr(Phi_inv_obj, "detach")
+            else np.array(Phi_inv_obj)
+        )
+
+        eigvals, V_inner = np.linalg.eig(Lambda)
+        _, W_inner = np.linalg.eig(Lambda.T)
+
+        V = Phi_true @ V_inner
+
+        v_norms = np.linalg.norm(V, axis=0)
+        V = V / (v_norms + 1e-12)
+
+        # Calculate W using the learned Encoder (get_Phi_inv)
+        W = Phi_inv.T @ W_inner
+        W = W * (v_norms + 1e-12)
+
+        dominant_rows = np.argmax(np.abs(V), axis=0)
+        sort_idx = np.argsort(dominant_rows)
+
+        eigvals = eigvals[sort_idx]
+        V = V[:, sort_idx]
+        W = W[:, sort_idx]
+
+        for i in range(V.shape[1]):
+            dom_idx = np.argmax(np.abs(V[:, i]))
+            if np.real(V[dom_idx, i]) < 0:
+                V[:, i] *= -1
+                W[:, i] *= -1
+
+        return Phi_true, Lambda, eigvals, V, W, K_true
+
+    # ------------------------------------------------------------------
+    # Case 2: Old scaled models that expose get_Phi_true and get_Lambda
+    # ------------------------------------------------------------------
     if hasattr(model, "get_Phi_true") and hasattr(model, "get_Lambda"):
         Phi_true_obj = model.get_Phi_true()
         Lambda_obj = model.get_Lambda()
@@ -127,12 +188,14 @@ def get_koopman_eigensystem(model):
 
 def plot_transition_matrices(matrices, title, expansion_names, save_path=None):
 
-    fig = plt.figure(figsize=(18, 10))
+    fig = plt.figure(figsize=(18, 12))
     # Create a 2x3 grid
     gs = gridspec.GridSpec(2, 3, width_ratios=[1, 1, 1])
     axes = [fig.add_subplot(gs[i,j]) for i in range(2) for j in range(3)]
 
-    fig.suptitle(title, fontsize=18, fontweight='bold', y=0.96)
+    # Move the suptitle slightly higher so there's room between the
+    # main title and the first row of subplots.
+    fig.suptitle(title, fontsize=18, fontweight='bold', y=0.98)
     
     for i, (M, subtitle) in enumerate(matrices):
         print(f"Plotting matrix: {subtitle}, shape: {M.shape}")
@@ -156,13 +219,13 @@ def plot_transition_matrices(matrices, title, expansion_names, save_path=None):
             if abs(v) > 1e-3:
                 r, im_val = np.real(v), np.imag(v)
                 
-                if abs(im_val) < 1e-3:
-                    txt = f"{r:.3f}"
-                elif abs(r) < 1e-3:
-                    txt = f"{im_val:.3f}j"
+                if abs(im_val) < 1e-4:
+                    txt = f"{r:.4f}"
+                elif abs(r) < 1e-4:
+                    txt = f"{im_val:.4f}j"
                 else:
                     sign = "+" if im_val > 0 else "-"
-                    txt = f"{r:.3f}\n{sign}{abs(im_val):.3f}j"
+                    txt = f"{r:.4f}\n{sign}{abs(im_val):.4f}j"
 
                 ax.text(
                     col, row, txt,
@@ -175,10 +238,14 @@ def plot_transition_matrices(matrices, title, expansion_names, save_path=None):
             axes[i].axis("off")
 
     plt.tight_layout()
+    # Move the main title down slightly and tighten subplot spacing so
+    # the middle-row subtitles don't overlap the suptitle and the
+    # matrices appear closer together.
+    # Reduce vertical gap between rows while keeping space for the title.
     if len(matrices) == 5:
-        plt.subplots_adjust(top=0.90, hspace=0.3, wspace=0.25)
+        plt.subplots_adjust(top=0.90, hspace=0.15, wspace=0.18)
     else:
-        plt.subplots_adjust(bottom=0.1, top=0.92, hspace=0.4, wspace=0.2)
+        plt.subplots_adjust(bottom=0.06, top=0.92, hspace=0.15, wspace=0.18)
         
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')
