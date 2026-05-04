@@ -1,5 +1,7 @@
+import os
 import torch
 import numpy as np
+from scipy.linalg import expm
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 from src.models.ml_dmd_free import ML_DMD
@@ -125,42 +127,348 @@ def get_koopman_eigensystem(model):
     raise ValueError("Model format not recognized for eigensystem extraction.")
 
 
-def plot_transition_matrices(matrices, title, expansion_names, save_path=None):
 
+def get_system_matrices(system="saddle_point", print_matrices=False, plot_phi=False):
+    
+    # system values
+    vp_mu = 1.5 # vanderpol
+    lv_al = 1.1 # lotka-volterra
+    lv_be = 0.4 
+    lv_ga = 0.4 
+    lv_de = 0.1
+    pe_g = 9.81 # pendulum
+    pe_l = 1.0
+    du_al = -1.0 # duffing
+    du_be = 1.0
+    du_de = 0.2
+    lo_sigma = 10.0 # lorenz
+    lo_rho = 28.0
+    lo_beta = 8.0 / 3.0
+    cs_mu = 0.1 # closed_small
+    cs_al = -1.0
+    cl_mu = 0.1 # closed_large
+    cl_al = -1.0 
+    cl_be = 0.8
+    cl_ga = -0.4
+    cl_de = 0.2
+    ct_om = 1.0 # closed_trig
+    ct_alpha = -0.8
+    ct_bs1 = 0.7
+    ct_bc1 = -0.5
+    ct_bs2 = 0.4
+    ct_bc2 = 0.2
+    ct_bs3 = -0.25
+    ct_bc3 = 0.15
+    ct_bx = 0.3
+    ct_bx2 = -0.08
+
+
+
+    A_cs = {
+        "saddle_point": np.array([
+            [0.2, 0], 
+            [0, -0.2]]),
+        "degenerate_node": np.array([
+            [-0.7, 0.7], 
+            [0, -0.7]]),
+        "inward_spiral": np.array([
+            [-0.5, -2], 
+            [2, -0.5]]),
+        "harmonic_oscillator": np.array([
+            [0, 1.3], 
+            [-1.3, 0]]),
+
+        "vanderpol": np.array([
+            [0,1,0],
+            [-1,vp_mu, -vp_mu],
+            [0,0,0]]),
+        "lotka_volterra": np.array([
+            [lv_al,0,-lv_be],
+            [0, -lv_ga, lv_de],
+            [0,0,0]]),
+        "pendulum": np.array([
+            [0,1,0],
+            [0,0,-pe_g/pe_l],
+            [0,0,0]]),
+        "duffing": np.array([
+            [0,1,0],
+            [-du_al, -du_de, -du_be],
+            [0,0,0]]),
+        "lorenz": np.array([
+            [-lo_sigma, lo_sigma, 0,0,0],
+            [lo_rho, -1, 0,-1,0],
+            [0, 0, -lo_beta,0,1],
+            [0,0,0,0,0],
+            [0,0,0,0,0]]),
+
+        "closed_small": np.array([
+            [cs_mu, 0, 0],
+            [0, cs_al, -cs_al],
+            [0, 0, 2*cs_mu]]),
+        "closed_large": np.array([
+            [cl_mu, 0, 0, 0, 0],
+            [0, cl_al, cl_be, cl_ga, cl_de],
+            [0, 0, 2*cl_mu, 0, 0],
+            [0, 0, 0, 3*cl_mu, 0],
+            [0, 0, 0, 0, 4*cl_mu]]),
+        "closed_trig_small": np.array([
+            [0, 0, 0, 0, 0, 0], 
+            [ct_om, 0, 0, 0, 0,0],
+            [0, ct_bx, ct_alpha, ct_bx2, ct_bs1, ct_bc1],
+            [0, 2*ct_om, 0, 0, 0, 0], 
+            [0, 0, 0, 0, 0, ct_om], 
+            [0, 0, 0, 0, -ct_om, 0]]),
+        "closed_trig_medium": np.array([
+            [0, 0, 0, 0, 0, 0, 0, 0], 
+            [ct_om, 0, 0, 0, 0, 0, 0, 0],
+            [0, ct_bx, ct_alpha, ct_bx2, ct_bs1, ct_bc1, ct_bs2, ct_bc2],
+            [0, 2*ct_om, 0, 0, 0, 0, 0, 0], 
+            [0, 0, 0, 0, 0, ct_om, 0, 0], 
+            [0, 0, 0, 0, -ct_om, 0, 0, 0], 
+            [0, 0, 0, 0, 0, 0, 0, 2*ct_om], 
+            [0, 0, 0, 0, 0, 0, -2*ct_om, 0]]),
+        "closed_trig_large": np.array([
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 
+            [ct_om, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, ct_bx, ct_alpha, ct_bx2, ct_bs1, ct_bc1, ct_bs2, ct_bc2, ct_bs3, ct_bc3],
+            [0, 2*ct_om, 0, 0, 0, 0, 0, 0, 0, 0], 
+            [0, 0, 0, 0, 0, ct_om, 0, 0, 0, 0], 
+            [0, 0, 0, 0, -ct_om, 0, 0, 0, 0, 0], 
+            [0, 0, 0, 0, 0, 0, 0, 2*ct_om, 0, 0], 
+            [0, 0, 0, 0, 0, 0, -2*ct_om, 0, 0, 0], 
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 3*ct_om], 
+            [0, 0, 0, 0, 0, 0, 0, 0, -3*ct_om, 0]])
+    }
+
+    expansion_names = {
+        "saddle_point": ["x", "y"],
+        "degenerate_node": ["x", "y"],
+        "inward_spiral": ["x", "y"],
+        "harmonic_oscillator": ["x", "y"],
+
+        "vanderpol": ["x", "y", "x^2 y"],
+        "lotka_volterra": ["x", "y", "xy"],
+        "pendulum": ["x", "y", "sin(x)"],
+        "duffing": ["x", "y", "x^3"],
+        "lorenz": ["x", "y", "z", "xz", "xy"],
+
+        "closed_small": ["x", "y", "x^2"],
+        "closed_large": ["x", "y", "x^2", "x^3", "x^4"],
+        "closed_trig_small": ["1", "x", "y", "x^2", "sin(x)", "cos(x)"],
+        "closed_trig_medium": ["1", "x", "y", "x^2", "sin(x)", "cos(x)", "sin(2x)", "cos(2x)"],
+        "closed_trig_large": ["1", "x", "y", "x^2", "sin(x)", "cos(x)", "sin(2x)", "cos(2x)", "sin(3x)", "cos(3x)"]
+    }
+
+    if system not in A_cs:
+        raise ValueError(f"System '{system}' not found. Available systems: {list(A_cs.keys())}")
+
+    # ==========================================================
+
+    A_c = A_cs[system]
+    system_expansion_names = expansion_names[system]
+
+    # Compute A_d
+    dt = 0.01
+    A_d = expm(A_c * dt)
+    eigvals, eigvecs = np.linalg.eig(A_d)
+
+    if print_matrices:
+        # compute A_d
+        np.set_printoptions(precision=4, suppress=True) # print A_d with 4 decimal places
+        print('='*80)
+        print(f"\nSystem: {system}\n")
+        print("A_d:")
+        print(A_d)
+
+        # eigen decomp on A_d
+        np.set_printoptions(precision=4, suppress=True) # print A_d with 4 decimal places
+        print("Lambda")
+        print(eigvals)
+        # print("Phi")
+        # print(eigvecs)
+
+        np.set_printoptions(precision=3, suppress=True)
+        print('phi, real')
+        print(np.real(eigvecs))
+        print('phi, imag')
+        print(np.imag(eigvecs))
+
+    # Plot matrix
+    if plot_phi:
+        plt.title(f"Theoretical Phi for {system}")
+        plt.imshow(abs(eigvecs), cmap='viridis')
+        plt.colorbar()
+        # write value in cells
+        for i in range(eigvecs.shape[0]):
+            for j in range(eigvecs.shape[1]):
+                if abs(eigvecs[i,j]) > 1e-4: # only write values above a certain threshold for readability
+                    if abs(np.imag(eigvecs[i,j])) > 1e-4 and abs(np.real(eigvecs[i,j])) > 1e-4:
+                        plt.text(j, i, f"{np.real(eigvecs[i,j]):.3f}\n{np.imag(eigvecs[i,j]):.3f}j", ha='center', va='center', color='red')
+                    elif abs(np.imag(eigvecs[i,j])) > 1e-4:
+                        plt.text(j, i, f"\n{np.imag(eigvecs[i,j]):.3f}j", ha='center', va='center', color='red')
+                    elif abs(np.real(eigvecs[i,j])) > 1e-4:
+                        plt.text(j, i, f"{np.real(eigvecs[i,j]):.4f}\n", ha='center', va='center', color='red')
+        plt.xlabel("Eigenvector Index")
+        plt.ylabel("State Dimension")
+        plt.show()
+
+    return A_c, A_d, eigvals, eigvecs, system_expansion_names
+
+
+def find_complex_pairs(
+        Lambda, 
+        threshold_off_diag=1e-3, 
+        threshold_diag=1e-3,
+        print_info=False):
+    """
+    Detects pairs of complex conjugate modes in the Lambda matrix.
+    Looks for significant (> threshold) off-diagonal values in 2x2 blocks.
+    In case of overlaps, keeps highest scoring blocks (sum of off-diagonal elements).
+    """
+    
+    block_indices = []
+    block_scores = []
+
+    # Loop through 2x2 diagonal blocks
+    for diag_idx in range(len(Lambda)-1):
+
+        # Get 2x2 block <a,b; c,d>
+        a = Lambda[diag_idx, diag_idx]
+        b = Lambda[diag_idx, diag_idx+1]
+        c = Lambda[diag_idx+1, diag_idx]
+        d = Lambda[diag_idx+1, diag_idx+1]
+
+        # Detect rotation blocks (significant off-diagonal values)
+        if ((abs(b) > threshold_off_diag) and # off-diag val 1 significant
+            (abs(c) > threshold_off_diag) and # off-diag val 2 significant
+            (abs(a - d) < threshold_diag)): # diag vals similar 
+            block_indices.append((diag_idx, diag_idx+1))
+
+            # Give a significance score
+            score_off_diag = (abs(b) + abs(c)) + abs(b - (-c)) # higher for more significant off-diagonal values and values are (conjugate) similar
+            score_diag = abs(a - d) # higher if a and d are closer
+            block_scores.append(score_off_diag + score_diag)
+
+    # Sort blocks by score
+    sorted_scores_idx = np.argsort(block_scores)[::-1] # descending order
+    sorted_block_scores = [block_scores[i] for i in sorted_scores_idx]
+    sorted_block_indices = [block_indices[i] for i in sorted_scores_idx]
+
+    # Remove overlapping blocks (keep only the highest scoring)
+    final_blocks_idx = []
+    final_idxs = []
+    for idx, score in zip(sorted_block_indices, sorted_block_scores):
+        if not any(i in final_idxs for i in idx): # if not already included, include this block
+            final_blocks_idx.append(idx)
+            final_idxs.extend(idx)
+
+    if print_info:
+        print(f"Detected complex conjugate pair indices in model modes: {final_blocks_idx}")
+
+        # print complex values for each block
+        conjugate_pairs = []
+        for idx in final_blocks_idx:
+            a = Lambda[idx[0], idx[0]]
+            b = Lambda[idx[0], idx[1]]
+            c = Lambda[idx[1], idx[0]]
+            d = Lambda[idx[1], idx[1]]
+            val1 = a + 1j*b
+            val2 = d + 1j*c
+            conjugate_pairs.append((val1, val2))
+        
+        print("These are the detected complex conjugate pairs:")
+        for i, (val1, val2) in enumerate(conjugate_pairs):
+            print(f"{val1:.3f}, {val2:.3f}")
+
+    return final_blocks_idx
+    
+
+def rotation_blocks_to_complex(Lambda, Phi, complex_pair_idx):
+    """
+    Converts detected 2x2 rotation blocks in Lambda and corresponding columns in Phi into complex conjugate pairs.
+    """
+
+    Lambda_complex = Lambda.copy().astype(np.complex128)
+    Phi_complex = Phi.copy().astype(np.complex128)
+
+    # Loop through complex blocks
+    for idx in complex_pair_idx:
+        i, j = idx
+
+        # Get 2x2 block <a,b; c,d>
+        a = Lambda[i, i]
+        b = Lambda[i, j]
+        c = Lambda[j, i]
+        d = Lambda[j, j]
+
+        # find complex value
+        complex_val_1 = a + 1j*b
+        complex_val_2 = d + 1j*c
+        avg_complex_val = (a + d)/2 + 1j*(b - c)/2
+        print(avg_complex_val)
+
+        # In Lambda: replace block with complex values on diagonal
+        Lambda_complex[i, i] = avg_complex_val
+        Lambda_complex[j, j] = np.conj(avg_complex_val)
+        Lambda_complex[i, j] = 0
+        Lambda_complex[j, i] = 0
+
+        # In Phi: v1 = re(mode), v2 = im(mode)
+        real_part = Phi[:, i]
+        imag_part = Phi[:, j]
+        Phi_complex[:, i] = real_part + 1j*imag_part
+        Phi_complex[:, j] = real_part - 1j*imag_part
+
+    return Lambda_complex, Phi_complex
+
+
+def plot_transition_matrices(matrices, title, model_expansion_names, analytic_expansion_names, threshold_include_val = 1e-3, save_path=None):
     fig = plt.figure(figsize=(18, 10))
     # Create a 2x3 grid
     gs = gridspec.GridSpec(2, 3, width_ratios=[1, 1, 1])
     axes = [fig.add_subplot(gs[i,j]) for i in range(2) for j in range(3)]
 
-    fig.suptitle(title, fontsize=18, fontweight='bold', y=0.96)
+    fig.suptitle(title, fontsize=22)
     
     for i, (M, subtitle) in enumerate(matrices):
         ax = axes[i]
         M_mag = np.abs(M)
-        im = ax.imshow(M_mag)
+        im = ax.imshow(M_mag) # color by magnitude, but show values as real/imaginary parts
         ax.set_title(subtitle, fontsize=14)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         
-        ax.set_xticks(range(len(expansion_names)))
-        ax.set_xticklabels(expansion_names, rotation=60, fontsize=9)
-        ax.set_yticks(range(len(expansion_names)))
-        ax.set_yticklabels(expansion_names, fontsize=9)
+        # Model or analytic expansion names (for x/y ticks)
+        expansion_names = model_expansion_names if "model" in subtitle.lower() else analytic_expansion_names
+
+        # x ticks for K and Phi
+        if ("K" in subtitle) or ("Phi" in subtitle):
+            ax.set_xticks(range(len(expansion_names)))
+            ax.set_xticklabels(expansion_names, rotation=60, fontsize=9)
+        else:
+            ax.set_xticks([])
+
+        # y ticks for K
+        if ("K" in subtitle):
+            ax.set_yticks(range(len(expansion_names)))
+            ax.set_yticklabels(expansion_names, fontsize=9)
+        else:
+            ax.set_yticks([])
 
         # Dynamically scale font size based on matrix dimension
         n_cols = M.shape[1]
         f_size = 10 if n_cols <= 5 else (8 if n_cols <= 8 else 6)
 
         for (row, col), v in np.ndenumerate(M):
-            if abs(v) > 1e-3:
-                r, im_val = np.real(v), np.imag(v)
+            if abs(v) > threshold_include_val:
+                re_val, im_val = np.real(v), np.imag(v)
                 
-                if abs(im_val) < 1e-3:
-                    txt = f"{r:.3f}"
-                elif abs(r) < 1e-3:
+                if abs(im_val) < threshold_include_val:
+                    txt = f"{re_val:.3f}"
+                elif abs(re_val) < threshold_include_val:
                     txt = f"{im_val:.3f}j"
                 else:
                     sign = "+" if im_val > 0 else "-"
-                    txt = f"{r:.3f}\n{sign}{abs(im_val):.3f}j"
+                    txt = f"{re_val:.3f}\n{sign}{abs(im_val):.3f}j"
 
                 ax.text(
                     col, row, txt,
@@ -168,21 +476,42 @@ def plot_transition_matrices(matrices, title, expansion_names, save_path=None):
                     fontsize=f_size, color="red"
                 )
 
-    if len(matrices) != 5:
-        for i in range(len(matrices), len(axes)):
-            axes[i].axis("off")
+    # if len(matrices) != 5:
+    #     for i in range(len(matrices), len(axes)):
+    #         axes[i].axis("off")
 
     plt.tight_layout()
-    if len(matrices) == 5:
-        plt.subplots_adjust(top=0.90, hspace=0.3, wspace=0.25)
-    else:
-        plt.subplots_adjust(bottom=0.1, top=0.92, hspace=0.4, wspace=0.2)
+    # plt.subplots_adjust(bottom=0.1, top=0.92, hspace=0.4, wspace=0.2)
         
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')
         plt.close(fig)
     else:
         plt.show()
+
+
+def get_data_bounds_and_grid_points(trajectories, grid_res=100, state_dim=2):
+    # Find min and max dynamically for ALL dimensions
+    state_bounds = []
+    for dim in range(state_dim):
+        dim_min, dim_max = trajectories[:, :, dim].min(), trajectories[:, :, dim].max()
+        state_bounds.append((dim_min, dim_max))
+
+    # Dynamic Grid setup based on true boundaries (taking 2D slice for 3D+ systems)
+    
+    x_range = np.linspace(state_bounds[0][0], state_bounds[0][1], grid_res)
+    y_range = np.linspace(state_bounds[1][0], state_bounds[1][1], grid_res)
+    X, Y = np.meshgrid(x_range, y_range)
+    grid_cols = [X.ravel(), Y.ravel()]
+
+    # Pad higher dimensions with their mean trajectory values
+    for dim in range(2, state_dim):
+        dim_mean = trajectories[:, :, dim].mean()
+        grid_cols.append(np.full_like(X.ravel(), dim_mean))
+    grid_points = np.column_stack(grid_cols)
+
+    return state_bounds, grid_points
+
 
 def get_real_representation(V, eigvals):
     """
@@ -218,18 +547,32 @@ def get_real_representation(V, eigvals):
                 
     return V_real, Lambda_real
 
-def plot_complex_field(points, values, title, cmap="inferno", save_path=None):
-    grid_n = int(np.sqrt(len(points)))
-    extent = [points[:,0].min(), points[:,0].max(), points[:,1].min(), points[:,1].max()]
-    num_modes = values.shape[-1]
+
+def plot_complex_field(
+        grid_points, 
+        grid_points_expanded, 
+        Phi,
+        title, 
+        cmap="inferno", 
+        save_path=None
+    ):
+    # Compute eigenfunction values on the grid for the top N modes
+    eigenfunction_vals = grid_points_expanded @ Phi
+
+    grid_n = int(np.sqrt(len(grid_points)))
+    extent = [grid_points[:,0].min(), grid_points[:,0].max(), grid_points[:,1].min(), grid_points[:,1].max()]
+    num_modes = eigenfunction_vals.shape[1]
 
     fig, axes = plt.subplots(num_modes, 4, figsize=(10,10))
-    if num_modes == 1: axes = np.expand_dims(axes, 0)
+    if num_modes == 1:
+        axes = np.expand_dims(axes, 0)
         
     for mode_idx in range(num_modes):
         data_map = {
-            "Real": np.real(values[:, mode_idx]), "Imag": np.imag(values[:, mode_idx]),
-            "Mag": np.abs(values[:, mode_idx]), "Phase": np.angle(values[:, mode_idx])
+            "Real": np.real(eigenfunction_vals[:, mode_idx]), 
+            "Imag": np.imag(eigenfunction_vals[:, mode_idx]),
+            "Mag": np.abs(eigenfunction_vals[:, mode_idx]), 
+            "Phase": np.angle(eigenfunction_vals[:, mode_idx])
         }
     
         for i, (label, data) in enumerate(data_map.items()):
@@ -248,7 +591,15 @@ def plot_complex_field(points, values, title, cmap="inferno", save_path=None):
         plt.show()
 
 
-def calculate_mode_quality(model, W, eigvals, z_scale, state_bounds, n_modes_to_keep=8):
+def modes_by_quality(
+    model, 
+    W, 
+    eigvals_analytic, 
+    z_scale, 
+    state_bounds, 
+    n_modes_to_keep=8
+    ):
+
     n_eval_traj = 14
     eval_steps = 90
     
@@ -274,7 +625,7 @@ def calculate_mode_quality(model, W, eigvals, z_scale, state_bounds, n_modes_to_
             phi_roll = z_roll @ W
 
         lhs = phi_roll[1:, :] 
-        rhs = phi_roll[:-1, :] * eigvals[None, :] 
+        rhs = phi_roll[:-1, :] * eigvals_analytic[None, :] 
 
         num = np.linalg.norm(lhs - rhs, axis=0) 
         den = np.linalg.norm(phi_roll[:-1, :], axis=0) + 1e-12 
@@ -309,8 +660,10 @@ def calculate_mode_quality(model, W, eigvals, z_scale, state_bounds, n_modes_to_
     
     mode_score = 0.8 * res_score + 0.2 * spat_score
     ranked_indices = np.argsort(mode_score)[::-1]
+
+    best_ids = ranked_indices[:n_modes_to_keep]
     
-    return ranked_indices[:n_modes_to_keep], mode_score, residual_mean
+    return best_ids, mode_score, residual_mean
 
 
 def plot_quality_spectrum(eigvals, mode_scores, theme="dark", save_path=None):
@@ -332,6 +685,11 @@ def plot_quality_spectrum(eigvals, mode_scores, theme="dark", save_path=None):
     
     theta = np.linspace(0, 2 * np.pi, 300)
     ax.plot(np.cos(theta), np.sin(theta), "--", color=circle_color, linewidth=1.2, zorder=1)
+
+    x_bounds = (eigvals.real.min() - 0.1, eigvals.real.max() + 0.1)
+    y_bounds = (eigvals.imag.min() - 0.1, eigvals.imag.max() + 0.1)
+    ax.set_xlim(x_bounds)
+    ax.set_ylim(y_bounds)
     
     ax.axhline(0, color=circle_color, linewidth=0.8, alpha=0.5)
     ax.axvline(0, color=circle_color, linewidth=0.8, alpha=0.5)
