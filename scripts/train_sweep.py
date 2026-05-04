@@ -277,6 +277,24 @@ def main():
 
     loss_fn = torch.nn.MSELoss()
 
+    def unpack_loss_output(loss_output):
+        if isinstance(loss_output, torch.Tensor):
+            return loss_output, {}
+
+        if isinstance(loss_output, (tuple, list)):
+            if len(loss_output) == 0:
+                raise ValueError("compute_loss returned an empty tuple/list")
+
+            loss = loss_output[0]
+            loss_dict = {}
+            if len(loss_output) > 1 and isinstance(loss_output[1], dict):
+                loss_dict = loss_output[1]
+            return loss, loss_dict
+
+        raise TypeError(
+            "compute_loss must return a Tensor, a (loss,) tuple, or a (loss, loss_dict) tuple"
+        )
+
     best_metrics = {}
     final_epoch_metrics = {}
 
@@ -292,15 +310,15 @@ def main():
         n_train = 0
 
         print("Training...")
-        for batch_idx, (x, y) in enumerate(train_loader):
+        for batch_idx, batch in enumerate(train_loader):
+            x, y = batch[0], batch[1]
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
 
             optimizer.zero_grad()
 
             if hasattr(model, "compute_loss"):
-                loss_out = model.compute_loss(x, y)
-                loss = loss_out if isinstance(loss_out, torch.Tensor) else sum(loss_out)
+                loss, _ = unpack_loss_output(model.compute_loss(x, y))
             else:
                 y_hat = model(x)
                 loss = loss_fn(y_hat, y)

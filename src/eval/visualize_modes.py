@@ -43,7 +43,68 @@ def get_koopman_eigensystem(model):
     Extracts the Koopman modes and eigenfunctions STRICTLY from 
     the neural network's learned parameters (Phi and Lambda).
     """
-    # Case 1: Models that expose Phi_true and Lambda (e.g., ML_DMD)
+    # ------------------------------------------------------------------
+    # Case 1b: Models that expose getters `get_Phi` / `get_Phi_inv` / `get_Lambda`
+    # (handles the updated ML_DMD_BAND implementation)
+    # ------------------------------------------------------------------
+    if hasattr(model, "get_Phi") and hasattr(model, "get_Phi_inv") and hasattr(model, "get_Lambda"):
+        Phi_obj = model.get_Phi()
+        Lambda_obj = model.get_Lambda()
+        K_obj = model.get_K() if hasattr(model, "get_K") else None
+
+        Phi_true = (
+            Phi_obj.detach().cpu().numpy()
+            if hasattr(Phi_obj, "detach")
+            else np.array(Phi_obj)
+        )
+        Lambda = (
+            Lambda_obj.detach().cpu().numpy()
+            if hasattr(Lambda_obj, "detach")
+            else np.array(Lambda_obj)
+        )
+        K_true = (
+            K_obj.detach().cpu().numpy()
+            if (K_obj is not None and hasattr(K_obj, "detach"))
+            else (np.array(K_obj) if K_obj is not None else None)
+        )
+
+        Phi_inv_obj = model.get_Phi_inv()
+        Phi_inv = (
+            Phi_inv_obj.detach().cpu().numpy()
+            if hasattr(Phi_inv_obj, "detach")
+            else np.array(Phi_inv_obj)
+        )
+
+        eigvals, V_inner = np.linalg.eig(Lambda)
+        _, W_inner = np.linalg.eig(Lambda.T)
+
+        V = Phi_true @ V_inner
+
+        v_norms = np.linalg.norm(V, axis=0)
+        V = V / (v_norms + 1e-12)
+
+        # Calculate W using the learned Encoder (get_Phi_inv)
+        W = Phi_inv.T @ W_inner
+        W = W * (v_norms + 1e-12)
+
+        dominant_rows = np.argmax(np.abs(V), axis=0)
+        sort_idx = np.argsort(dominant_rows)
+
+        eigvals = eigvals[sort_idx]
+        V = V[:, sort_idx]
+        W = W[:, sort_idx]
+
+        for i in range(V.shape[1]):
+            dom_idx = np.argmax(np.abs(V[:, i]))
+            if np.real(V[dom_idx, i]) < 0:
+                V[:, i] *= -1
+                W[:, i] *= -1
+
+        return Phi_true, Lambda, eigvals, V, W, K_true
+
+    # ------------------------------------------------------------------
+    # Case 2: Old scaled models that expose get_Phi_true and get_Lambda
+    # ------------------------------------------------------------------
     if hasattr(model, "get_Phi_true") and hasattr(model, "get_Lambda"):
         Phi_true_obj = model.get_Phi_true()
         Lambda_obj = model.get_Lambda()

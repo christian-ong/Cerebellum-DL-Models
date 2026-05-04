@@ -61,7 +61,8 @@ class OneStepTrajectoryDataset(Dataset):
     def __init__(self, 
                  npz_path: str, 
                  split: str = "train",
-                 subset: float = 1.0):
+                                 subset: float = 1.0,
+                                 rollout_horizon: int = 0):
         full_path = resolve_split_npz_path(npz_path, split)
         
         data = np.load(full_path)
@@ -95,21 +96,53 @@ class OneStepTrajectoryDataset(Dataset):
 
         X = X[:, traj_idx, :]
 
-        # One-step pairs
-        x = X[:-1]
-        y = X[1:]
+        if rollout_horizon < 0:
+            raise ValueError("rollout_horizon must be non-negative")
 
-        Tm1, n_traj, d = x.shape
-        x = x.reshape(Tm1 * n_traj, d)
-        y = y.reshape(Tm1 * n_traj, d)
+        # Build one-step pairs, optionally accompanied by a short future window.
+        # The additional future window lets the trainer impose rollout consistency
+        # without changing the stored dataset format.
+        x_list = []
+        y_list = []
+        rollout_list = []
+
+        max_start = X.shape[0] - 1 - rollout_horizon
+        for traj in range(X.shape[1]):
+            traj_series = X[:, traj, :]
+
+            for t in range(max_start):
+                x_list.append(traj_series[t])
+                y_list.append(traj_series[t + 1])
+
+                if rollout_horizon > 0:
+                    future_window = traj_series[t + 1 : t + 1 + rollout_horizon]
+                    rollout_list.append(future_window)
+
+        if len(x_list) == 0:
+            self.x = torch.empty(0)
+            self.y = torch.empty(0)
+            self.rollout_targets = None
+            return
+
+        x = np.asarray(x_list)
+        y = np.asarray(y_list)
 
         print(x.shape, y.shape)
 
         self.x = torch.tensor(x, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.float32)
 
+        if rollout_horizon > 0:
+            rollout_targets = np.asarray(rollout_list)
+            self.rollout_targets = torch.tensor(rollout_targets, dtype=torch.float32)
+        else:
+            self.rollout_targets = None
+
     def __len__(self):
         return self.x.shape[0]
 
     def __getitem__(self, idx):
-        return self.x[idx], self.y[idx]
+        if self.rollout_targets is None:
+            return self.x[idx], self.y[idx]
+
+        return self.x[idx], self.y[idx], self.rollout_targets[idx]

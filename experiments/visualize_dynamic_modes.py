@@ -49,7 +49,13 @@ else:
     raise NotImplementedError("Sorry Kavus, I didn't implement regression models yet...")
 
 model, model_type = build_model_from_checkpoint(model_path)
-z_scale = model.z_scale.detach().cpu().numpy()
+
+# NEW: Handle the removed z_scale gracefully
+if hasattr(model, "z_scale"):
+    z_scale = model.z_scale.detach().cpu().numpy()
+else:
+    z_scale = np.ones(model.latent_dim) # Fallback for pure unscaled models
+
 Phi_model, Lambda_model, Lambda_model_eig, V, W, K = get_koopman_eigensystem(model)
 
 # Create the output directory for figures

@@ -162,7 +162,8 @@ Output:
 def dataloader_to_numpy(loader):
     """Collect all (x, y) pairs from a DataLoader into NumPy arrays."""
     xs, ys = [], []
-    for x, y in loader:
+    for batch in loader:
+        x, y = batch[0], batch[1]
         xs.append(x.numpy())
         ys.append(y.numpy())
     return np.vstack(xs), np.vstack(ys)
@@ -329,8 +330,21 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
 
     # Load datasets
-    train_ds = OneStepTrajectoryDataset(args.data_path, split="train", subset=args.subset)
-    val_ds = OneStepTrajectoryDataset(args.data_path, split="val", subset=args.subset)
+    # ML_DMD_BAND gets a short future window so training can optimize both one-step
+    # prediction and short-horizon rollout consistency.
+    rollout_horizon = 5 if args.model == "ml_dmd_band" else 0
+    train_ds = OneStepTrajectoryDataset(
+        args.data_path,
+        split="train",
+        subset=args.subset,
+        rollout_horizon=rollout_horizon,
+    )
+    val_ds = OneStepTrajectoryDataset(
+        args.data_path,
+        split="val",
+        subset=args.subset,
+        rollout_horizon=rollout_horizon,
+    )
     
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size) if len(val_ds) > 0 else None
@@ -588,8 +602,15 @@ def main():
     
     # Train
     model, (train_losses, batch_val_losses, epoch_val_losses, loss_components_val), best_checkpoint = train_onestep(
-        model=model, train_loader=train_loader, val_loader=val_loader,
-        device=device, epochs=args.epochs, lr=args.lr, weight_decay=args.weight_decay)
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        device=device,
+        epochs=args.epochs,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        rollout_loss_weight=0.2,
+    )
 
     # Save both best-by-validation and final epoch checkpoints.
     checkpoint_base = {
