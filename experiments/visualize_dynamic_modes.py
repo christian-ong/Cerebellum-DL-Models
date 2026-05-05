@@ -114,7 +114,11 @@ with torch.no_grad(): grid_points_expanded = model.expand(torch.as_tensor(grid_p
 sorting_info = {} # scores are unsorted, indices are the order to sort by
 if order_modes_by == "magnitude":
     # sort model modes learnt by the model
-    scores_model = np.linalg.norm(Lambda_model, axis=1) # by row, since row i in Lambda determines row i in b_next
+    if detect_complex_modes:
+        # For complex modes, we can use the magnitude of the eigenvalue (which is the same for both modes in a pair)
+        scores_model = np.abs(Lambda_model.diagonal()) # Use diagonal since Lambda is now complex and diagonalized
+    else:
+        scores_model = np.linalg.norm(Lambda_model, axis=1) # by row, since row i in Lambda determines row i in b_next
     sorted_idx_model = np.argsort(scores_model)[::-1] # Descending order
     # sort analytic modes
     scores_analytic = np.abs(eigvals_analytic)
