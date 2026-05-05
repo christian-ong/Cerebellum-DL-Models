@@ -67,6 +67,9 @@ os.makedirs(save_dir, exist_ok=True)
 # Get analytic matrices for the system
 K_c_analytic, K_d_analytic, eigvals_analytic, eigvecs_analytic, analytic_expansion_names = get_system_matrices(system)
 
+# NEW: Build the exact analytic Jordan form from the discrete operator.
+Lambda_jordan, V_theory = get_sorted_jordan_form(K_d_analytic)
+
 # Re-format: Lambda_model, Phi_model --> complex matrices instead of rotation blocks
 if detect_complex_modes:
     complex_pair_idx = find_complex_pairs(
@@ -91,8 +94,8 @@ matrices_to_plot = [
 
     # Analytic matrices
     (K_d_analytic, "Analytic $K$"),
-    (np.diag(eigvals_analytic), "Analytic $\Lambda$ (Diagonalized)"),
-    (eigvecs_analytic, "Analytic $\Phi_{true}$"),
+    (Lambda_jordan, "Analytic $\Lambda$ (Jordan Form)"), 
+    (V_theory, "Analytic $\Phi_{true}$"),
 ]
 
 plot_transition_matrices(
