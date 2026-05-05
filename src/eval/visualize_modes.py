@@ -33,7 +33,13 @@ def build_model_from_checkpoint(model_path):
     else:
         raise ValueError(f"Unsupported: {model_name}")
 
-    model.load_state_dict(ckpt["model_state_dict"])
+    if "model_state_dict" in ckpt:
+        if "lift_weights" in ckpt["model_state_dict"]:
+            # Handle old checkpoints with 'lift_weights' key
+            state_dict = ckpt["model_state_dict"]
+            state_dict.pop("lift_weights")
+            model.load_state_dict(state_dict)
+    # model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
     return model, model_name
 
@@ -613,20 +619,23 @@ def plot_complex_field(
         grid_points, 
         grid_points_expanded, 
         Phi,
-        title, 
+        scores,
+        complex_pair_idx,
         cmap="inferno", 
         save_path=None
     ):
     # Compute eigenfunction values on the grid for the top N modes
     eigenfunction_vals = grid_points_expanded @ Phi
 
+    # Compute complex pairs for annotation
+    complex_pairs = [sorted([int(i+1), int(j+1)]) for i, j in complex_pair_idx] # 1-based index and internal sort
+    complex_pairs = sorted(complex_pairs, key=lambda x: x[0]) # sort by first index
+
     grid_n = int(np.sqrt(len(grid_points)))
     extent = [grid_points[:,0].min(), grid_points[:,0].max(), grid_points[:,1].min(), grid_points[:,1].max()]
     num_modes = eigenfunction_vals.shape[1]
 
-    fig, axes = plt.subplots(num_modes, 4, figsize=(10,10))
-    if num_modes == 1:
-        axes = np.expand_dims(axes, 0)
+    fig, axes = plt.subplots(4, num_modes, figsize=(3+ 2.5*num_modes, 10))
         
     for mode_idx in range(num_modes):
         data_map = {
@@ -636,13 +645,25 @@ def plot_complex_field(
             "Phase": np.angle(eigenfunction_vals[:, mode_idx])
         }
     
+        # Annotate complex pairs
+        pair_string = ""
+        for n_pair, pair in enumerate(complex_pairs):
+            if mode_idx+1 in pair: # if this mode is part of a complex pair
+                pair_string += f" {'*' * (n_pair+1)}\n"
+
         for i, (label, data) in enumerate(data_map.items()):
-            ax = axes[mode_idx, i]
+            if i==0:
+                label = (
+                    pair_string + 
+                    rf"$\mathbf{{EF{mode_idx+1}}}$" + 
+                    f"\nScore: {scores[mode_idx]:.4f}" +
+                    f"\n{label}")
+            ax = axes[i, mode_idx]
             im = ax.imshow(data.reshape(grid_n, grid_n), extent=extent, origin="lower", cmap=cmap, aspect='auto')
             ax.set_title(f"{label}")
             plt.colorbar(im, ax=ax)
-    
-    fig.suptitle(title)
+
+    fig.suptitle(f"{num_modes} first eigenfunctions", fontsize=20)
     plt.tight_layout()
     
     if save_path:

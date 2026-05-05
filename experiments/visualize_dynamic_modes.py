@@ -8,7 +8,6 @@ from src.eval.visualize_modes import *
 """
 This script visualizes the dynamic modes and eigensystem of a trained Koopman model.
 
-
 python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_long_spec10 --data_path data\trajectories\nonlinear\closed_trig_large\long\test.npz
 """
 
@@ -24,7 +23,7 @@ parser.add_argument("--data_path", type=str, required=True, help="Path to the da
 args = parser.parse_args()
 
 # Settings
-n_top_modes = 5
+n_top_modes = 12
 grid_res = 100
 order_modes_by = "magnitude" # "magnitude" (abs lambda), "quality", "power", "energy"
 detect_complex_modes = True
@@ -38,7 +37,6 @@ data = np.load(test_data_path)
 trajectories = data['X'] 
 system = str(data["system"])
 state_dim = trajectories.shape[-1]
-num_modes = state_dim
 print(f"Visualizing for System: {system}")
 
 # Load model and eigensystem
@@ -57,6 +55,7 @@ else:
     z_scale = np.ones(model.latent_dim) # Fallback for pure unscaled models
 
 Phi_model, Lambda_model, Lambda_model_eig, V, W, K = get_koopman_eigensystem(model)
+num_modes = Lambda_model.shape[0]
 
 # Create the output directory for figures
 save_dir = f"experiments/figures/{args.model_name}/{system}/{args.custom_name}"
@@ -152,6 +151,19 @@ else:
 
 # Apply sorting
 sorting = sorting_info[order_modes_by]
+
+print("hello")
+print(sorting["indices_model"]) # [3 0 6 7 8 9 5 4 1 2]
+print(complex_pair_idx) # [(8, 9), (6, 7), (4, 5)]
+# update complex pair indices to reflect sorting
+if detect_complex_modes:
+    sorted_complex_pair_idx = []
+    for i, j in complex_pair_idx:
+        new_i = np.where(sorting["indices_model"] == i)[0][0]
+        new_j = np.where(sorting["indices_model"] == j)[0][0]
+        sorted_complex_pair_idx.append((new_i, new_j))
+    complex_pair_idx = sorted_complex_pair_idx
+
 sorted_data = {
     "model": {
         "Lambda": Lambda_model[sorting["indices_model"]][:, sorting["indices_model"]], # matrix
@@ -159,6 +171,7 @@ sorted_data = {
         "K": K[sorting["indices_model"]][:, sorting["indices_model"]],
         "scores": sorting["scores_model"][sorting["indices_model"]], # sorted
         "indeces": sorting["indices_model"],
+        "complex_pairs": complex_pair_idx if detect_complex_modes else None,
     },
 
     "analytic": {
@@ -188,7 +201,8 @@ plot_complex_field(
     grid_points=grid_points, 
     grid_points_expanded=grid_points_expanded, 
     Phi=sorted_data["model"]["Phi"][:, :n_top_modes], 
-    title=f"{n_top_modes} first eigenfunctions (real/imag)\n(Score: {[f'{e:.4f}' for e in sorting['scores_model'][sorted_idx_model[:n_top_modes]]]})", 
+    scores=sorted_data["model"]["scores"][:n_top_modes], 
+    complex_pair_idx=sorted_data["model"]["complex_pairs"],
     save_path=os.path.join(save_dir, "eigenfunctions.png")
 )
 
