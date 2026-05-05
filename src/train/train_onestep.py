@@ -12,6 +12,8 @@ def train_onestep(
     lr=1e-3,
     weight_decay=1e-6,
     rollout_loss_weight=0.2,
+    log_phi_every=0,
+    phi_print_max_dim=12,
 ):
 
     model = model.to(device)
@@ -75,6 +77,11 @@ def train_onestep(
         if future_targets is None or rollout_loss_weight <= 0.0:
             return None
 
+        # Ensure rollout targets match the model/input device. This guards
+        # against mixed-device validation batches on GPU jobs.
+        if future_targets.device != x0.device:
+            future_targets = future_targets.to(x0.device, non_blocking=True)
+
         x_pred = x0
         rollout_loss = 0.0
 
@@ -84,6 +91,83 @@ def train_onestep(
             rollout_loss = rollout_loss + loss_fn(x_pred, future_targets[:, step, :])
 
         return rollout_loss / horizon
+
+    def model_handles_rollout(model):
+        """Return True when the model already folds rollout supervision into compute_loss.
+
+        Some model classes, such as ml_dmd_band, own their rollout term internally.
+        In those cases the trainer must not add a second rollout penalty on top.
+        """
+        return hasattr(model, "rollout_weight") and getattr(model, "rollout_weight") > 0.0
+
+    def maybe_log_matrices(epoch_idx):
+        """Print physical Phi and Lambda during training when available.
+
+        This gives immediate feedback on whether the descaled Phi and the 
+        dynamics matrix Lambda are moving towards the expected structure.
+        """
+        if log_phi_every <= 0:
+            return
+        if (epoch_idx % log_phi_every) != 0 and epoch_idx != epochs - 1:
+            return
+        
+        # We need both methods to log successfully
+        if not (hasattr(model, "get_Phi") and hasattr(model, "get_Lambda")):
+            return
+
+        try:
+            with torch.no_grad():
+                phi = model.get_Phi().detach().cpu().float().numpy()
+                lam = model.get_Lambda().detach().cpu().float().numpy()
+        except Exception as exc:
+            print(f"Matrix log skipped at epoch {epoch_idx:03d}: {exc}")
+            return
+
+        if phi.ndim != 2 or lam.ndim != 2:
+            print(f"Epoch {epoch_idx:03d} | Matrices are not 2D.")
+            return
+
+        rows, cols = phi.shape
+        diag_phi = np.diag(phi)
+        offdiag_phi = phi - np.diag(diag_phi)
+        
+        try:
+            cond_phi = float(np.linalg.cond(phi))
+            cond_str = f"{cond_phi:.2e}"
+        except Exception:
+            cond_str = "nan"
+
+        print(
+            f"Epoch {epoch_idx:03d} | Shape {rows}x{cols} | "
+            f"Phi Cond: {cond_str} | "
+            f"Phi Diag Mean: {np.mean(np.abs(diag_phi)):.2e} | "
+            f"Phi Off-Diag Mean: {np.mean(np.abs(offdiag_phi)):.2e}"
+        )
+
+        # Truncate for printing if necessary
+        print_dim = min(rows, phi_print_max_dim)
+        phi_block = phi[:print_dim, :print_dim]
+        lam_block = lam[:print_dim, :print_dim]
+        
+        if rows > phi_print_max_dim:
+             print(f"Showing top-left {print_dim}x{print_dim} block:")
+
+        # We will format them as strings, split by line, and print side-by-side
+        phi_str = np.array2string(phi_block, precision=3, suppress_small=True, max_line_width=120)
+        lam_str = np.array2string(lam_block, precision=3, suppress_small=True, max_line_width=120)
+        
+        phi_lines = phi_str.split('\n')
+        lam_lines = lam_str.split('\n')
+        
+        print(f"{'Phi (Observation -> Modes)'.center(60)} | {'Lambda (Modal Dynamics)'.center(60)}")
+        print("-" * 123)
+        
+        # Zip them together, padding with empty strings if one is somehow longer
+        for p_line, l_line in zip(phi_lines, lam_lines):
+            # Pad the Phi line to 60 characters so the divider aligns
+            p_padded = p_line.ljust(60)
+            print(f"{p_padded} | {l_line}")
+        print("-" * 123)
 
     all_train_losses = []
     epoch_val_losses = []
@@ -124,18 +208,25 @@ def train_onestep(
             # Training loss
             # -------------------
             if hasattr(model, "compute_loss"):
-                loss, loss_dict = unpack_loss_output(model.compute_loss(x, y))
+                if future_targets is not None:
+                    loss, loss_dict = unpack_loss_output(
+                        model.compute_loss(x, y, future_targets)
+                    )
+                else:
+                    loss, loss_dict = unpack_loss_output(model.compute_loss(x, y))
             else:
                 y_hat = model(x)
                 loss = loss_fn(y_hat, y)
                 # Baselines that do not expose component losses only report state loss.
                 loss_dict = {"state": loss.item()}
 
-            rollout_loss = compute_rollout_loss(model, x, future_targets)
-            if rollout_loss is not None:
-                loss = loss + rollout_loss_weight * rollout_loss
-                loss_dict = dict(loss_dict)
-                loss_dict["rollout"] = rollout_loss.item()
+            rollout_loss = None
+            if not model_handles_rollout(model):
+                rollout_loss = compute_rollout_loss(model, x, future_targets)
+                if rollout_loss is not None:
+                    loss = loss + rollout_loss_weight * rollout_loss
+                    loss_dict = dict(loss_dict)
+                    loss_dict["rollout"] = rollout_loss.item()
 
             # -------------------
             # Backprop
@@ -178,17 +269,23 @@ def train_onestep(
                     x_val = x_val.to(device)
                     y_val = y_val.to(device)
                     if future_val_targets is not None:
-                        val_loss, _ = unpack_loss_output(model.compute_loss(x_val, y_val))
-
+                        future_val_targets = future_val_targets.to(device, non_blocking=True)
                     if hasattr(model, "compute_loss"):
-                        val_loss, _ = model.compute_loss(x_val, y_val)
+                        if future_val_targets is not None:
+                            val_loss, _ = unpack_loss_output(
+                                model.compute_loss(x_val, y_val, future_val_targets)
+                            )
+                        else:
+                            val_loss, _ = unpack_loss_output(model.compute_loss(x_val, y_val))
                     else:
                         y_val_hat = model(x_val)
                         val_loss = loss_fn(y_val_hat, y_val)
 
-                    val_rollout_loss = compute_rollout_loss(model, x_val, future_val_targets)
-                    if val_rollout_loss is not None:
-                        val_loss = val_loss + rollout_loss_weight * val_rollout_loss
+                    val_rollout_loss = None
+                    if not model_handles_rollout(model):
+                        val_rollout_loss = compute_rollout_loss(model, x_val, future_val_targets)
+                        if val_rollout_loss is not None:
+                            val_loss = val_loss + rollout_loss_weight * val_rollout_loss
 
                     batch_val_losses.append(val_loss.item())
 
@@ -198,7 +295,18 @@ def train_onestep(
         all_train_losses.extend(train_losses)
         avg_comps = {k: v / n_train for k, v in comp_sums.items()}
 
-        preferred_order = ["state", "K_sp", "phi_sp", "lam_bal", "lam_sp", "lam_drift"]
+        preferred_order = [
+            "state",
+            "K_sp",
+            "phi_sp",
+            "phi_ortho",
+            "unit",
+            "lift_ms",
+            "lam_asy",
+            "lam_bal",
+            "lam_sp",
+            "couple",
+        ]
         ordered_comp_keys = [k for k in preferred_order if k in avg_comps]
         ordered_comp_keys.extend(sorted(k for k in avg_comps if k not in preferred_order))
         comp_str = " | ".join(f"{k} {avg_comps[k]:.2e}" for k in ordered_comp_keys)
@@ -226,14 +334,21 @@ def train_onestep(
                         future_val_targets = future_val_targets.to(device)
 
                     if hasattr(model, "compute_loss"):
-                        batch_l, _ = unpack_loss_output(model.compute_loss(xv, yv)) # Use batch_l
+                        if future_val_targets is not None:
+                            batch_l, _ = unpack_loss_output(
+                                model.compute_loss(xv, yv, future_val_targets)
+                            )
+                        else:
+                            batch_l, _ = unpack_loss_output(model.compute_loss(xv, yv))
                     else:
                         y_hat = model(xv)
                         batch_l = loss_fn(y_hat, yv)
 
-                    val_rollout_loss = compute_rollout_loss(model, xv, future_val_targets)
-                    if val_rollout_loss is not None:
-                        batch_l = batch_l + rollout_loss_weight * val_rollout_loss
+                    val_rollout_loss = None
+                    if not model_handles_rollout(model):
+                        val_rollout_loss = compute_rollout_loss(model, xv, future_val_targets)
+                        if val_rollout_loss is not None:
+                            batch_l = batch_l + rollout_loss_weight * val_rollout_loss
 
                     batch_size = xv.size(0)
                     val_loss_acc += batch_l.item() * batch_size # Accumulate batch_l
@@ -268,6 +383,8 @@ def train_onestep(
             if comp_str:
                 msg += f" | {comp_str}"
             print(msg)
+
+        maybe_log_matrices(epoch)
 
     losses = (
         all_train_losses,

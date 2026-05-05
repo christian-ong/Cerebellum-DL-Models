@@ -1,6 +1,7 @@
 import os
 import torch
 import numpy as np
+import sympy
 from scipy.linalg import expm
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
@@ -382,6 +383,66 @@ def get_system_matrices(system="saddle_point", print_matrices=False, plot_phi=Fa
     return A_c, A_d, eigvals, eigvecs, system_expansion_names
 
 
+def sort_block_diagonal_modes(Lambda, Phi, block_tol=1e-12):
+    """Sort contiguous diagonal blocks without splitting Jordan chains."""
+
+    block_slices = []
+    start_idx = 0
+    while start_idx < Lambda.shape[0]:
+        end_idx = start_idx + 1
+        while end_idx < Lambda.shape[0] and abs(Lambda[end_idx - 1, end_idx]) > block_tol:
+            end_idx += 1
+        block_slices.append(slice(start_idx, end_idx))
+        start_idx = end_idx
+
+    block_keys = []
+    for block_slice in block_slices:
+        block_phi = Phi[:, block_slice]
+        dominant_rows = np.argmax(np.abs(block_phi), axis=0)
+        block_keys.append((int(np.min(dominant_rows)), block_slice.start))
+
+    sort_idx = [i for i, _ in sorted(enumerate(block_keys), key=lambda item: item[1])]
+    sorted_indices = np.concatenate([
+        np.arange(block_slices[i].start, block_slices[i].stop) for i in sort_idx
+    ])
+
+    return Lambda[sorted_indices][:, sorted_indices], Phi[:, sorted_indices]
+
+
+def get_sorted_jordan_form(K_d_analytic, block_tol=1e-12):
+    """Return the analytic Jordan form with contiguous blocks kept intact."""
+
+    sympy_mat = sympy.Matrix(K_d_analytic)
+    P, J = sympy_mat.jordan_form()
+
+    Lambda_jordan = np.array(J).astype(np.complex128)
+    V_theory = np.array(P).astype(np.complex128)
+
+    block_slices = []
+    start_idx = 0
+    while start_idx < Lambda_jordan.shape[0]:
+        end_idx = start_idx + 1
+        while end_idx < Lambda_jordan.shape[0] and abs(Lambda_jordan[end_idx - 1, end_idx]) > block_tol:
+            end_idx += 1
+        block_slices.append(slice(start_idx, end_idx))
+        start_idx = end_idx
+
+    block_keys = []
+    for block_slice in block_slices:
+        dominant_rows = np.argmax(np.abs(V_theory[:, block_slice]), axis=0)
+        block_keys.append((int(np.min(dominant_rows)), block_slice.start))
+
+    sort_idx = [i for i, _ in sorted(enumerate(block_keys), key=lambda item: item[1])]
+    sorted_indices = np.concatenate([
+        np.arange(block_slices[i].start, block_slices[i].stop) for i in sort_idx
+    ])
+
+    Lambda_jordan = Lambda_jordan[sorted_indices][:, sorted_indices]
+    V_theory = V_theory[:, sorted_indices]
+
+    return Lambda_jordan, V_theory
+
+
 def find_complex_pairs(
         Lambda, 
         threshold_off_diag=1e-3, 
@@ -408,6 +469,7 @@ def find_complex_pairs(
         # Detect rotation blocks (significant off-diagonal values)
         if ((abs(b) > threshold_off_diag) and # off-diag val 1 significant
             (abs(c) > threshold_off_diag) and # off-diag val 2 significant
+            (np.sign(b) != np.sign(c)) and # off-diag vals have opposite signs, indicating rotation
             (abs(a - d) < threshold_diag)): # diag vals similar 
             block_indices.append((diag_idx, diag_idx+1))
 
@@ -507,18 +569,22 @@ def plot_transition_matrices(matrices, title, model_expansion_names, analytic_ex
         # Model or analytic expansion names (for x/y ticks)
         expansion_names = model_expansion_names if "model" in subtitle.lower() else analytic_expansion_names
 
-        # x ticks for K and Phi
-        if ("K" in subtitle) or ("Phi" in subtitle):
+        # --- Corrected X Ticks ---
+        if "K" in subtitle:
+            # K maps basis functions to basis functions (Square Matrix)
             ax.set_xticks(range(len(expansion_names)))
             ax.set_xticklabels(expansion_names, rotation=60, fontsize=9)
         else:
+            # Remove x-labels for Phi (modes) and Lambda (modes)
             ax.set_xticks([])
 
-        # y ticks for K
-        if ("K" in subtitle):
+        # --- Corrected Y Ticks ---
+        if "K" in subtitle or "Phi" in subtitle:
+            # Both K and Phi rows index the basis functions (Observables)
             ax.set_yticks(range(len(expansion_names)))
             ax.set_yticklabels(expansion_names, fontsize=9)
         else:
+            # Remove y-labels for Lambda (modes)
             ax.set_yticks([])
 
         # Dynamically scale font size based on matrix dimension

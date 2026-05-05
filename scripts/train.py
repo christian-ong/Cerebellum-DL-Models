@@ -245,6 +245,30 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument(
+        "--rollout_horizon",
+        type=int,
+        default=-1,
+        help="Rollout supervision horizon. -1 uses model defaults (ml_dmd_band -> 20, else 0).",
+    )
+    parser.add_argument(
+        "--rollout_loss_weight",
+        type=float,
+        default=-1.0,
+        help="Weight of rollout supervision term. -1 uses model defaults (ml_dmd_band -> 1.0, else 0.2).",
+    )
+    parser.add_argument(
+        "--log_phi_every",
+        type=int,
+        default=-1,
+        help="Print get_Phi() every N epochs. -1 uses model defaults (ml_dmd_band -> 1, else 0).",
+    )
+    parser.add_argument(
+        "--phi_print_max_dim",
+        type=int,
+        default=12,
+        help="When Phi is larger than this, print only the top-left block with summary stats.",
+    )
+    parser.add_argument(
         "--normalize_state_for_ml",
         type=str.lower,
         choices=["true", "false", "auto"],
@@ -292,6 +316,11 @@ def main():
         default="configs/best_hyperparams.json",
         help="JSON file with best lr/weight_decay values keyed by system/model/expansion config",
     )
+    parser.add_argument(
+        "--use_best_hparams",
+        action="store_true",
+        help="If set, override lr/weight_decay from configs/best_hyperparams.json when available",
+    )
 
     args = parser.parse_args()
 
@@ -308,21 +337,22 @@ def main():
     system_name = str(meta["system"])
     state_dim = meta["X"].shape[-1]
 
-    best_hparams = load_best_hyperparams(
-        args.config_path,
-        system_name=system_name,
-        model_name=args.model,
-        expansion_type=args.expansion_type,
-        expansion_degree=args.expansion_degree,
-    )
-    if best_hparams is not None:
-        args.lr = float(best_hparams["lr"])
-        args.weight_decay = float(best_hparams["weight_decay"])
-        print(
-            "Loaded lr/weight_decay from config for "
-            f"{system_name}/{args.model}/{args.expansion_type}/{args.expansion_degree}: "
-            f"lr={args.lr}, weight_decay={args.weight_decay}"
+    if args.use_best_hparams:
+        best_hparams = load_best_hyperparams(
+            args.config_path,
+            system_name=system_name,
+            model_name=args.model,
+            expansion_type=args.expansion_type,
+            expansion_degree=args.expansion_degree,
         )
+        if best_hparams is not None:
+            args.lr = float(best_hparams["lr"])
+            args.weight_decay = float(best_hparams["weight_decay"])
+            print(
+                "Loaded lr/weight_decay from config for "
+                f"{system_name}/{args.model}/{args.expansion_type}/{args.expansion_degree}: "
+                f"lr={args.lr}, weight_decay={args.weight_decay}"
+            )
     
     # Setup output directory
     run_name = args.name if args.name else "default"
@@ -332,7 +362,21 @@ def main():
     # Load datasets
     # ML_DMD_BAND gets a short future window so training can optimize both one-step
     # prediction and short-horizon rollout consistency.
-    rollout_horizon = 5 if args.model == "ml_dmd_band" else 0
+    if args.rollout_horizon >= 0:
+        rollout_horizon = args.rollout_horizon
+    else:
+        rollout_horizon = 20 if args.model == "ml_dmd_band" else 0
+
+    if args.rollout_loss_weight >= 0.0:
+        rollout_loss_weight = args.rollout_loss_weight
+    else:
+        rollout_loss_weight = 1.0 if args.model == "ml_dmd_band" else 0.2
+
+    if args.log_phi_every >= 0:
+        log_phi_every = args.log_phi_every
+    else:
+        log_phi_every = 1 if args.model == "ml_dmd_band" else 0
+        
     train_ds = OneStepTrajectoryDataset(
         args.data_path,
         split="train",
@@ -346,8 +390,9 @@ def main():
         rollout_horizon=rollout_horizon,
     )
     
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size) if len(val_ds) > 0 else None
+    pin_memory = device == "cuda"
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, pin_memory=pin_memory)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, pin_memory=pin_memory) if len(val_ds) > 0 else None
 
     train_state_mean = torch.tensor(np.mean(meta["X"], axis=(0, 1)), dtype=torch.float32, device=device)
     train_state_scale = torch.tensor(np.std(meta["X"], axis=(0, 1)), dtype=torch.float32, device=device)
@@ -576,7 +621,7 @@ def main():
             bias=args.bias == "true",
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             expansion_type=args.expansion_type,
-            system=system_name if args.expansion_type == "specific" else None,
+            system=system_name if args.expansion_type == "specific" else None
         ).to(device)
 
     else:
@@ -609,7 +654,9 @@ def main():
         epochs=args.epochs,
         lr=args.lr,
         weight_decay=args.weight_decay,
-        rollout_loss_weight=0.2,
+        rollout_loss_weight=rollout_loss_weight,
+        log_phi_every=log_phi_every,
+        phi_print_max_dim=args.phi_print_max_dim,
     )
 
     # Save both best-by-validation and final epoch checkpoints.

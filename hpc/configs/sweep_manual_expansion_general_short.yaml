@@ -1,7 +1,7 @@
 method: grid
 
 metric:
-  name: val_discounted_mean_nrmse_h100_g0.99
+  name: val_discounted_mean_rmse_h100_g0.99
   goal: minimize
 
 command:
@@ -10,7 +10,7 @@ command:
   - -m
   - scripts.train_sweep
   - --epochs
-  - 20
+  - 50
   - --eval_every
   - 1
   - --num_workers
@@ -40,7 +40,7 @@ parameters:
     values: [2048]
 
   expansion_degree:
-    values: [3, 5, 10]
+    values: [3, 5, 7, 10]
 
   expansion_type:
     values: ["general"]
@@ -50,3 +50,6 @@ parameters:
   
   trajectory_length:
     values: ["short"]
+
+  bias:
+    values: ["true"]  

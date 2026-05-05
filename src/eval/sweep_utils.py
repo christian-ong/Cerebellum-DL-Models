@@ -7,21 +7,45 @@ from src.models.ml_dmd_free import ML_DMD
 
 def maybe_set_z_scale(model, train_loader, device):
     if hasattr(model, "expand") and hasattr(model, "set_z_scale"):
-        print("Setting z_scale from training data (Max-Abs)...")
+        print("Setting z_scale from training data (Std Deviation)...")
         with torch.no_grad():
-            zs = []
+            count = 0
+            z_sum = None
+            z_sumsq = None
+
             for batch in train_loader:
                 x_batch = batch[0]
                 x_batch = x_batch.to(device)
                 if hasattr(model, "scale_state"):
                     x_batch = model.scale_state(x_batch)
                 z_batch = model.expand(x_batch)
-                zs.append(z_batch)
+                z_batch = z_batch.reshape(-1, z_batch.shape[-1])
 
-            if len(zs) > 0:
-                z_all = torch.cat(zs, dim=0)
-                # FIX: Use max() instead of mean() to strictly bound high-degree polynomials
-                z_scale = torch.clamp(torch.max(torch.abs(z_all), dim=0)[0], min=1e-5)
+                batch_n = z_batch.shape[0]
+                batch_sum = torch.sum(z_batch, dim=0)
+                batch_sumsq = torch.sum(z_batch * z_batch, dim=0)
+
+                if z_sum is None:
+                    z_sum = batch_sum
+                    z_sumsq = batch_sumsq
+                else:
+                    z_sum = z_sum + batch_sum
+                    z_sumsq = z_sumsq + batch_sumsq
+                count += batch_n
+
+            if count > 0:
+                # Streaming std: var = E[x^2] - E[x]^2
+                z_mean = z_sum / count
+                z_var = z_sumsq / count - z_mean * z_mean
+                z_var = torch.clamp(z_var, min=0.0)
+                z_scale = torch.sqrt(z_var)
+
+                # Use std to normalize basis functions: equalize their amplitudes.
+                # IMPORTANT: near-constant features (e.g. bias term "1") should not
+                # get tiny scales, otherwise they explode after division.
+                near_constant = z_scale < 1e-3
+                z_scale = torch.where(near_constant, torch.ones_like(z_scale), z_scale)
+                z_scale = torch.clamp(z_scale, min=1e-2, max=1e2)
                 model.set_z_scale(z_scale)
         print("z_scale set.")
 
