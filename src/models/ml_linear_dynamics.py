@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 
-from src.models.expander import ManualExpansion
+from src.models.expander import build_expander
 
 
-class ML_LinearDynamics(ManualExpansion):
+class ML_LinearDynamics(nn.Module):
     """
     Manual expansion + learned Koopman operator (ML-DMD).
 
@@ -40,21 +40,40 @@ class ML_LinearDynamics(ManualExpansion):
         sine_cosine_expansion=False,
         expansion_type="general",
         system=None,
+        rbf_n_centers=50,
+        rbf_center_selection="farthest",
+        rbf_bandwidth_mode="knn",
+        rbf_knn_k=5,
     ):
+        super().__init__()
+
+        self.state_dim = state_dim
+        self.expansion_type = expansion_type
 
         # ------------------------------------------------
         # Initialize basis expansion
         # ------------------------------------------------
         # This creates the lifted state representation z.
-        # The expansion is implemented in the parent class.
-        super().__init__(
+        # The expansion can now be either:
+        #   - ManualExpansion  (general / specific)
+        #   - RBFExpansion     (rbf)
+        self.expander = build_expander(
             state_dim=state_dim,
+            expansion_type=expansion_type,
             expansion_degree=expansion_degree,
             bias=bias,
             sine_cosine_expansion=sine_cosine_expansion,
-            expansion_type=expansion_type,
             system=system,
+            rbf_n_centers=rbf_n_centers,
+            rbf_center_selection=rbf_center_selection,
+            rbf_bandwidth_mode=rbf_bandwidth_mode,
+            rbf_knn_k=rbf_knn_k,
         )
+
+        # Public aliases used elsewhere in the model / training code
+        self.expand_names = self.expander.expand_names
+        self.state_indices = self.expander.state_indices
+        self.expanded_dim = self.expander.expanded_dim
 
         # Dimension of lifted space
         self.latent_dim = self.expanded_dim
@@ -80,8 +99,7 @@ class ML_LinearDynamics(ManualExpansion):
         # ------------------------------------------------
         # Feature scaling buffer
         # ------------------------------------------------
-        # Polynomial features can vary wildly in magnitude
-        # (e.g. x vs x^10).
+        # Lifted features can vary wildly in magnitude.
         #
         # We normalize features during training to improve conditioning:
         #
@@ -104,19 +122,27 @@ class ML_LinearDynamics(ManualExpansion):
         # High-order polynomial terms tend to explode and dominate
         # the loss. We therefore downweight them.
         #
-        # Example:
-        #
-        #   x       -> weight = 1
-        #   x^2     -> weight = 1/2
-        #   x^3     -> weight = 1/3
-        #
-        # This keeps training focused on low-order dynamics.
+        # For RBF features, we treat each rbf_j as degree 1.
         degrees = torch.tensor(
             [self._feature_degree(name) for name in self.expand_names],
             dtype=torch.float32,
         )
         weights = 1.0 / (degrees + 1.0)
         self.register_buffer("lift_weights", weights)
+
+    def expand(self, x):
+        return self.expander.expand(x)
+
+    def de_expand(self, x_expanded):
+        return self.expander.de_expand(x_expanded)
+
+    def fit_expander(self, X_train):
+        if self.expansion_type == "rbf":
+            self.expander.fit(X_train)
+            self.expand_names = self.expander.expand_names
+            self.state_indices = self.expander.state_indices
+            self.expanded_dim = self.expander.expanded_dim
+            self.latent_dim = self.expanded_dim
 
     def set_state_scale(self, x_mean, x_scale):
         if not torch.is_tensor(x_mean):
@@ -140,6 +166,9 @@ class ML_LinearDynamics(ManualExpansion):
             return 0
 
         if name.startswith("sin(") or name.startswith("cos("):
+            return 1
+
+        if name.startswith("rbf_"):
             return 1
 
         parts = name.split("*")

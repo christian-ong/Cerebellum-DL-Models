@@ -1,9 +1,9 @@
 import torch
+import torch.nn as nn
 import numpy as np
-from src.models.expander import ManualExpansion
+from src.models.expander import build_expander
 
-
-class Regression_DMD(ManualExpansion):
+class Regression_DMD(nn.Module):
     """
     Clean EDMD model with two rollout modes:
 
@@ -32,16 +32,14 @@ class Regression_DMD(ManualExpansion):
         ridge=0.0,
         rank=None,
         eps=1e-12,
+        rbf_n_centers=50,
+        rbf_center_selection="farthest",
+        rbf_bandwidth_mode="knn",
+        rbf_knn_k=5,
     ):
-        super().__init__(
-            state_dim=state_dim,
-            expansion_degree=expansion_degree,
-            bias=bias,
-            sine_cosine_expansion=sine_cosine_expansion,
-            expansion_type=expansion_type,
-            system=system,
-        )
+        super().__init__()
 
+        self.expansion_type = expansion_type
         self.state_dim = state_dim
         self.normalize_state = normalize_state
         self.normalize_lifted = normalize_lifted
@@ -49,6 +47,27 @@ class Regression_DMD(ManualExpansion):
         self.ridge = ridge
         self.rank = rank
         self.eps = eps
+
+        # -------------------------------------------------
+        # Expansion module
+        # -------------------------------------------------
+        self.expander = build_expander(
+            state_dim=state_dim,
+            expansion_type=expansion_type,
+            expansion_degree=expansion_degree,
+            bias=bias,
+            sine_cosine_expansion=sine_cosine_expansion,
+            system=system,
+            rbf_n_centers=rbf_n_centers,
+            rbf_center_selection=rbf_center_selection,
+            rbf_bandwidth_mode=rbf_bandwidth_mode,
+            rbf_knn_k=rbf_knn_k,
+        )
+
+        # Convenience aliases so the rest of the code stays readable
+        self.expand_names = self.expander.expand_names
+        self.state_indices = self.expander.state_indices
+        self.expanded_dim = self.expander.expanded_dim
 
         # scaling
         self.x_mean = None
@@ -71,6 +90,12 @@ class Regression_DMD(ManualExpansion):
         self.Phi_fitted = None
 
         self.Phi_pinv_fitted = None
+    
+    def expand(self, x):
+        return self.expander.expand(x)
+
+    def de_expand(self, x_expanded):
+        return self.expander.de_expand(x_expanded)
 
     def _canonical_mode(self, mode):
         mode = self.rollout_mode if mode is None else mode
@@ -199,12 +224,22 @@ class Regression_DMD(ManualExpansion):
         x_n = self._normalize_x(x)
         x_next_n = self._normalize_x(x_next)
 
+        if self.expansion_type == "rbf": # radial basis functions
+            self.expander.fit(x_n)
+            self.expand_names = self.expander.expand_names
+            self.state_indices = self.expander.state_indices
+            self.expanded_dim = self.expander.expanded_dim
+
         # -------------------------------------------------
         # 2) lifted snapshots
         # -------------------------------------------------
         psi_x = self.expand(x_n)       # (N, p)
         psi_y = self.expand(x_next_n)  # (N, p)
-
+        
+        if not torch.isfinite(psi_x).all():
+            raise ValueError("psi_x contains non-finite values after expansion.")
+        if not torch.isfinite(psi_y).all():
+            raise ValueError("psi_y contains non-finite values after expansion.")
         # -------------------------------------------------
         # 3) lifted normalization
         # -------------------------------------------------

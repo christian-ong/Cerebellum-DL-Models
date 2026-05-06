@@ -330,3 +330,317 @@ class ManualExpansion(nn.Module):
         in the expanded basis.
         """
         return x_expanded[:, self.state_indices]
+
+import math
+from typing import Optional
+
+import torch
+import torch.nn as nn
+
+
+class RBFExpansion(nn.Module):
+    """
+    Radial-basis-function expansion with the same public interface style as ManualExpansion.
+
+    Feature vector:
+        [optional bias, raw state coordinates, RBF features]
+
+    This keeps compatibility with the existing EDMD-style models, which expect:
+        - expanded_dim
+        - expand_names
+        - state_indices
+        - expand(x)
+        - de_expand(x_expanded)
+
+    Notes
+    -----
+    - The RBF dictionary is data-dependent and must be fitted on training states.
+    - Centers are chosen from the training set.
+    - Widths (sigmas) can be global or per-center.
+    """
+
+    def __init__(
+        self,
+        state_dim: int,
+        n_centers: int = 50,
+        bias: bool = True,
+        include_state: bool = True,
+        center_selection: str = "farthest",
+        bandwidth_mode: str = "knn",
+        knn_k: int = 5,
+        global_sigma_scale: float = 1.0,
+        min_sigma: float = 1e-6,
+    ):
+        super().__init__()
+
+        if state_dim <= 0:
+            raise ValueError("state_dim must be positive.")
+        if n_centers <= 0:
+            raise ValueError("n_centers must be positive.")
+        if center_selection not in {"random", "farthest"}:
+            raise ValueError("center_selection must be one of {'random', 'farthest'}.")
+        if bandwidth_mode not in {"global", "knn"}:
+            raise ValueError("bandwidth_mode must be one of {'global', 'knn'}.")
+        if knn_k <= 0:
+            raise ValueError("knn_k must be positive.")
+
+        self.state_dim = state_dim
+        self.n_centers = n_centers
+        self.bias = bias
+        self.include_state = include_state
+        self.center_selection = center_selection
+        self.bandwidth_mode = bandwidth_mode
+        self.knn_k = knn_k
+        self.global_sigma_scale = global_sigma_scale
+        self.min_sigma = min_sigma
+
+        # Data-fit attributes
+        self.is_fitted = False
+
+        # Buffers so they move with device and get saved in checkpoints.
+        # Important: initialize with final shapes so load_state_dict can restore
+        # trained RBF checkpoints without shape mismatch.
+        self.register_buffer("centers", torch.zeros(n_centers, state_dim, dtype=torch.float32))
+        self.register_buffer("sigmas", torch.ones(n_centers, dtype=torch.float32))
+
+        # Public interface expected by current models
+        self.expand_names = []
+        self.state_indices = []
+        self.expanded_dim = 0
+
+        self._build_feature_metadata()
+
+    def _build_feature_metadata(self):
+        names = []
+        state_indices = []
+
+        if self.bias:
+            names.append("1")
+
+        if self.include_state:
+            for i in range(self.state_dim):
+                state_indices.append(len(names))
+                names.append(f"x{i+1}")
+
+        for j in range(self.n_centers):
+            names.append(f"rbf_{j}")
+
+        self.expand_names = names
+        self.state_indices = state_indices
+        self.expanded_dim = len(names)
+
+        if self.include_state and len(self.state_indices) != self.state_dim:
+            raise RuntimeError("Failed to assign state_indices correctly.")
+
+    def _to_2d_tensor(self, x) -> torch.Tensor:
+        if not torch.is_tensor(x):
+            x = torch.tensor(x, dtype=torch.float32)
+        x = x.to(dtype=torch.float32)
+
+        if x.ndim == 1:
+            x = x.unsqueeze(0)
+
+        if x.ndim != 2 or x.shape[1] != self.state_dim:
+            raise ValueError(f"Expected input shape (N, {self.state_dim}), got {tuple(x.shape)}.")
+
+        return x
+
+    def _pairwise_sq_dists(self, X: torch.Tensor, C: torch.Tensor) -> torch.Tensor:
+        # X: (N, d), C: (M, d)
+        # returns (N, M) with squared Euclidean distances
+        return torch.cdist(X, C, p=2) ** 2
+
+    def _select_centers_random(self, X: torch.Tensor) -> torch.Tensor:
+        n = X.shape[0]
+        if self.n_centers > n:
+            raise ValueError(f"n_centers={self.n_centers} exceeds number of training points={n}.")
+        perm = torch.randperm(n, device=X.device)
+        idx = perm[: self.n_centers]
+        return X[idx].clone()
+
+    def _select_centers_farthest(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Greedy farthest-point sampling from the training set.
+        Spreads centers out over the data cloud.
+        """
+        n = X.shape[0]
+        if self.n_centers > n:
+            raise ValueError(f"n_centers={self.n_centers} exceeds number of training points={n}.")
+
+        # Start from a random point
+        first_idx = torch.randint(low=0, high=n, size=(1,), device=X.device).item()
+        selected = [first_idx]
+
+        min_d2 = self._pairwise_sq_dists(X, X[first_idx:first_idx + 1]).squeeze(1)
+
+        for _ in range(1, self.n_centers):
+            next_idx = torch.argmax(min_d2).item()
+            selected.append(next_idx)
+
+            d2_new = self._pairwise_sq_dists(X, X[next_idx:next_idx + 1]).squeeze(1)
+            min_d2 = torch.minimum(min_d2, d2_new)
+
+        idx = torch.tensor(selected, device=X.device, dtype=torch.long)
+        return X[idx].clone()
+
+    def _compute_global_sigma(self, centers: torch.Tensor) -> torch.Tensor:
+        """
+        One shared scale from center-center distances.
+        Stored as a per-center vector for uniform downstream handling.
+        """
+        if centers.shape[0] == 1:
+            sigma = torch.tensor([1.0], device=centers.device, dtype=centers.dtype)
+            return sigma
+
+        D = torch.cdist(centers, centers, p=2)
+        mask = ~torch.eye(D.shape[0], device=D.device, dtype=torch.bool)
+        nonzero = D[mask]
+
+        sigma_val = torch.median(nonzero)
+        sigma_val = torch.clamp(self.global_sigma_scale * sigma_val, min=self.min_sigma)
+
+        return torch.full(
+            (centers.shape[0],),
+            fill_value=sigma_val.item(),
+            device=centers.device,
+            dtype=centers.dtype,
+        )
+
+    def _compute_knn_sigmas(self, centers: torch.Tensor) -> torch.Tensor:
+        """
+        Per-center sigma_j from the distance to the k-th nearest center.
+        """
+        m = centers.shape[0]
+        if m == 1:
+            return torch.tensor([1.0], device=centers.device, dtype=centers.dtype)
+
+        D = torch.cdist(centers, centers, p=2)
+
+        # Ignore self-distance safely
+        eye_mask = torch.eye(m, device=D.device, dtype=torch.bool)
+        D = D.masked_fill(eye_mask, float("inf"))
+
+        k = min(self.knn_k, m - 1)
+        knn_dists, _ = torch.topk(D, k=k, largest=False, dim=1)
+
+        # Use the k-th nearest distance
+        sigmas = knn_dists[:, -1]
+        sigmas = torch.clamp(sigmas, min=self.min_sigma)
+        return sigmas
+
+    def fit(self, X_train) -> "RBFExpansion":
+        """
+        Fit centers and bandwidths from training states.
+
+        Parameters
+        ----------
+        X_train : array-like or tensor, shape (N, d)
+            Training states used to define the RBF dictionary.
+        """
+        X = self._to_2d_tensor(X_train)
+
+        if self.center_selection == "random":
+            centers = self._select_centers_random(X)
+        elif self.center_selection == "farthest":
+            centers = self._select_centers_farthest(X)
+        else:
+            raise RuntimeError("Unexpected center_selection branch.")
+
+        if self.bandwidth_mode == "global":
+            sigmas = self._compute_global_sigma(centers)
+        elif self.bandwidth_mode == "knn":
+            sigmas = self._compute_knn_sigmas(centers)
+        else:
+            raise RuntimeError("Unexpected bandwidth_mode branch.")
+
+        if not torch.isfinite(centers).all():
+            raise ValueError("RBF centers contain non-finite values after fitting.")
+        if not torch.isfinite(sigmas).all():
+            raise ValueError("RBF sigmas contain non-finite values after fitting.")
+        
+        self.centers.copy_(centers.to(self.centers.dtype))
+        self.sigmas.copy_(sigmas.to(self.sigmas.dtype))
+        self.is_fitted = True
+        return self
+
+    def _rbf_features(self, x: torch.Tensor) -> torch.Tensor:
+        if not self.is_fitted:
+            raise RuntimeError("RBFExpansion must be fitted before calling expand().")
+
+        # squared distances: (N, M)
+        d2 = self._pairwise_sq_dists(x, self.centers)
+
+        # sigmas: (M,) -> (1, M)
+        sigma2 = torch.clamp(self.sigmas, min=self.min_sigma).unsqueeze(0) ** 2
+
+        # Gaussian RBFs
+        return torch.exp(-0.5 * d2 / sigma2)
+
+    def expand(self, x) -> torch.Tensor:
+        """
+        Build expanded features:
+            [optional bias, raw state, gaussian RBF features]
+        """
+        x = self._to_2d_tensor(x)
+        feats = []
+
+        if self.bias:
+            feats.append(torch.ones(x.shape[0], 1, dtype=x.dtype, device=x.device))
+
+        if self.include_state:
+            feats.append(x)
+
+        feats.append(self._rbf_features(x))
+
+        return torch.cat(feats, dim=1)
+
+    def de_expand(self, x_expanded: torch.Tensor) -> torch.Tensor:
+        """
+        Recover original state variables from the expanded vector.
+        This mirrors the ManualExpansion interface used by current models.
+        """
+        if not self.include_state:
+            raise RuntimeError("de_expand() requires include_state=True.")
+
+        return x_expanded[:, self.state_indices]
+
+    def extra_repr(self) -> str:
+        return (
+            f"state_dim={self.state_dim}, n_centers={self.n_centers}, "
+            f"bias={self.bias}, include_state={self.include_state}, "
+            f"center_selection='{self.center_selection}', "
+            f"bandwidth_mode='{self.bandwidth_mode}', knn_k={self.knn_k}"
+        )
+
+def build_expander(
+    *,
+    state_dim: int,
+    expansion_type: str,
+    expansion_degree: int = 3,
+    bias: bool = True,
+    sine_cosine_expansion: bool = False,
+    system: Optional[str] = None,
+    rbf_n_centers: int = 50,
+    rbf_center_selection: str = "farthest",
+    rbf_bandwidth_mode: str = "knn",
+    rbf_knn_k: int = 5,
+):
+    if expansion_type == "rbf":
+        return RBFExpansion(
+            state_dim=state_dim,
+            n_centers=rbf_n_centers,
+            bias=bias,
+            include_state=True,
+            center_selection=rbf_center_selection,
+            bandwidth_mode=rbf_bandwidth_mode,
+            knn_k=rbf_knn_k,
+        )
+
+    return ManualExpansion(
+        state_dim=state_dim,
+        expansion_degree=expansion_degree,
+        bias=bias,
+        sine_cosine_expansion=sine_cosine_expansion,
+        expansion_type=expansion_type,
+        system=system,
+    )

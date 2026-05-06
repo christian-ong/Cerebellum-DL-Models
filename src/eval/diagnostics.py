@@ -19,7 +19,9 @@ from src.data_generation.data_simulation import (
     duffing_system,
     closed_small_system,
     closed_large_system,
-    closed_trig_system,
+    closed_trig_small_system,
+    closed_trig_medium_system,
+    closed_trig_large_system,
 )
 
 def parse_int_list(text: str) -> List[int]:
@@ -467,8 +469,30 @@ def build_true_dynamics_from_dataset(data_path: str):
             delta=float(_np_scalar(data, "delta")),
         )
 
-    if system in {"koopman_poly_trig", "closed_trig"}:
-        return closed_trig_system(
+    if system in {"koopman_poly_trig", "closed_trig", "closed_trig_small"}:
+        return closed_trig_small_system(
+            omega=float(_np_scalar(data, "omega")),
+            alpha=float(_np_scalar(data, "alpha")),
+            beta_s1=float(_np_scalar(data, "beta_s1")),
+            beta_c1=float(_np_scalar(data, "beta_c1")),
+            beta_x=float(_np_scalar(data, "beta_x")),
+            beta_x2=float(_np_scalar(data, "beta_x2")),
+        )
+
+    if system == "closed_trig_medium":
+        return closed_trig_medium_system(
+            omega=float(_np_scalar(data, "omega")),
+            alpha=float(_np_scalar(data, "alpha")),
+            beta_s1=float(_np_scalar(data, "beta_s1")),
+            beta_c1=float(_np_scalar(data, "beta_c1")),
+            beta_s2=float(_np_scalar(data, "beta_s2")),
+            beta_c2=float(_np_scalar(data, "beta_c2")),
+            beta_x=float(_np_scalar(data, "beta_x")),
+            beta_x2=float(_np_scalar(data, "beta_x2")),
+        )
+
+    if system == "closed_trig_large":
+        return closed_trig_large_system(
             omega=float(_np_scalar(data, "omega")),
             alpha=float(_np_scalar(data, "alpha")),
             beta_s1=float(_np_scalar(data, "beta_s1")),
@@ -491,8 +515,11 @@ def _pretty_system_name(system: str) -> str:
         "closed_small": "Closed Small",
         "koopman_poly_large": "Closed Large",
         "closed_large": "Closed Large",
-        "koopman_poly_trig": "Closed Trig",
-        "closed_trig": "Closed Trig",
+        "koopman_poly_trig": "Closed Trig Small",
+        "closed_trig": "Closed Trig Small",
+        "closed_trig_small": "Closed Trig Small",
+        "closed_trig_medium": "Closed Trig Medium",
+        "closed_trig_large": "Closed Trig Large",
     }
     return special.get(system, system.replace("_", " ").title())
 
@@ -541,7 +568,7 @@ def _default_grid_bounds_from_dataset(data, X: np.ndarray, i: int, j: int):
     if system in {"koopman_poly_large", "closed_large"}:
         return (-1.0, 1.0), (-1.0, 1.0)
 
-    if system in {"koopman_poly_trig", "closed_trig"}:
+    if system in {"koopman_poly_trig", "closed_trig", "closed_trig_small", "closed_trig_medium", "closed_trig_large"}:
         return (-2.0, 2.0), (-1.0, 1.0)
 
     # Lorenz or any future system: fallback to data-driven bounds

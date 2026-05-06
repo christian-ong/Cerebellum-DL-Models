@@ -147,12 +147,29 @@ def load_model(
             rollout_mode=rollout_mode,
             ridge=float(np.asarray(model_data["ridge"]).item()) if "ridge" in model_data else 0.0,
             rank=rank,
+            rbf_n_centers=int(np.asarray(model_data["rbf_n_centers"]).item()) if "rbf_n_centers" in model_data else 50,
+            rbf_center_selection=str(np.asarray(model_data["rbf_center_selection"]).item()) if "rbf_center_selection" in model_data else "farthest",
+            rbf_bandwidth_mode=str(np.asarray(model_data["rbf_bandwidth_mode"]).item()) if "rbf_bandwidth_mode" in model_data else "knn",
+            rbf_knn_k=int(np.asarray(model_data["rbf_knn_k"]).item()) if "rbf_knn_k" in model_data else 5,
         ).to(device)
 
         model.x_mean = torch.tensor(model_data["x_mean"], dtype=torch.float64)
         model.x_scale = torch.tensor(model_data["x_scale"], dtype=torch.float64)
         model.psi_scale = torch.tensor(model_data["psi_scale"], dtype=torch.float64)
+        if str(model_data["expansion_type"]) == "rbf":
+            if "rbf_centers" not in model_data or "rbf_sigmas" not in model_data:
+                raise ValueError(
+                    "RBF regression_dmd checkpoint is missing rbf_centers/rbf_sigmas. "
+                    "Please retrain and resave the model with the updated train.py."
+                )
 
+            model.expander.centers = torch.tensor(model_data["rbf_centers"], dtype=torch.float32)
+            model.expander.sigmas = torch.tensor(model_data["rbf_sigmas"], dtype=torch.float32)
+            model.expander.is_fitted = True
+
+            model.expand_names = model.expander.expand_names
+            model.state_indices = model.expander.state_indices
+            model.expanded_dim = model.expander.expanded_dim
         model.K_fitted = torch.tensor(model_data["K"], dtype=torch.float64)
         model.C_fitted = torch.tensor(model_data["C"], dtype=torch.float64)
 
@@ -188,9 +205,19 @@ def load_model(
             expansion_type=train_args["expansion_type"],
             bias=_to_bool(train_args.get("bias", "true"), default=True),
             sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", "false"), default=False),
-            system=ckpt["system"],
+            system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
+            rbf_n_centers=int(train_args.get("rbf_n_centers", 50)),
+            rbf_center_selection=str(train_args.get("rbf_center_selection", "farthest")),
+            rbf_bandwidth_mode=str(train_args.get("rbf_bandwidth_mode", "knn")),
+            rbf_knn_k=int(train_args.get("rbf_knn_k", 5)),
         ).to(device)
         model.load_state_dict(ckpt["model_state_dict"])
+        if train_args["expansion_type"] == "rbf":
+            model.expander.is_fitted = True
+            model.expand_names = model.expander.expand_names
+            model.state_indices = model.expander.state_indices
+            model.expanded_dim = model.expander.expanded_dim
+            model.latent_dim = model.expanded_dim
         model.eval()
         extras["ckpt"] = ckpt
         return model, extras
@@ -206,9 +233,19 @@ def load_model(
             sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", "false"), default=False),
             expansion_type=train_args["expansion_type"],
             system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
+            rbf_n_centers=int(train_args.get("rbf_n_centers", 50)),
+            rbf_center_selection=str(train_args.get("rbf_center_selection", "farthest")),
+            rbf_bandwidth_mode=str(train_args.get("rbf_bandwidth_mode", "knn")),
+            rbf_knn_k=int(train_args.get("rbf_knn_k", 5)),
         ).to(device)
 
         model.load_state_dict(ckpt["model_state_dict"])
+        if train_args["expansion_type"] == "rbf":
+            model.expander.is_fitted = True
+            model.expand_names = model.expander.expand_names
+            model.state_indices = model.expander.state_indices
+            model.expanded_dim = model.expander.expanded_dim
+            model.latent_dim = model.expanded_dim
         model.eval()
         extras["ckpt"] = ckpt
         return model, extras
