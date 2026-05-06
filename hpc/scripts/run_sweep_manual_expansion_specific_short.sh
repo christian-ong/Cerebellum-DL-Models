@@ -1,19 +1,19 @@
 # LSBATCH: User input
 #!/bin/bash
-#BSUB -J koopman_manual_exp_specific
+#BSUB -J specific_short
 
 # Output files
 #BSUB -o hpc/runs/%J.out
 #BSUB -e hpc/runs/%J.err
 
 # GPU
-#BSUB -q gpua10
+#BSUB -q gpuv100
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -R "rusage[mem=32GB] span[hosts=1]"
 #BSUB -n 4
 
 # Runtime
-#BSUB -W 12:00
+#BSUB -W 24:00
 
 # ----------------------------------
 # ENV
@@ -28,7 +28,7 @@ source .venv/bin/activate
 # SWEEP
 # ----------------------------------
 
-SWEEP_ID=DeepLearningP4Destruction/Cerebellum-DL-Models/whqgp6cd
+SWEEP_ID=DeepLearningP4Destruction/Cerebellum-DL-Models/0uptgwvc
 
 # ----------------------------------
 # RUN (ONLY ONE AGENT!)

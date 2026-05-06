@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-from src.models.ml_dmd import ML_DMD
+from src.models.ml_dmd_free import ML_DMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 
 

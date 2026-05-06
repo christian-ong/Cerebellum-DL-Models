@@ -1,6 +1,6 @@
 # LSBATCH: User input
 #!/bin/bash
-#BSUB -J koopman_manual_exp_general
+#BSUB -J general_short
 
 # Output files
 #BSUB -o hpc/runs/%J.out
@@ -13,7 +13,7 @@
 #BSUB -n 4
 
 # Runtime
-#BSUB -W 12:00
+#BSUB -W 24:00
 
 # ----------------------------------
 # ENV
@@ -28,7 +28,7 @@ source .venv/bin/activate
 # SWEEP
 # ----------------------------------
 
-SWEEP_ID=DeepLearningP4Destruction/Cerebellum-DL-Models/tmojaqbg
+SWEEP_ID=DeepLearningP4Destruction/Cerebellum-DL-Models/ch4k8o09
 
 # ----------------------------------
 # RUN (ONLY ONE AGENT!)

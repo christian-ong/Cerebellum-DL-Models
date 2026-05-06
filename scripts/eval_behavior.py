@@ -62,6 +62,7 @@ def main():
     parser.add_argument("--mode_subset_sizes", type=str, default="", help="Comma-separated subset sizes for additional mode-restricted heatmaps, e.g. '1,2,5'.")
     parser.add_argument("--mode_subset_strategy", type=str, default="amplitude", choices=["amplitude", "manual"], help="How to choose modes for additional subset heatmaps.")
     parser.add_argument("--mode_subset_indices", type=str, default="", help="Comma-separated explicit mode indices, used when --mode_subset_strategy=manual.")
+    parser.add_argument("--outdir", type=str, default=None, help="Force a custom output directory for all plots and logs.")
 
     args = parser.parse_args()
 
@@ -83,6 +84,11 @@ def main():
         need_cache=args.use_cache,
         max_horizon_for_cache=max_needed,
     )
+
+    # Force the outputs to route to the custom directory if provided
+    if args.outdir:
+        ctx.figdir = args.outdir
+        os.makedirs(ctx.figdir, exist_ok=True)
 
     existing_core = maybe_load_core_summary(ctx)
     if existing_core is not None:

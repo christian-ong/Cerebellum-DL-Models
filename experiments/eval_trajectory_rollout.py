@@ -16,7 +16,8 @@ import torch
 import matplotlib.pyplot as plt
 
 from src.data_generation.load_data import resolve_split_npz_path
-from src.models.ml_dmd import ML_DMD
+from src.models.ml_dmd_free import ML_DMD
+from src.models.ml_dmd_band import ML_DMD_BAND
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.eval.model_io import load_model
 

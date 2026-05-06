@@ -7,12 +7,12 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
-from src.eval.sweep_utils import maybe_set_z_scale
 from src.models.linear_baseline import fit_linear_map
 from src.models.dmd_baseline import fit_dmd
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.regression_dmd import Regression_DMD
-from src.models.ml_dmd import ML_DMD
+from src.models.ml_dmd_band import ML_DMD_BAND
+from src.models.ml_dmd_free import ML_DMD
 from src.train.train_onestep import train_onestep
 from src.models.sindy_baseline import SINDyBaseline
 
@@ -99,20 +99,22 @@ Global options (defaults):
     python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/lorenz --expansion_type specific --expansion_degree 10
 
 # ML Linear Dynamics + Manual Expansion
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/saddle_point --epochs 10 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/degenerate_node --epochs 10 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/inward_spiral --epochs 10 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/harmonic_oscillator --epochs 10 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/saddle_point --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/degenerate_node --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/inward_spiral --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/harmonic_oscillator --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
 
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_small --epochs 10 --expansion_type specific --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_large --epochs 10 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_trig --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-5
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_small --epochs 20 --expansion_type specific --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec3
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_large --epochs 20 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec5
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_small --epochs 20 --expansion_type specific --expansion_degree 6 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec6_trig
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_medium --epochs 20 --expansion_type specific --expansion_degree 8 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec8_trig
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_large --epochs 20 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec10_trig
 
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/vanderpol --epochs 10 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion false
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lotka_volterra --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/pendulum --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/duffing --epochs 10 --expansion_type specific --expansion_degree 10 --bias false --sine_cosine_expansion false
-    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz --epochs 3 --expansion_type general --expansion_degree 10 --bias false --sine_cosine_expansion false
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol --epochs 20 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion false --name vanderpol_gen5
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name lotkavolterra_gen3
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/pendulum --epochs 20 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion true --name pendulum_gen5_trig
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/duffing --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name duffing_gen3
+    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lorenz --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name lorenz_gen3
 
 # ML DMD + Manual Expansion
     python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/saddle_point --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
@@ -161,7 +163,8 @@ Output:
 def dataloader_to_numpy(loader):
     """Collect all (x, y) pairs from a DataLoader into NumPy arrays."""
     xs, ys = [], []
-    for x, y in loader:
+    for batch in loader:
+        x, y = batch[0], batch[1]
         xs.append(x.numpy())
         ys.append(y.numpy())
     return np.vstack(xs), np.vstack(ys)
@@ -182,26 +185,6 @@ def load_best_hyperparams(config_path, system_name, model_name, expansion_type, 
         return config[system_name][model_name][expansion_type][str(expansion_degree)]
     except KeyError:
         return None
-
-
-def resolve_ml_state_normalization(args, system_name):
-    """
-    Decide whether to standardize state before expansion for ML models.
-
-    auto: defaults to False for ML Koopman models (since mean-shifting 
-    corrupts polynomial basis independence), true otherwise.
-    """
-    if args.normalize_state_for_ml != "auto":
-        return args.normalize_state_for_ml == "true"
-
-    is_ml_model = args.model in {"ml_lineardynamics", "ml_dmd"}
-
-    # Mathematically, shifting state variables before applying polynomial 
-    # dictionaries creates parasitic lower-degree terms. Disable by default.
-    if is_ml_model:
-        return False
-
-    return True
 
 
 # --------------------------------------------------
@@ -226,6 +209,7 @@ def main():
             "regression_dmd",
             "ml_lineardynamics",
             "ml_dmd",
+            "ml_dmd_band",
             "sindy_baseline",
         ],
     )
@@ -242,14 +226,28 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument(
-        "--normalize_state_for_ml",
-        type=str.lower,
-        choices=["true", "false", "auto"],
-        default="auto",
-        help=(
-            "Whether ML models standardize state before expansion. "
-            "auto disables this for closed_* with specific basis and enables otherwise."
-        ),
+        "--rollout_horizon",
+        type=int,
+        default=-1,
+        help="Rollout supervision horizon. -1 uses model defaults (ml_dmd_band -> 20, else 0).",
+    )
+    parser.add_argument(
+        "--rollout_loss_weight",
+        type=float,
+        default=-1.0,
+        help="Weight of rollout supervision term. -1 uses model defaults (ml_dmd_band -> 1.0, else 0.2).",
+    )
+    parser.add_argument(
+        "--log_phi_every",
+        type=int,
+        default=-1,
+        help="Print get_Phi() every N epochs. -1 uses model defaults (ml_dmd_band -> 1, else 0).",
+    )
+    parser.add_argument(
+        "--phi_print_max_dim",
+        type=int,
+        default=12,
+        help="When Phi is larger than this, print only the top-left block with summary stats.",
     )
 
     # --------------------------------------------------
@@ -293,6 +291,11 @@ def main():
         default="configs/best_hyperparams.json",
         help="JSON file with best lr/weight_decay values keyed by system/model/expansion config",
     )
+    parser.add_argument(
+        "--use_best_hparams",
+        action="store_true",
+        help="If set, override lr/weight_decay from configs/best_hyperparams.json when available",
+    )
 
     args = parser.parse_args()
 
@@ -309,21 +312,22 @@ def main():
     system_name = str(meta["system"])
     state_dim = meta["X"].shape[-1]
 
-    best_hparams = load_best_hyperparams(
-        args.config_path,
-        system_name=system_name,
-        model_name=args.model,
-        expansion_type=args.expansion_type,
-        expansion_degree=args.expansion_degree,
-    )
-    if best_hparams is not None:
-        args.lr = float(best_hparams["lr"])
-        args.weight_decay = float(best_hparams["weight_decay"])
-        print(
-            "Loaded lr/weight_decay from config for "
-            f"{system_name}/{args.model}/{args.expansion_type}/{args.expansion_degree}: "
-            f"lr={args.lr}, weight_decay={args.weight_decay}"
+    if args.use_best_hparams:
+        best_hparams = load_best_hyperparams(
+            args.config_path,
+            system_name=system_name,
+            model_name=args.model,
+            expansion_type=args.expansion_type,
+            expansion_degree=args.expansion_degree,
         )
+        if best_hparams is not None:
+            args.lr = float(best_hparams["lr"])
+            args.weight_decay = float(best_hparams["weight_decay"])
+            print(
+                "Loaded lr/weight_decay from config for "
+                f"{system_name}/{args.model}/{args.expansion_type}/{args.expansion_degree}: "
+                f"lr={args.lr}, weight_decay={args.weight_decay}"
+            )
     
     # Setup output directory
     run_name = args.name if args.name else "default"
@@ -331,19 +335,42 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
 
     # Load datasets
-    train_ds = OneStepTrajectoryDataset(args.data_path, split="train", subset=args.subset)
-    val_ds = OneStepTrajectoryDataset(args.data_path, split="val", subset=args.subset)
+    # ML_DMD_BAND gets a short future window so training can optimize both one-step
+    # prediction and short-horizon rollout consistency.
+    is_ml_model = args.model in {"ml_lineardynamics", "ml_dmd", "ml_dmd_band"}
+
+    if args.rollout_horizon >= 0:
+        rollout_horizon = args.rollout_horizon
+    else:
+        rollout_horizon = 20 if is_ml_model else 0
+
+    if args.rollout_loss_weight >= 0.0:
+        rollout_loss_weight = args.rollout_loss_weight
+    else:
+        rollout_loss_weight = 0.1 if is_ml_model else 0.0
+
+    if args.log_phi_every >= 0:
+        log_phi_every = args.log_phi_every
+    else:
+        log_phi_every = 1 if is_ml_model else 0
+        
+    train_ds = OneStepTrajectoryDataset(
+        args.data_path,
+        split="train",
+        subset=args.subset,
+        rollout_horizon=rollout_horizon,
+    )
+    val_ds = OneStepTrajectoryDataset(
+        args.data_path,
+        split="val",
+        subset=args.subset,
+        rollout_horizon=rollout_horizon,
+    )
     
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size) if len(val_ds) > 0 else None
-
-    train_state_mean = torch.tensor(np.mean(meta["X"], axis=(0, 1)), dtype=torch.float32, device=device)
-    train_state_scale = torch.tensor(np.std(meta["X"], axis=(0, 1)), dtype=torch.float32, device=device)
-    train_state_scale = torch.clamp(train_state_scale, min=1e-6)
-
-    normalize_state_for_ml = resolve_ml_state_normalization(args, system_name)
-    
-
+    pin_memory = device == "cuda"
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, pin_memory=pin_memory)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, pin_memory=pin_memory) if len(val_ds) > 0 else None
+   
     # Get training data
     X, Y = dataloader_to_numpy(train_loader)
     
@@ -578,6 +605,16 @@ def main():
             rbf_knn_k=args.rbf_knn_k,
         ).to(device)
 
+    elif args.model == "ml_dmd_band":
+        model = ML_DMD_BAND(
+            state_dim=state_dim,
+            expansion_degree=args.expansion_degree,
+            bias=args.bias == "true",
+            sine_cosine_expansion=args.sine_cosine_expansion == "true",
+            expansion_type=args.expansion_type,
+            system=system_name if args.expansion_type == "specific" else None
+        ).to(device)
+
     else:
         raise ValueError(f"Unknown model: {args.model}")
         
@@ -588,10 +625,6 @@ def main():
     if hasattr(model, "expansion_type"):
         print(f"Expand names: {model.expand_names}")
 
-    print(f"ML state normalization before expansion: {normalize_state_for_ml}")
-
-    if normalize_state_for_ml and hasattr(model, "set_state_scale"):
-        model.set_state_scale(train_state_mean, train_state_scale)
 
     # --------------------------------------------------
     # Compute lifted scaling (only for expansion models)
@@ -602,12 +635,20 @@ def main():
             X_train_tensor = model.scale_state(X_train_tensor)
         model.fit_expander(X_train_tensor)
         
-    maybe_set_z_scale(model, train_loader, device)
     
     # Train
     model, (train_losses, batch_val_losses, epoch_val_losses, loss_components_val), best_checkpoint = train_onestep(
-        model=model, train_loader=train_loader, val_loader=val_loader,
-        device=device, epochs=args.epochs, lr=args.lr, weight_decay=args.weight_decay)
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        device=device,
+        epochs=args.epochs,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        rollout_loss_weight=rollout_loss_weight,
+        log_phi_every=log_phi_every,
+        phi_print_max_dim=args.phi_print_max_dim,
+    )
 
     # Save both best-by-validation and final epoch checkpoints.
     checkpoint_base = {

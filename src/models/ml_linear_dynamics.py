@@ -99,22 +99,9 @@ class ML_LinearDynamics(nn.Module):
         # ------------------------------------------------
         # Feature scaling buffer
         # ------------------------------------------------
-        # Lifted features can vary wildly in magnitude.
-        #
-        # We normalize features during training to improve conditioning:
-        #
-        #     z_norm = z / z_scale
-        #
-        # z_scale is computed once from training data.
-        #
-        # register_buffer ensures:
-        # - saved in checkpoints
-        # - moved to GPU automatically
-        # - not trainable
-        self.register_buffer("z_scale", torch.ones(self.latent_dim))
-        self.register_buffer("x_mean", torch.zeros(state_dim))
-        self.register_buffer("x_scale", torch.ones(state_dim))
         self.max_abs_z_norm = 1e6
+        self.rollout_horizon = 20
+        self.rollout_weight = 0.1
 
         # ------------------------------------------------
         # Lifted loss weights
@@ -144,20 +131,6 @@ class ML_LinearDynamics(nn.Module):
             self.expanded_dim = self.expander.expanded_dim
             self.latent_dim = self.expanded_dim
 
-    def set_state_scale(self, x_mean, x_scale):
-        if not torch.is_tensor(x_mean):
-            x_mean = torch.tensor(x_mean, dtype=torch.float32)
-        if not torch.is_tensor(x_scale):
-            x_scale = torch.tensor(x_scale, dtype=torch.float32)
-
-        self.x_mean.copy_(x_mean.to(self.x_mean.device))
-        self.x_scale.copy_(torch.clamp(x_scale.to(self.x_scale.device), min=1e-6))
-
-    def unscale_state(self, x):
-        return x * self.x_scale + self.x_mean
-
-    def scale_state(self, x):
-        return (x - self.x_mean) / self.x_scale
         
     def _feature_degree(self, name: str) -> int:
         name = name.strip()
@@ -188,30 +161,7 @@ class ML_LinearDynamics(nn.Module):
     # Set scaling for lifted features
     # ------------------------------------------------
 
-    def set_z_scale(self, z_scale):
-        """
-        Store feature scaling computed from the training data.
-
-        z_scale_i ≈ mean(|z_i|)
-
-        This improves conditioning of the Koopman regression.
-        """
-        if not torch.is_tensor(z_scale):
-            z_scale = torch.tensor(z_scale, dtype=self.K.weight.dtype)
-
-        self.z_scale.copy_(z_scale.to(self.z_scale.device))
-
-    def get_scaling_matrix(self):
-        """
-        Return diagonal scaling matrix S such that
-
-            z_raw = S z_scaled
-
-        where z_scaled = z_raw / z_scale.
-        """
-        return torch.diag(self.z_scale)
-
-    def get_K_scaled(self):
+    def get_K(self):
         """
         Return the learned operator acting in scaled lifted coordinates.
 
@@ -220,30 +170,17 @@ class ML_LinearDynamics(nn.Module):
         """
         return self.K.weight.mT
 
-    def get_K_true(self):
-        """
-        Return the equivalent operator in the lifted coordinates induced by
-        the standardized physical state.
-
-        If z_scaled = S^{-1} z_raw, then
-            K_true = S K_scaled S^{-1}
-
-        This is still an operator in lifted coordinates, not a global linear
-        operator in raw physical state coordinates.
-        """
-        S = self.get_scaling_matrix()
-        S_inv = torch.diag(1.0 / (self.z_scale + 1e-12))
-        K_scaled = self.get_K_scaled()
-        return S @ K_scaled @ S_inv
-
     def get_eigenvalues(self):
         """
         Eigenvalues of the lifted Koopman operator.
         These are identical for K_scaled and K_true.
         """
-        K_true = self.get_K_true()
+        K_true = self.get_K()
         return torch.linalg.eigvals(K_true)
-
+    
+    def _advance_z(self, z):
+        z_next = self.K(z)
+        return torch.clamp(z_next, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
     # ------------------------------------------------
     # Forward pass
     # ------------------------------------------------
@@ -264,104 +201,65 @@ class ML_LinearDynamics(nn.Module):
         """
 
         # Lift state into expanded space
-        x_scaled = self.scale_state(x)
-        z_raw = self.expand(x_scaled)
+        z_raw = self.expand(x)
 
         # Normalize lifted features
-        z = torch.clamp(z_raw / self.z_scale, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
+        z = torch.clamp(z_raw, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
 
         # Linear Koopman step
         z_next = self.K(z)
 
-        # Convert back to original lifted coordinates
-        z_next_raw = z_next * self.z_scale
-
         # Recover original state
-        x_next_scaled = self.de_expand(z_next_raw)
-        x_next = self.unscale_state(x_next_scaled)
+        x_next = self.de_expand(z_next)
         return x_next
 
     # ------------------------------------------------
     # Training loss
     # ------------------------------------------------
 
-    def compute_loss(self, x, x_next_true):
-        """
-        Training objective.
+    def compute_loss(self, x, x_next_true, future_x=None):
+        z = self.expand(x)
+        z_next_true = self.expand(x_next_true)
 
-        Three components:
+        z_next_pred = self._advance_z(z)
 
-        1) Lifted Koopman loss
-           Enforces linear dynamics in lifted space
-
-        2) State prediction loss
-           Ensures correct predictions in physical state
-
-        3) Eigenvalue stability loss
-           Prevents unstable eigenvalues during rollouts
-        """
-
-        # Expand states
-        x_scaled = self.scale_state(x)
-        x_next_true_scaled = self.scale_state(x_next_true)
-
-        z_raw = self.expand(x_scaled)
-        z_next_true_raw = self.expand(x_next_true_scaled)
-
-        # Normalize lifted coordinates
-        z = torch.clamp(z_raw / self.z_scale, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
-        z_next_true = torch.clamp(
-            z_next_true_raw / self.z_scale,
-            min=-self.max_abs_z_norm,
-            max=self.max_abs_z_norm,
-        )
-
-        # Predict next lifted state
-        z_next_pred = self.K(z)
-
-        # ------------------------------------------------
         # 1) Lifted Koopman loss
-        # ------------------------------------------------
-        # Weighted MSE in lifted space
         diff = z_next_pred - z_next_true
         loss_lift = torch.mean(self.lift_weights * diff**2)
 
-        # ------------------------------------------------
         # 2) State prediction loss
-        # ------------------------------------------------
-        # Convert lifted prediction back to state space
-        z_next_pred_raw = z_next_pred * self.z_scale
-        x_next_pred_scaled = self.de_expand(z_next_pred_raw)
-        
-        # Compare scaled prediction against scaled ground truth target
-        x_next_true_scaled = self.scale_state(x_next_true)
-        loss_state = nn.MSELoss()(x_next_pred_scaled, x_next_true_scaled)
+        x_next_pred = self.de_expand(z_next_pred)
+        loss_state = nn.MSELoss()(x_next_pred, x_next_true)
 
-        # ------------------------------------------------
-        # 3) Stability regularization
-        # ------------------------------------------------
-        # Penalize eigenvalues outside the unit circle.
-        #
-        # Ensures stable long-term rollouts.
+        # 3) Multi-step Rollout Loss
+        loss_rollout = torch.tensor(0.0, device=x.device)
+        if future_x is not None and future_x.ndim == 3:
+            horizon = min(self.rollout_horizon, future_x.shape[1])
+            if horizon >= 2:
+                z_curr_pred = z_next_pred 
+                for k in range(1, horizon):
+                    z_curr_pred = self._advance_z(z_curr_pred)
+                    z_true_k = self.expand(future_x[:, k, :])
+                    z_true_k = torch.clamp(z_true_k, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
+                    loss_rollout += torch.mean(self.lift_weights * (z_curr_pred - z_true_k)**2)
+                loss_rollout = loss_rollout / float(horizon - 1)
 
-        # K_eff = self.K.weight * self.z_scale.unsqueeze(1) / self.z_scale.unsqueeze(0)
-        # eigvals = torch.linalg.eigvals(K_eff)
-
-        # loss_stability = torch.mean(
-        #     torch.relu(torch.abs(eigvals) - 1.0) ** 2
-        # )
-
-        # ------------------------------------------------
         # Total loss
-        # ------------------------------------------------
         loss = (
-            loss_lift
-            + 0.1 * loss_state
-            # + 1e-3 * loss_stability
+            loss_lift 
+            + 0.1 * loss_state 
+            + self.rollout_weight * loss_rollout
         )
 
-        return (loss,)
+        loss_dict = {
+            "loss": loss.item(),
+            "loss_lift": loss_lift.item(),
+            "loss_state": loss_state.item(),
+            "rollout": loss_rollout.item(),
+        }
 
+        return (loss, loss_dict)
+    
     # ------------------------------------------------
     # Rollout simulation
     # ------------------------------------------------
