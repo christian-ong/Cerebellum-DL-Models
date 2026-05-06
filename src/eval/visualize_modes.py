@@ -740,7 +740,6 @@ def modes_by_quality(
     model, 
     W, 
     eigvals_analytic, 
-    z_scale, 
     state_bounds, 
     n_modes_to_keep=8
     ):
@@ -766,7 +765,7 @@ def modes_by_quality(
 
         traj = np.asarray(traj, dtype=np.float32)
         with torch.no_grad():
-            z_roll = model.expand(torch.tensor(traj)).cpu().numpy() / z_scale
+            z_roll = model.expander.expand(torch.tensor(traj)).cpu().numpy()
             phi_roll = z_roll @ W
 
         lhs = phi_roll[1:, :] 
@@ -792,7 +791,7 @@ def modes_by_quality(
     pts = np.column_stack(grid_cols)
     
     with torch.no_grad():
-        z_grid = model.expand(torch.as_tensor(pts, dtype=torch.float32)).cpu().numpy() / z_scale
+        z_grid = model.expander.expand(torch.as_tensor(pts, dtype=torch.float32)).cpu().numpy()
         phi_grid = z_grid @ W
     
     spatial_std = np.std(np.real(phi_grid), axis=0)
@@ -909,21 +908,21 @@ def plot_freq_magnitude(eigvals, mode_scores, theme="dark", save_path=None):
         plt.show()
 
 
-def plot_mode_trajectories(model, W, eigvals, z_scale, best_ids, real_traj, save_path=None):
+def plot_mode_trajectories(model, W, eigvals, best_ids, real_traj, save_path=None):
     n_steps = real_traj.shape[0]
     t = np.arange(n_steps)
     
     with torch.no_grad():
-        z_real = model.expand(torch.as_tensor(real_traj, dtype=torch.float32)).cpu().numpy() / z_scale
+        z_real = model.expander.expand(torch.as_tensor(real_traj, dtype=torch.float32)).cpu().numpy()
         phi_real_traj = z_real @ W
     
     xt = torch.as_tensor(real_traj[0:1, :], dtype=torch.float32)
     phi_nn_traj = []
     with torch.no_grad():
         for _ in range(n_steps):
-            z_t = model.expand(xt).cpu().numpy() / z_scale
+            z_t = model.expander.expand(xt).cpu().numpy()
             phi_nn_traj.append(z_t @ W)
-            xt = model(xt)
+            xt = model.expander.expand(xt)
     phi_nn_traj = np.array(phi_nn_traj).squeeze()
     
     fig, axes = plt.subplots(len(best_ids), 1, figsize=(12, 2.5 * len(best_ids)), sharex=True)

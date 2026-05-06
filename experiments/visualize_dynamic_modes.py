@@ -48,12 +48,6 @@ else:
 
 model, model_type = build_model_from_checkpoint(model_path)
 
-# NEW: Handle the removed z_scale gracefully
-if hasattr(model, "z_scale"):
-    z_scale = model.z_scale.detach().cpu().numpy()
-else:
-    z_scale = np.ones(model.latent_dim) # Fallback for pure unscaled models
-
 Phi_model, Lambda_model, Lambda_model_eig, V, W, K = get_koopman_eigensystem(model)
 num_modes = Lambda_model.shape[0]
 
@@ -111,7 +105,7 @@ plot_transition_matrices(
 # --------------------------------------------------
 # Create a grid covering the state space and lift to latent space
 state_bounds, grid_points = get_data_bounds_and_grid_points(trajectories, grid_res=grid_res, state_dim=state_dim)
-with torch.no_grad(): grid_points_expanded = model.expand(torch.as_tensor(grid_points, dtype=torch.float32)).cpu().numpy() / z_scale
+with torch.no_grad(): grid_points_expanded = model.expander.expand(torch.as_tensor(grid_points, dtype=torch.float32)).cpu().numpy()
 
 # Order modes by chosen criterion
 sorting_info = {} # scores are unsorted, indices are the order to sort by
@@ -140,7 +134,6 @@ elif order_modes_by == "quality":
         model=model,
         W=W,
         eigvals_analytic=eigvals_analytic,
-        z_scale=z_scale,
         state_bounds=state_bounds
     )
 
@@ -243,7 +236,6 @@ plot_mode_trajectories(
     model, 
     W, 
     eigvals_analytic, 
-    z_scale, 
     sorted_idx_analytic[:n_top_modes], 
     single_trajectory, 
     save_path=os.path.join(save_dir, "mode_trajectories.png")
@@ -253,7 +245,7 @@ plot_mode_trajectories(
 # Visualize mode contributions to state reconstruction
 # --------------------------------------------------
 with torch.no_grad():
-    z_real = model.expand(torch.as_tensor(single_trajectory)).cpu().numpy() / z_scale
+    z_real = model.expander.expand(torch.as_tensor(single_trajectory)).cpu().numpy()
     phi_real_traj = z_real @ W
 plot_mode_contributions_vs_quality(
     V, 
