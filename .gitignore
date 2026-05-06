@@ -12,7 +12,7 @@ sandbox_*
 
 # data
 /data/*
-!/data/sweeped_models/
+!/data/trained_models/
 
 # experiments
 /experiments/figures/*
