@@ -35,12 +35,9 @@ def build_model_from_checkpoint(model_path):
         raise ValueError(f"Unsupported: {model_name}")
 
     if "model_state_dict" in ckpt:
-        if "lift_weights" in ckpt["model_state_dict"]:
-            # Handle old checkpoints with 'lift_weights' key
-            state_dict = ckpt["model_state_dict"]
-            state_dict.pop("lift_weights")
-            model.load_state_dict(state_dict)
-    # model.load_state_dict(ckpt["model_state_dict"])
+        state_dict = ckpt["model_state_dict"]
+        model.load_state_dict(state_dict)
+
     model.eval()
     return model, model_name
 
