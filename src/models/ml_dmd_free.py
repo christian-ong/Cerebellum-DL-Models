@@ -114,57 +114,6 @@ class ML_DMD(nn.Module):
         # ------------------------------------------------
         self.max_abs_z_norm = 1e6
         self.rollout_horizon = 20
-        self.rollout_weight = 0.1
-
-        # ------------------------------------------------
-        # Degree-based lifted loss weighting
-        # ------------------------------------------------
-        # High-degree monomials can dominate the loss.
-        # We therefore downweight them.
-        #
-        # For RBF features, we treat each rbf_j as degree 1.
-        degrees = torch.tensor(
-            [self._feature_degree(name) for name in self.expand_names],
-            dtype=torch.float32,
-        )
-        weights = 1.0 / (degrees + 1.0)
-        self.register_buffer("lift_weights", weights)
-
-    def expand(self, x):
-        return self.expander.expand(x)
-
-    def de_expand(self, x_expanded):
-        return self.expander.de_expand(x_expanded)
-
-    def fit_expander(self, X_train):
-        if self.expansion_type == "rbf":
-            self.expander.fit(X_train)
-            self.expand_names = self.expander.expand_names
-            self.state_indices = self.expander.state_indices
-            self.expanded_dim = self.expander.expanded_dim
-            self.latent_dim = self.expanded_dim
-
-    
-    def _feature_degree(self, name: str) -> int:
-        name = name.strip()
-        if name == "1":
-            return 0
-        if name.startswith("sin(") or name.startswith("cos("):
-            return 1
-
-        if name.startswith("rbf_"):
-            return 1
-
-        parts = name.split("*")
-        deg = 0
-        for part in parts:
-            part = part.strip()
-            if "^" in part:
-                _, power = part.split("^")
-                deg += int(power)
-            else:
-                deg += 1
-        return deg
 
     # ------------------------------------------------
     # Set lifted scaling
@@ -214,7 +163,7 @@ class ML_DMD(nn.Module):
         """
 
         # Lift state into observable space
-        z_raw = self.expand(x)
+        z_raw = self.expander.expand(x)
 
         # Normalize lifted coordinates
         z = torch.clamp(z_raw, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
@@ -235,7 +184,7 @@ class ML_DMD(nn.Module):
         z_next = b_next @ self.Phi.mT
 
         # Recover original state
-        x_next = self.de_expand(z_next)
+        x_next = self.expander.de_expand(z_next)
         return x_next
 
     # ------------------------------------------------
@@ -243,17 +192,17 @@ class ML_DMD(nn.Module):
     # ------------------------------------------------
 
     def compute_loss(self, x, x_next_true, future_x=None):
-        z = self.expand(x)
-        z_next_true = self.expand(x_next_true)
+        z = self.expander.expand(x)
+        z_next_true = self.expander.expand(x_next_true)
 
         z_next_pred = self._advance_z(z)
 
         # 1) Lifted loss
         diff = z_next_pred - z_next_true
-        loss_lift = torch.mean(self.lift_weights * diff**2)
+        loss_lift = torch.mean(diff**2)
 
         # 2) State prediction loss
-        x_next_pred = self.de_expand(z_next_pred)
+        x_next_pred = self.expander.de_expand(z_next_pred)
         loss_state = nn.MSELoss()(x_next_pred, x_next_true)
 
         # 3) Multi-step Rollout Loss
@@ -264,9 +213,9 @@ class ML_DMD(nn.Module):
                 z_curr_pred = z_next_pred 
                 for k in range(1, horizon):
                     z_curr_pred = self._advance_z(z_curr_pred)
-                    z_true_k = self.expand(future_x[:, k, :])
+                    z_true_k = self.expander.expand(future_x[:, k, :])
                     z_true_k = torch.clamp(z_true_k, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
-                    loss_rollout += torch.mean(self.lift_weights * (z_curr_pred - z_true_k)**2)
+                    loss_rollout += torch.mean((z_curr_pred - z_true_k)**2)
                 loss_rollout = loss_rollout / float(horizon - 1)
 
         # 4) Φ conditioning regularization
@@ -276,17 +225,16 @@ class ML_DMD(nn.Module):
         # Total loss
         loss = (
             loss_lift 
-            + 0.1 * loss_state 
-            + self.rollout_weight * loss_rollout 
+            + 0.5 * loss_state 
+            + 0.1 * loss_rollout 
             + 1e-3 * loss_unit_length
         )
 
         loss_dict = {
-            "loss": loss.item(),
-            "loss_lift": loss_lift.item(),
-            "loss_state": loss_state.item(),
+            "lift": loss_lift.item(),
+            "state": loss_state.item(),
             "rollout": loss_rollout.item(),
-            "loss_unit_length": loss_unit_length.item(),
+            "unit": loss_unit_length.item(),
         }
 
         return (loss, loss_dict)

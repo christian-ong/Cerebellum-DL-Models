@@ -11,7 +11,6 @@ def train_onestep(
     epochs=50,
     lr=1e-3,
     weight_decay=1e-6,
-    rollout_loss_weight=0.2,
     log_phi_every=0,
     phi_print_max_dim=12,
 ):
@@ -27,8 +26,8 @@ def train_onestep(
     warmup_epochs = 5
     warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
         optimizer, 
-        start_factor=0.1, # Starts at 1e-3
-        end_factor=1.0,   # Ends at 1e-2
+        start_factor=0.1,
+        end_factor=1.0,
         total_iters=warmup_epochs
     )
 

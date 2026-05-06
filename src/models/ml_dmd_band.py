@@ -39,9 +39,6 @@ class ML_DMD_BAND(ManualExpansion):
         self.rotation_act_tol = 1e-3
         self.rotation_act_scale = 1e-3
 
-        # Orthogonality penalty for Phi (keeps Phi reasonably conditioned)
-        self.phi_orth_weight = 1e-5
-
         # ------------------------------------------------
         # Eigenvector matrix Φ
         # ------------------------------------------------
@@ -61,48 +58,7 @@ class ML_DMD_BAND(ManualExpansion):
         # Buffers and Constraints
         # ------------------------------------------------
         self.max_abs_z_norm = 1e6
-
-        # ------------------------------------------------
-        # Rollout (Multi-step) parameters
-        # ------------------------------------------------
         self.rollout_horizon = 20
-        self.rollout_weight = 0.1
-
-        # ------------------------------------------------
-        # Degree-based lifted loss weighting
-        # ------------------------------------------------
-        degrees = torch.tensor(
-            [self._feature_degree(name) for name in self.expand_names],
-            dtype=torch.float32,
-        )
-        weights = 1.0 / (degrees + 1.0)
-        self.register_buffer("lift_weights", weights)
-
-    def _advance_z(self, z):
-        """Advances the latent state z by one step using the current Phi and Lambda."""
-        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
-        Phi_reg = self.Phi + I_eps
-        
-        b = torch.linalg.solve(Phi_reg, z.T).T
-        b_next = b @ self.get_Lambda().T
-        z_next = b_next @ self.Phi.T
-        
-        return torch.clamp(z_next, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
-    
-    def _feature_degree(self, name: str) -> int:
-        name = name.strip()
-        if name == "1": return 0
-        if name.startswith("sin(") or name.startswith("cos("): return 1
-        parts = name.split("*")
-        deg = 0
-        for part in parts:
-            part = part.strip()
-            if "^" in part:
-                _, power = part.split("^")
-                deg += int(power)
-            else:
-                deg += 1
-        return deg
 
     # ------------------------------------------------
     # Matrix Accessors
@@ -126,11 +82,22 @@ class ML_DMD_BAND(ManualExpansion):
 
     def get_K(self):
         """Returns Physical K."""
-        return self.Phi @ self.get_Lambda() @ torch.linalg.pinv(self.Phi, rcond=1e-6)
+        return self.Phi @ self.get_Lambda() @ self.get_Phi_inv()
 
     def get_eigenvalues(self):
         return torch.linalg.eigvals(self.get_Lambda())
 
+    def _advance_z(self, z):
+        """Advances the latent state z by one step using the current Phi and Lambda."""
+        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
+        Phi_reg = self.Phi + I_eps
+        
+        b = torch.linalg.solve(Phi_reg, z.T).T
+        b_next = b @ self.get_Lambda().T
+        z_next = b_next @ self.Phi.T
+        
+        return torch.clamp(z_next, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
+    
     # ------------------------------------------------
     # Forward pass
     # ------------------------------------------------
@@ -173,7 +140,7 @@ class ML_DMD_BAND(ManualExpansion):
         # 1. One-Step Dynamics
         z_next_pred = self._advance_z(z)
         
-        loss_lift = torch.mean(self.lift_weights * (z_next_pred - z_next_true)**2)
+        loss_lift = torch.mean((z_next_pred - z_next_true)**2)
         x_next_pred = self.de_expand(z_next_pred)
         loss_state = nn.MSELoss()(x_next_pred, x_next_true)
 
@@ -192,7 +159,7 @@ class ML_DMD_BAND(ManualExpansion):
                     z_true_k = self.expand(future_x[:, k, :])
                     z_true_k = torch.clamp(z_true_k, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
                     
-                    loss_rollout += torch.mean(self.lift_weights * (z_curr_pred - z_true_k)**2)
+                    loss_rollout += torch.mean((z_curr_pred - z_true_k)**2)
                 
                 loss_rollout = loss_rollout / float(horizon - 1)
 
@@ -219,62 +186,32 @@ class ML_DMD_BAND(ManualExpansion):
         dist_jordan_upper = c**2 + (d1 - d2)**2
         dist_jordan_lower = b**2 + (d1 - d2)**2
 
-        # Group the non-oscillatory (real/nilpotent) manifolds
-        dist_real = torch.min(
-            torch.stack([dist_uncoupled, dist_jordan_upper, dist_jordan_lower], dim=0), 
+        # FIX: Let the network naturally fall into the closest structural basin
+        dist_all = torch.min(
+            torch.stack([dist_uncoupled, dist_rot, dist_jordan_upper, dist_jordan_lower], dim=0), 
             dim=0
         ).values
+        loss_manifold = torch.mean(dist_all)
 
-        # PHYSICS ROUTING: 
-        # If b * c < 0, the system learned an oscillation during warm-up. Force a Rotation.
-        # If b * c >= 0, the system learned a real dynamic. Force a Jordan or Diagonal block.
-        is_oscillatory = (b * c < 0).float()
-
-        # Dynamically apply the correct structural constraint
-        loss_manifold = torch.mean(
-            is_oscillatory * dist_rot + (1.0 - is_oscillatory) * dist_real
-        )
-
-        # Strictly penalize b and c having the same sign (forces them toward 0 to become Jordan)
         loss_same_sign = torch.mean(torch.relu(b * c))
-
-        # Sparsity continuously pushes unused off-diagonals to 0
         loss_sparsity = torch.mean(torch.abs(b)) + torch.mean(torch.abs(c))
 
-        # Phi orthogonality (off-diagonal of Phi^T Phi)
-        phi_phys = self.get_Phi()
         G = phi_phys.T @ phi_phys
         I = torch.eye(G.shape[0], device=G.device, dtype=G.dtype)
         loss_phi_orth = torch.norm(G - I, p='fro') ** 2 / float(G.shape[0] ** 2)
 
         # --------------------------------------------------
-        # Structural Warm-up Schedule
-        # --------------------------------------------------
-        # Safely get the epoch (defaults to a high number during evaluation)
-        current_epoch = getattr(self, "current_epoch", 100)
-        
-        ramp_start = 20
-        ramp_end = 40
-        
-        if current_epoch < ramp_start:
-            struct_weight = 0.0
-        elif current_epoch >= ramp_end:
-            struct_weight = 1.0
-        else:
-            struct_weight = (current_epoch - ramp_start) / float(ramp_end - ramp_start)
-
-        # --------------------------------------------------
-        # 5. Total Loss Compilation
+        # Total Loss Compilation (Using your exact requested weights)
         # --------------------------------------------------
         loss_total = (
             loss_lift
             + 5.0 * loss_state          
-            + self.rollout_weight * loss_rollout 
+            + 1.0 * loss_rollout 
             + 0.01 * loss_unit_length   
-            + (10.0 * struct_weight) * loss_manifold      
-            + (10.0 * struct_weight) * loss_same_sign     # <-- Bump this to 10.0 to strictly forbid same-sign off-diagonals 
-            + 1e-3 * loss_sparsity                        # <-- Bump this from 1e-5 to 1e-3 to aggressively wipe out the 0.001 noise
-            + float(self.phi_orth_weight) * loss_phi_orth
+            + 5.0 * loss_manifold      
+            + 5.0 * loss_same_sign
+            + 1e-5 * loss_sparsity
+            + 1e-5 * loss_phi_orth
         )
         
         loss_dict = {

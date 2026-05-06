@@ -228,20 +228,14 @@ def main():
     parser.add_argument(
         "--rollout_horizon",
         type=int,
-        default=-1,
-        help="Rollout supervision horizon. -1 uses model defaults (ml_dmd_band -> 20, else 0).",
-    )
-    parser.add_argument(
-        "--rollout_loss_weight",
-        type=float,
-        default=-1.0,
-        help="Weight of rollout supervision term. -1 uses model defaults (ml_dmd_band -> 1.0, else 0.2).",
+        default=20,
+        help="Rollout supervision horizon for loss computation.",
     )
     parser.add_argument(
         "--log_phi_every",
         type=int,
-        default=-1,
-        help="Print get_Phi() every N epochs. -1 uses model defaults (ml_dmd_band -> 1, else 0).",
+        default=1,
+        help="Print get_Phi() every N epochs.",
     )
     parser.add_argument(
         "--phi_print_max_dim",
@@ -343,11 +337,6 @@ def main():
         rollout_horizon = args.rollout_horizon
     else:
         rollout_horizon = 20 if is_ml_model else 0
-
-    if args.rollout_loss_weight >= 0.0:
-        rollout_loss_weight = args.rollout_loss_weight
-    else:
-        rollout_loss_weight = 0.1 if is_ml_model else 0.0
 
     if args.log_phi_every >= 0:
         log_phi_every = args.log_phi_every
@@ -624,17 +613,6 @@ def main():
         print(f"Expansion degree: {args.expansion_degree}")
     if hasattr(model, "expansion_type"):
         print(f"Expand names: {model.expand_names}")
-
-
-    # --------------------------------------------------
-    # Compute lifted scaling (only for expansion models)
-    # --------------------------------------------------
-    if args.expansion_type == "rbf" and hasattr(model, "fit_expander"):
-        X_train_tensor = torch.as_tensor(X, dtype=torch.float32, device=device)
-        if normalize_state_for_ml and hasattr(model, "scale_state"):
-            X_train_tensor = model.scale_state(X_train_tensor)
-        model.fit_expander(X_train_tensor)
-        
     
     # Train
     model, (train_losses, batch_val_losses, epoch_val_losses, loss_components_val), best_checkpoint = train_onestep(
@@ -645,7 +623,6 @@ def main():
         epochs=args.epochs,
         lr=args.lr,
         weight_decay=args.weight_decay,
-        rollout_loss_weight=rollout_loss_weight,
         log_phi_every=log_phi_every,
         phi_print_max_dim=args.phi_print_max_dim,
     )
