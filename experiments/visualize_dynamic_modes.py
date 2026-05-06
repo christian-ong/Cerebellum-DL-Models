@@ -105,7 +105,7 @@ plot_transition_matrices(
 # --------------------------------------------------
 # Create a grid covering the state space and lift to latent space
 state_bounds, grid_points = get_data_bounds_and_grid_points(trajectories, grid_res=grid_res, state_dim=state_dim)
-with torch.no_grad(): grid_points_expanded = model.expander.expand(torch.as_tensor(grid_points, dtype=torch.float32)).cpu().numpy()
+with torch.no_grad(): grid_points_expanded = safe_expand(model, torch.as_tensor(grid_points, dtype=torch.float32)).cpu().numpy()
 
 # Order modes by chosen criterion
 sorting_info = {} # scores are unsorted, indices are the order to sort by
@@ -245,7 +245,7 @@ plot_mode_trajectories(
 # Visualize mode contributions to state reconstruction
 # --------------------------------------------------
 with torch.no_grad():
-    z_real = model.expander.expand(torch.as_tensor(single_trajectory)).cpu().numpy()
+    z_real = safe_expand(model, torch.as_tensor(single_trajectory)).cpu().numpy()
     phi_real_traj = z_real @ W
 plot_mode_contributions_vs_quality(
     V, 

@@ -11,6 +11,32 @@ from src.models.ml_linear_dynamics import ML_LinearDynamics
 
 
 
+def safe_expand(model, x):
+    """Safe expand wrapper: uses `model.expander.expand` if available, otherwise `model.expand`.
+    Accepts numpy arrays or torch tensors and returns a torch Tensor.
+    """
+    t = x if torch.is_tensor(x) else torch.as_tensor(x, dtype=torch.float32)
+    if hasattr(model, "expander") and hasattr(model.expander, "expand"):
+        return model.expander.expand(t)
+    if hasattr(model, "expand"):
+        return model.expand(t)
+    raise AttributeError("Model does not expose an expander or expand() method.")
+
+
+def safe_de_expand(model, x):
+    """Safe de-expand wrapper: uses `model.expander.de_expand` if available, otherwise `model.de_expand`.
+    Returns a torch Tensor.
+    """
+    t = x if torch.is_tensor(x) else torch.as_tensor(x, dtype=torch.float32)
+    if hasattr(model, "expander") and hasattr(model.expander, "de_expand"):
+        return model.expander.de_expand(t)
+    if hasattr(model, "de_expand"):
+        return model.de_expand(t)
+    if hasattr(model, "deexpand"):
+        return model.deexpand(t)
+    raise AttributeError("Model does not expose a de_expander or de_expand() method.")
+
+
 def build_model_from_checkpoint(model_path):
     ckpt = torch.load(model_path, map_location="cpu")
     model_name = ckpt.get("model", "ml_dmd")
@@ -765,7 +791,7 @@ def modes_by_quality(
 
         traj = np.asarray(traj, dtype=np.float32)
         with torch.no_grad():
-            z_roll = model.expander.expand(torch.tensor(traj)).cpu().numpy()
+            z_roll = safe_expand(model, torch.tensor(traj)).cpu().numpy()
             phi_roll = z_roll @ W
 
         lhs = phi_roll[1:, :] 
@@ -791,7 +817,7 @@ def modes_by_quality(
     pts = np.column_stack(grid_cols)
     
     with torch.no_grad():
-        z_grid = model.expander.expand(torch.as_tensor(pts, dtype=torch.float32)).cpu().numpy()
+        z_grid = safe_expand(model, torch.as_tensor(pts, dtype=torch.float32)).cpu().numpy()
         phi_grid = z_grid @ W
     
     spatial_std = np.std(np.real(phi_grid), axis=0)
@@ -913,16 +939,16 @@ def plot_mode_trajectories(model, W, eigvals, best_ids, real_traj, save_path=Non
     t = np.arange(n_steps)
     
     with torch.no_grad():
-        z_real = model.expander.expand(torch.as_tensor(real_traj, dtype=torch.float32)).cpu().numpy()
+        z_real = safe_expand(model, torch.as_tensor(real_traj, dtype=torch.float32)).cpu().numpy()
         phi_real_traj = z_real @ W
     
     xt = torch.as_tensor(real_traj[0:1, :], dtype=torch.float32)
     phi_nn_traj = []
     with torch.no_grad():
         for _ in range(n_steps):
-            z_t = model.expander.expand(xt).cpu().numpy()
+            z_t = safe_expand(model, xt).cpu().numpy()
             phi_nn_traj.append(z_t @ W)
-            xt = model.expander.expand(xt)
+            xt = safe_expand(model, xt)
     phi_nn_traj = np.array(phi_nn_traj).squeeze()
     
     fig, axes = plt.subplots(len(best_ids), 1, figsize=(12, 2.5 * len(best_ids)), sharex=True)
