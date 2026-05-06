@@ -68,38 +68,6 @@ def train_onestep(
             "compute_loss must return a Tensor, a (loss,) tuple, or a (loss, loss_dict) tuple"
         )
 
-    def compute_rollout_loss(model, x0, future_targets):
-        """Accumulate a short-horizon rollout loss when sequences are available.
-
-        The model is still trained on the one-step target, but this term nudges the
-        learned dynamics to stay consistent over several recursive predictions.
-        """
-        if future_targets is None or rollout_loss_weight <= 0.0:
-            return None
-
-        # Ensure rollout targets match the model/input device. This guards
-        # against mixed-device validation batches on GPU jobs.
-        if future_targets.device != x0.device:
-            future_targets = future_targets.to(x0.device, non_blocking=True)
-
-        x_pred = x0
-        rollout_loss = 0.0
-
-        horizon = future_targets.shape[1]
-        for step in range(horizon):
-            x_pred = model(x_pred)
-            rollout_loss = rollout_loss + loss_fn(x_pred, future_targets[:, step, :])
-
-        return rollout_loss / horizon
-
-    def model_handles_rollout(model):
-        """Return True when the model already folds rollout supervision into compute_loss.
-
-        Some model classes, such as ml_dmd_band, own their rollout term internally.
-        In those cases the trainer must not add a second rollout penalty on top.
-        """
-        return hasattr(model, "rollout_weight") and getattr(model, "rollout_weight") > 0.0
-
     def maybe_log_matrices(epoch_idx):
         """Print physical Phi and Lambda during training when available.
 
@@ -177,7 +145,7 @@ def train_onestep(
     best_val_loss = float("inf")
 
     for epoch in range(epochs):
-
+        model.current_epoch = epoch
         model.train()
 
         train_loss = 0.0
@@ -219,14 +187,6 @@ def train_onestep(
                 loss = loss_fn(y_hat, y)
                 # Baselines that do not expose component losses only report state loss.
                 loss_dict = {"state": loss.item()}
-
-            rollout_loss = None
-            if not model_handles_rollout(model):
-                rollout_loss = compute_rollout_loss(model, x, future_targets)
-                if rollout_loss is not None:
-                    loss = loss + rollout_loss_weight * rollout_loss
-                    loss_dict = dict(loss_dict)
-                    loss_dict["rollout"] = rollout_loss.item()
 
             # -------------------
             # Backprop
@@ -281,12 +241,6 @@ def train_onestep(
                         y_val_hat = model(x_val)
                         val_loss = loss_fn(y_val_hat, y_val)
 
-                    val_rollout_loss = None
-                    if not model_handles_rollout(model):
-                        val_rollout_loss = compute_rollout_loss(model, x_val, future_val_targets)
-                        if val_rollout_loss is not None:
-                            val_loss = val_loss + rollout_loss_weight * val_rollout_loss
-
                     batch_val_losses.append(val_loss.item())
 
                 model.train()
@@ -297,15 +251,13 @@ def train_onestep(
 
         preferred_order = [
             "state",
-            "K_sp",
-            "phi_sp",
+            "lift",       # Added lift to track the base Koopman loss
+            "rollout",    # Added rollout
             "phi_ortho",
             "unit",
-            "lift_ms",
-            "lam_asy",
-            "lam_bal",
+            "manifold",   # Replaced old lam_* keys with the new structural keys
+            "same_sign",
             "lam_sp",
-            "couple",
         ]
         ordered_comp_keys = [k for k in preferred_order if k in avg_comps]
         ordered_comp_keys.extend(sorted(k for k in avg_comps if k not in preferred_order))
@@ -343,12 +295,6 @@ def train_onestep(
                     else:
                         y_hat = model(xv)
                         batch_l = loss_fn(y_hat, yv)
-
-                    val_rollout_loss = None
-                    if not model_handles_rollout(model):
-                        val_rollout_loss = compute_rollout_loss(model, xv, future_val_targets)
-                        if val_rollout_loss is not None:
-                            batch_l = batch_l + rollout_loss_weight * val_rollout_loss
 
                     batch_size = xv.size(0)
                     val_loss_acc += batch_l.item() * batch_size # Accumulate batch_l

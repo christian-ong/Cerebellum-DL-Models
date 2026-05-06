@@ -39,8 +39,8 @@ class ML_DMD_BAND(ManualExpansion):
         self.rotation_act_tol = 1e-3
         self.rotation_act_scale = 1e-3
 
-        # Orthogonality penalty weight for Phi (keeps Phi well-conditioned)
-        self.phi_orth_weight = 1e-2
+        # Orthogonality penalty for Phi (keeps Phi reasonably conditioned)
+        self.phi_orth_weight = 1e-5
 
         # ------------------------------------------------
         # Eigenvector matrix Φ
@@ -60,9 +60,6 @@ class ML_DMD_BAND(ManualExpansion):
         # ------------------------------------------------
         # Buffers and Constraints
         # ------------------------------------------------
-        self.register_buffer("x_mean", torch.zeros(state_dim))
-        self.register_buffer("x_scale", torch.ones(state_dim))
-        self.register_buffer("z_scale", torch.ones(self.latent_dim)) # <--- Add this back
         self.max_abs_z_norm = 1e6
 
         # ------------------------------------------------
@@ -80,20 +77,6 @@ class ML_DMD_BAND(ManualExpansion):
         )
         weights = 1.0 / (degrees + 1.0)
         self.register_buffer("lift_weights", weights)
-        
-    def set_state_scale(self, x_mean, x_scale):
-        if not torch.is_tensor(x_mean):
-            x_mean = torch.tensor(x_mean, dtype=torch.float32)
-        if not torch.is_tensor(x_scale):
-            x_scale = torch.tensor(x_scale, dtype=torch.float32)
-
-        self.x_mean.copy_(x_mean.to(self.x_mean.device))
-        self.x_scale.copy_(torch.clamp(x_scale.to(self.x_scale.device), min=1e-6))
-    
-    def set_z_scale(self, z_scale):
-        if not torch.is_tensor(z_scale):
-            z_scale = torch.tensor(z_scale, dtype=torch.float32)
-        self.z_scale.copy_(torch.clamp(z_scale.to(self.z_scale.device), min=1e-6))
 
     def _advance_z(self, z):
         """Advances the latent state z by one step using the current Phi and Lambda."""
@@ -105,12 +88,6 @@ class ML_DMD_BAND(ManualExpansion):
         z_next = b_next @ self.Phi.T
         
         return torch.clamp(z_next, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
-    
-    def scale_state(self, x):
-        return (x - self.x_mean) / self.x_scale    
-    
-    def unscale_state(self, x):
-        return x * self.x_scale + self.x_mean
     
     def _feature_degree(self, name: str) -> int:
         name = name.strip()
@@ -132,13 +109,12 @@ class ML_DMD_BAND(ManualExpansion):
     # ------------------------------------------------
 
     def get_Phi(self):
-        """Returns descaled Physical Phi for visualization and analysis."""
-        return torch.diag(self.z_scale) @ self.Phi
+        """Returns Physical Phi for visualization and analysis."""
+        return self.Phi
 
     def get_Phi_inv(self):
-        """Returns descaled Physical Phi_inv."""
-        # Phi_inv_phys = Phi_inv_scaled @ S_inv
-        return torch.linalg.pinv(self.Phi, rcond=1e-6) @ torch.diag(1.0 / (self.z_scale + 1e-6))
+        """Returns Physical Phi_inv."""
+        return torch.linalg.pinv(self.Phi, rcond=1e-6)
 
     def get_Lambda(self):
         Lambda = (
@@ -149,12 +125,8 @@ class ML_DMD_BAND(ManualExpansion):
         return Lambda
 
     def get_K(self):
-        """Returns descaled Physical K."""
-        # K_phys = S @ K_scaled @ S_inv
-        K_scaled = self.Phi @ self.get_Lambda() @ torch.linalg.pinv(self.Phi, rcond=1e-6)
-        S = torch.diag(self.z_scale)
-        S_inv = torch.diag(1.0 / (self.z_scale + 1e-6))
-        return S @ K_scaled @ S_inv
+        """Returns Physical K."""
+        return self.Phi @ self.get_Lambda() @ torch.linalg.pinv(self.Phi, rcond=1e-6)
 
     def get_eigenvalues(self):
         return torch.linalg.eigvals(self.get_Lambda())
@@ -164,8 +136,8 @@ class ML_DMD_BAND(ManualExpansion):
     # ------------------------------------------------
 
     def forward(self, x):
-        x_scaled = self.scale_state(x)
-        z = self.expand(x_scaled)
+        # Directly expand raw state
+        z = self.expand(x)
         z = torch.clamp(z, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
 
         # Reg for solve
@@ -182,9 +154,8 @@ class ML_DMD_BAND(ManualExpansion):
         # Reconstruct
         z_next = b_next @ self.Phi.T
 
-        # Back to state dims
-        x_next_scaled = self.de_expand(z_next)
-        x_next = self.unscale_state(x_next_scaled)
+        # Back to state dims (no unscaling needed)
+        x_next = self.de_expand(z_next)
         return x_next
 
     # ------------------------------------------------
@@ -192,28 +163,21 @@ class ML_DMD_BAND(ManualExpansion):
     # ------------------------------------------------
 
     def compute_loss(self, x, x_next_true, future_x=None):
-        # Scale inputs
-        x_scaled = self.scale_state(x)
-        x_next_true_scaled = self.scale_state(x_next_true)
-
-        z = self.expand(x_scaled)
-        z_next_true = self.expand(x_next_true_scaled)
+        # Expand raw inputs directly
+        z = self.expand(x)
+        z_next_true = self.expand(x_next_true)
         
         z = torch.clamp(z, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
         z_next_true = torch.clamp(z_next_true, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
 
-        # --------------------------------------------------
         # 1. One-Step Dynamics
-        # --------------------------------------------------
         z_next_pred = self._advance_z(z)
         
-        loss_lift = torch.mean((z_next_pred - z_next_true)**2)
-        x_next_pred_scaled = self.de_expand(z_next_pred)
-        loss_state = nn.MSELoss()(x_next_pred_scaled, x_next_true_scaled)
+        loss_lift = torch.mean(self.lift_weights * (z_next_pred - z_next_true)**2)
+        x_next_pred = self.de_expand(z_next_pred)
+        loss_state = nn.MSELoss()(x_next_pred, x_next_true)
 
-        # --------------------------------------------------
         # 2. Multi-step Rollout Loss
-        # --------------------------------------------------
         loss_rollout = torch.tensor(0.0, device=x.device)
         
         if future_x is not None and future_x.ndim == 3:
@@ -224,10 +188,11 @@ class ML_DMD_BAND(ManualExpansion):
                 
                 for k in range(1, horizon):
                     z_curr_pred = self._advance_z(z_curr_pred)
-                    z_true_k = self.expand(self.scale_state(future_x[:, k, :]))
+                    # Remove self.scale_state() here
+                    z_true_k = self.expand(future_x[:, k, :])
                     z_true_k = torch.clamp(z_true_k, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
                     
-                    loss_rollout += torch.mean((z_curr_pred - z_true_k)**2)
+                    loss_rollout += torch.mean(self.lift_weights * (z_curr_pred - z_true_k)**2)
                 
                 loss_rollout = loss_rollout / float(horizon - 1)
 
@@ -241,21 +206,40 @@ class ML_DMD_BAND(ManualExpansion):
         loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
 
         # --------------------------------------------------
-        # 4. Lambda Regularization (Universal Form)
+        # 4. Lambda Regularization (Physics-Routed Manifold)
         # --------------------------------------------------
-        # Smooth activation for when rotation-block penalties should apply.
-        # This avoids hard gating when one off-diagonal is tiny.
-        tol = float(self.rotation_act_tol)
-        scale = float(self.rotation_act_scale)
-        act = torch.sigmoid((torch.abs(self.eig_super) + torch.abs(self.eig_sub) - tol) / (scale + 1e-12))
+        b = self.eig_super
+        c = self.eig_sub
+        d1 = self.eig_diag[:-1]
+        d2 = self.eig_diag[1:]
 
-        loss_antisym = torch.mean(act * (self.eig_super + self.eig_sub) ** 2)
+        # Calculate raw mathematical distances to valid states
+        dist_uncoupled = b**2 + c**2
+        dist_rot = (b + c)**2 + (d1 - d2)**2
+        dist_jordan_upper = c**2 + (d1 - d2)**2
+        dist_jordan_lower = b**2 + (d1 - d2)**2
 
-        diag_diff = self.eig_diag[:-1] - self.eig_diag[1:]
-        loss_diag_match = torch.mean(act * diag_diff ** 2)
+        # Group the non-oscillatory (real/nilpotent) manifolds
+        dist_real = torch.min(
+            torch.stack([dist_uncoupled, dist_jordan_upper, dist_jordan_lower], dim=0), 
+            dim=0
+        ).values
+
+        # PHYSICS ROUTING: 
+        # If b * c < 0, the system learned an oscillation during warm-up. Force a Rotation.
+        # If b * c >= 0, the system learned a real dynamic. Force a Jordan or Diagonal block.
+        is_oscillatory = (b * c < 0).float()
+
+        # Dynamically apply the correct structural constraint
+        loss_manifold = torch.mean(
+            is_oscillatory * dist_rot + (1.0 - is_oscillatory) * dist_real
+        )
+
+        # Strictly penalize b and c having the same sign (forces them toward 0 to become Jordan)
+        loss_same_sign = torch.mean(torch.relu(b * c))
 
         # Sparsity continuously pushes unused off-diagonals to 0
-        loss_sparsity = torch.mean(torch.abs(self.eig_sub)) + torch.mean(torch.abs(self.eig_super))
+        loss_sparsity = torch.mean(torch.abs(b)) + torch.mean(torch.abs(c))
 
         # Phi orthogonality (off-diagonal of Phi^T Phi)
         phi_phys = self.get_Phi()
@@ -264,16 +248,32 @@ class ML_DMD_BAND(ManualExpansion):
         loss_phi_orth = torch.norm(G - I, p='fro') ** 2 / float(G.shape[0] ** 2)
 
         # --------------------------------------------------
+        # Structural Warm-up Schedule
+        # --------------------------------------------------
+        # Safely get the epoch (defaults to a high number during evaluation)
+        current_epoch = getattr(self, "current_epoch", 100)
+        
+        ramp_start = 20
+        ramp_end = 40
+        
+        if current_epoch < ramp_start:
+            struct_weight = 0.0
+        elif current_epoch >= ramp_end:
+            struct_weight = 1.0
+        else:
+            struct_weight = (current_epoch - ramp_start) / float(ramp_end - ramp_start)
+
+        # --------------------------------------------------
         # 5. Total Loss Compilation
         # --------------------------------------------------
         loss_total = (
             loss_lift
             + 5.0 * loss_state          
             + self.rollout_weight * loss_rollout 
-            + 0.01 * loss_unit_length   # Bounding the physical Phi
-            + 5.0 * loss_antisym        # Smoothly gated rotation symmetry penalty
-            + 5.0 * loss_diag_match     # Smoothly gated diagonal-matching penalty
-            + 1e-6 * loss_sparsity
+            + 0.01 * loss_unit_length   
+            + (10.0 * struct_weight) * loss_manifold      
+            + (10.0 * struct_weight) * loss_same_sign     # <-- Bump this to 10.0 to strictly forbid same-sign off-diagonals 
+            + 1e-3 * loss_sparsity                        # <-- Bump this from 1e-5 to 1e-3 to aggressively wipe out the 0.001 noise
             + float(self.phi_orth_weight) * loss_phi_orth
         )
         
@@ -282,14 +282,13 @@ class ML_DMD_BAND(ManualExpansion):
             "lift": loss_lift.item(),
             "rollout": loss_rollout.item(),
             "unit": loss_unit_length.item(),
-            "lam_asy": loss_antisym.item(),
-            "lam_bal": loss_diag_match.item(),
+            "manifold": loss_manifold.item(),
+            "same_sign": loss_same_sign.item(),
             "lam_sp": loss_sparsity.item(),
             "phi_orth": loss_phi_orth.item(),
-            "act_mean": act.mean().item(),
         }
         
-        return loss_total, loss_dict
+        return (loss_total, loss_dict)
 
     def rollout(self, x0, steps):
         if not torch.is_tensor(x0):

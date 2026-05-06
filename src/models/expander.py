@@ -173,12 +173,8 @@ class ManualExpansion(nn.Module):
                     f"({len(basis_list)}) for system '{system}'"
                 )
 
+            # Strictly use the specific basis. Ignore the `bias` argument entirely.
             selected_basis = basis_list[:expansion_degree]
-
-            # For specific bases, respect bias by explicitly adding a constant term
-            # without consuming one of the selected system-specific terms.
-            if bias and "1" not in selected_basis:
-                selected_basis = ["1"] + selected_basis
 
             self.expand_names = selected_basis
             self.expanded_basis = selected_basis
