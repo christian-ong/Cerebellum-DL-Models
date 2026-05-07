@@ -10,7 +10,8 @@ Global options (defaults):
         dmd_baseline,
         regression_dmd,
         ml_lineardynamics,
-        ml_dmd,
+        ml_dmd_free,
+        ml_dmd_band,
         sindy_baseline}
     --data_path data/trajectories/{linear|nonlinear}/{system}
     --model_path data/models/{model}/{system}/{run_name}/model.{npz|pt}

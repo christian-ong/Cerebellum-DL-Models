@@ -5,15 +5,41 @@ import sympy
 from scipy.linalg import expm
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
-from src.models.ml_dmd_free import ML_DMD
+from src.models.ml_dmd_free import ML_DMD_FREE
 from src.models.ml_dmd_band import ML_DMD_BAND
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 
 
 
+def safe_expand(model, x):
+    """Safe expand wrapper: uses `model.expander.expand` if available, otherwise `model.expand`.
+    Accepts numpy arrays or torch tensors and returns a torch Tensor.
+    """
+    t = x if torch.is_tensor(x) else torch.as_tensor(x, dtype=torch.float32)
+    if hasattr(model, "expander") and hasattr(model.expander, "expand"):
+        return model.expander.expand(t)
+    if hasattr(model, "expand"):
+        return model.expand(t)
+    raise AttributeError("Model does not expose an expander or expand() method.")
+
+
+def safe_de_expand(model, x):
+    """Safe de-expand wrapper: uses `model.expander.de_expand` if available, otherwise `model.de_expand`.
+    Returns a torch Tensor.
+    """
+    t = x if torch.is_tensor(x) else torch.as_tensor(x, dtype=torch.float32)
+    if hasattr(model, "expander") and hasattr(model.expander, "de_expand"):
+        return model.expander.de_expand(t)
+    if hasattr(model, "de_expand"):
+        return model.de_expand(t)
+    if hasattr(model, "deexpand"):
+        return model.deexpand(t)
+    raise AttributeError("Model does not expose a de_expander or de_expand() method.")
+
+
 def build_model_from_checkpoint(model_path):
     ckpt = torch.load(model_path, map_location="cpu")
-    model_name = ckpt.get("model", "ml_dmd")
+    model_name = ckpt.get("model", "ml_dmd_free")
     train_args = ckpt["train_args"]
     
     kwargs = {
@@ -25,8 +51,8 @@ def build_model_from_checkpoint(model_path):
         "system": ckpt["system"],
     }
 
-    if model_name == "ml_dmd":
-        model = ML_DMD(**kwargs)
+    if model_name == "ml_dmd_free":
+        model = ML_DMD_FREE(**kwargs)
     elif model_name == "ml_dmd_band":
         model = ML_DMD_BAND(**kwargs)
     elif model_name == "ml_lineardynamics":
@@ -739,7 +765,6 @@ def modes_by_quality(
     model, 
     W, 
     eigvals_analytic, 
-    z_scale, 
     state_bounds, 
     n_modes_to_keep=8
     ):
@@ -765,7 +790,7 @@ def modes_by_quality(
 
         traj = np.asarray(traj, dtype=np.float32)
         with torch.no_grad():
-            z_roll = model.expand(torch.tensor(traj)).cpu().numpy() / z_scale
+            z_roll = safe_expand(model, torch.tensor(traj)).cpu().numpy()
             phi_roll = z_roll @ W
 
         lhs = phi_roll[1:, :] 
@@ -791,7 +816,7 @@ def modes_by_quality(
     pts = np.column_stack(grid_cols)
     
     with torch.no_grad():
-        z_grid = model.expand(torch.as_tensor(pts, dtype=torch.float32)).cpu().numpy() / z_scale
+        z_grid = safe_expand(model, torch.as_tensor(pts, dtype=torch.float32)).cpu().numpy()
         phi_grid = z_grid @ W
     
     spatial_std = np.std(np.real(phi_grid), axis=0)
@@ -953,7 +978,8 @@ def plot_mode_trajectories(model, Phi, Lambda, real_traj, save_path=None):
 
     # Define data
     real_traj_flattened = real_traj.reshape(-1, state_dim)
-    expanded_traj_flattened = model.expand(torch.tensor(real_traj_flattened, dtype=torch.float32)).cpu().numpy()
+    real_traj_flattened = torch.as_tensor(real_traj_flattened, dtype=torch.float32)
+    expanded_traj_flattened = safe_expand(model, real_traj_flattened).cpu().numpy()
     expanded_traj = expanded_traj_flattened.reshape(n_trajs, -1, lifted_dim)
     expanded_init_conditions = expanded_traj[::real_traj.shape[1], :] # take the first time step of each trajectory
 

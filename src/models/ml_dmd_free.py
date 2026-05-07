@@ -3,45 +3,7 @@ import torch.nn as nn
 
 from src.models.expander import build_expander
 
-class ML_DMD(nn.Module):
-    """
-    Manual expansion + learned Koopman eigendecomposition.
-
-    Instead of learning the lifted linear operator K directly, we learn
-
-        K = Phi Λ Phi^{-1}
-
-    but we NEVER explicitly construct K.
-
-    The lifted dynamics are applied as
-
-        z_{t+1} = Phi Λ Phi^{-1} z_t
-
-    which corresponds to:
-
-        z_norm -> modal coordinates -> modal evolution -> lifted coordinates
-
-    Pipeline:
-
-        x  --standardize-->  x_scaled
-        x_scaled --expand-->  z
-        z  --scale-->   z_norm
-        z_norm --Phi^{-1}--> modal coordinates b
-        b --Lambda--> modal_next
-        modal_next --Phi--> z_norm_next
-        z_norm_next --descale--> z_next
-        z_next --de_expand--> x_next_scaled
-        x_next_scaled --unscale--> x_next
-
-    Important design choices
-    ------------------------
-    • Polynomial / manual basis expansion
-    • Fixed feature normalization (z_scale)
-    • Degree-weighted lifted loss
-    • Regularization for Phi conditioning
-    • Eigenvalue stability regularization
-    """
-
+class ML_DMD_FREE(nn.Module):
     def __init__(
         self,
         state_dim=2,
@@ -164,10 +126,7 @@ class ML_DMD(nn.Module):
 
         # Lift state into observable space
         z_raw = self.expander.expand(x)
-
-        # Normalize lifted coordinates
         z = torch.clamp(z_raw, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
-
         I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
         Phi_reg = self.Phi + I_eps
         cond_number = torch.linalg.cond(self.Phi)
@@ -244,7 +203,6 @@ class ML_DMD(nn.Module):
     # ------------------------------------------------
 
     def rollout(self, x0, steps):
-
         if not torch.is_tensor(x0):
             x0 = torch.tensor(
                 x0,
@@ -258,9 +216,15 @@ class ML_DMD(nn.Module):
             x = x0
 
         traj = [x.squeeze(0)]
+        
+        # 1. Expand the state to latent space exactly ONCE
+        z = self.expander.expand(x)
+        z = torch.clamp(z, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
 
+        # 2. Rollout completely in the latent space
         for _ in range(steps):
-            x = self.forward(x)
-            traj.append(x.squeeze(0))
+            z = self._advance_z(z)               # Step linearly forward!
+            x_next = self.expander.de_expand(z)           # Peek down to grab the physical state
+            traj.append(x_next.squeeze(0))
 
         return torch.stack(traj)

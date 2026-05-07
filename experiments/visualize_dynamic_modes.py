@@ -48,12 +48,6 @@ else:
 
 model, model_type = build_model_from_checkpoint(model_path)
 
-# NEW: Handle the removed z_scale gracefully
-if hasattr(model, "z_scale"):
-    z_scale = model.z_scale.detach().cpu().numpy()
-else:
-    z_scale = np.ones(model.latent_dim) # Fallback for pure unscaled models
-
 Phi_model, Lambda_model, Lambda_model_eig, V, W, K = get_koopman_eigensystem(model)
 num_modes = Lambda_model.shape[0]
 n_top_modes = min(n_top_modes, num_modes)
@@ -112,7 +106,7 @@ plot_transition_matrices(
 # --------------------------------------------------
 # Create a grid covering the state space and lift to latent space
 state_bounds, grid_points = get_data_bounds_and_grid_points(trajectories, grid_res=grid_res, state_dim=state_dim)
-with torch.no_grad(): grid_points_expanded = model.expand(torch.as_tensor(grid_points, dtype=torch.float32)).cpu().numpy() / z_scale
+with torch.no_grad(): grid_points_expanded = safe_expand(model, torch.as_tensor(grid_points, dtype=torch.float32)).cpu().numpy()
 
 # Order modes by chosen criterion
 sorting_info = {} # scores are unsorted, indices are the order to sort by
@@ -141,7 +135,6 @@ elif order_modes_by == "quality":
         model=model,
         W=W,
         eigvals_analytic=eigvals_analytic,
-        z_scale=z_scale,
         state_bounds=state_bounds
     )
 
@@ -257,8 +250,8 @@ os._exit(0)
 # Visualize mode contributions to state reconstruction
 # --------------------------------------------------
 with torch.no_grad():
-    single_trajectory = trajectories[:,0,:] # shape (T, state_dim)
-    z_real = model.expand(torch.as_tensor(single_trajectory)).cpu().numpy() / z_scale
+    single_trajectory = torch.as_tensor(trajectories[:,0,:]).cpu().numpy()
+    z_real = safe_expand(model, single_trajectory)
     phi_real_traj = z_real @ W
 plot_mode_contributions_vs_quality(
     V, 

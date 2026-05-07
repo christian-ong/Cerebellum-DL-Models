@@ -5,7 +5,7 @@ This script evaluates a trained model by plotting the model's rollout prediction
 Run commands
 
 Standard
-    python -m experiments.eval_trajectory_rollout --model_name ml_dmd --custom_name short --data_path data/trajectories/linear/saddle_point/short
+    python -m experiments.eval_trajectory_rollout --model_name ml_dmd_free --custom_name short --data_path data/trajectories/linear/saddle_point/short
 
 """
 
@@ -16,7 +16,7 @@ import torch
 import matplotlib.pyplot as plt
 
 from src.data_generation.load_data import resolve_split_npz_path
-from src.models.ml_dmd_free import ML_DMD
+from src.models.ml_dmd_free import ML_DMD_FREE
 from src.models.ml_dmd_band import ML_DMD_BAND
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.eval.model_io import load_model
@@ -26,7 +26,7 @@ from src.eval.model_io import load_model
 parser = argparse.ArgumentParser(description="Evaluate trained models")
 
 # Model and data selection
-parser.add_argument("--model_name", type=str, default="ml_dmd", help="Name of the model to evaluate")
+parser.add_argument("--model_name", type=str, default="ml_dmd_free", help="Name of the model to evaluate")
 parser.add_argument("--custom_name", type=str, default="default", help="Custom given name of the model to evaluate")
 parser.add_argument("--data_path", type=str, required=True, help="Path to the dataset directory or split file")
 
