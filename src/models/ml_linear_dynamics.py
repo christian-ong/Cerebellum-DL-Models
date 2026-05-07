@@ -5,33 +5,6 @@ from src.models.expander import build_expander
 
 
 class ML_LinearDynamics(nn.Module):
-    """
-    Manual expansion + learned Koopman operator (ML-DMD).
-
-    This model follows the EDMD / Koopman learning idea:
-
-        z_{t+1} = K z_t
-
-    where
-        x  = original state
-        z  = lifted state (basis expansion)
-        K  = learned linear Koopman operator
-
-    Pipeline:
-
-        x  --expand-->  z
-        z  --scale-->   z_norm
-        z_norm --K-->   z_norm_next
-        z_norm_next --descale--> z_next
-        z_next --de_expand--> x_next
-
-    Important design choices:
-    - Polynomial / manual basis expansion
-    - Feature normalization for numerical stability
-    - Weighted loss to prevent high-degree monomials dominating training
-    - Eigenvalue regularization to stabilize rollouts
-    """
-
     def __init__(
         self,
         state_dim=2,
@@ -103,19 +76,9 @@ class ML_LinearDynamics(nn.Module):
         self.rollout_horizon = 20
 
     def get_K(self):
-        """
-        Return the learned operator acting in scaled lifted coordinates.
-
-        Dynamics in scaled coordinates:
-            z_scaled_next = K_scaled z_scaled
-        """
         return self.K.weight.mT
 
     def get_eigenvalues(self):
-        """
-        Eigenvalues of the lifted Koopman operator.
-        These are identical for K_scaled and K_true.
-        """
         K_true = self.get_K()
         return torch.linalg.eigvals(K_true)
     
@@ -127,24 +90,8 @@ class ML_LinearDynamics(nn.Module):
     # ------------------------------------------------
 
     def forward(self, x):
-        """
-        One-step prediction:
-
-            x_t -> x_{t+1}
-
-        Internally:
-
-            x -> z
-            z -> z_norm
-            z_norm -> K z_norm
-            z_norm_next -> z_next
-            z_next -> x_next
-        """
-
         # Lift state into expanded space
         z_raw = self.expander.expand(x)
-
-        # Normalize lifted features
         z = torch.clamp(z_raw, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
 
         # Linear Koopman step
@@ -205,17 +152,6 @@ class ML_LinearDynamics(nn.Module):
     # ------------------------------------------------
 
     def rollout(self, x0, steps):
-        """
-        Predict a trajectory starting from x0.
-
-        This repeatedly applies the learned Koopman operator:
-
-            z_{t+1} = K z_t
-
-        and maps the lifted state back to the original state space.
-        """
-
-        # Convert input to tensor
         if not torch.is_tensor(x0):
             x0 = torch.tensor(
                 x0,
@@ -223,16 +159,21 @@ class ML_LinearDynamics(nn.Module):
                 device=next(self.parameters()).device,
             )
 
-        # Ensure batch dimension
         if x0.ndim == 1:
             x = x0.unsqueeze(0)
         else:
             x = x0
 
         traj = [x.squeeze(0)]
+        
+        # 1. Expand the state to latent space exactly ONCE
+        z = self.expander.expand(x)
+        z = torch.clamp(z, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
 
+        # 2. Rollout completely in the latent space
         for _ in range(steps):
-            x = self.forward(x)
-            traj.append(x.squeeze(0))
+            z = self._advance_z(z)               # Step linearly forward!
+            x_next = self.expander.de_expand(z)           # Peek down to grab the physical state
+            traj.append(x_next.squeeze(0))
 
         return torch.stack(traj)

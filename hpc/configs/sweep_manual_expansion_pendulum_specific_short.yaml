@@ -10,7 +10,7 @@ command:
   - -m
   - scripts.train_sweep
   - --epochs
-  - 50
+  - 100
   - --eval_every
   - 1
   - --num_workers

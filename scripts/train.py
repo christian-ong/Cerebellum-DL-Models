@@ -9,11 +9,12 @@ from pathlib import Path
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
 from src.models.linear_baseline import fit_linear_map
 from src.models.dmd_baseline import fit_dmd
+from src.train.train_onestep import train_onestep
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.regression_dmd import Regression_DMD
 from src.models.ml_dmd_band import ML_DMD_BAND
 from src.models.ml_dmd_free import ML_DMD_FREE
-from src.train.train_onestep import train_onestep
+from src.models.mlp_baseline import MLP_BlackBox
 from src.models.sindy_baseline import SINDyBaseline
 
 """
@@ -246,6 +247,7 @@ def main():
             "ml_dmd_free",
             "ml_dmd_band",
             "sindy_baseline",
+            "mlp_baseline"
         ],
     )
 
@@ -637,6 +639,13 @@ def main():
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             expansion_type=args.expansion_type,
             system=system_name if args.expansion_type == "specific" else None
+        ).to(device)
+
+    elif args.model == "mlp_baseline":
+        model = MLP_BlackBox(
+            state_dim=state_dim,
+            hidden_dim=128,  # You can parameterize these via argparse if you want
+            num_layers=4
         ).to(device)
 
     else:

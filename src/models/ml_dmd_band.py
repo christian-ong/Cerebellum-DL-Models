@@ -1,17 +1,10 @@
 import torch
 import torch.nn as nn
 
-from src.models.expander import ManualExpansion
+from src.models.expander import build_expander
 
 
-class ML_DMD_BAND(ManualExpansion):
-    """
-    Manual expansion + learned Koopman eigendecomposition.
-    Analytical Inverse Version: Computes Phi_inv mathematically during training.
-    
-    Removed all z_scale logic to focus on raw lifted observables.
-    """
-
+class ML_DMD_BAND(nn.Module):
     def __init__(
         self,
         state_dim=2,
@@ -20,15 +13,40 @@ class ML_DMD_BAND(ManualExpansion):
         sine_cosine_expansion=False,
         expansion_type="general",
         system=None,
+        rbf_n_centers=50,
+        rbf_center_selection="farthest",
+        rbf_bandwidth_mode="knn",
+        rbf_knn_k=5,
     ):
-        super().__init__(
+        super().__init__()
+
+        self.state_dim = state_dim
+        self.expansion_type = expansion_type
+
+        # ------------------------------------------------
+        # Initialize basis expansion
+        # ------------------------------------------------
+        # This creates the lifted state representation z.
+        # The expansion can now be either:
+        #   - ManualExpansion  (general / specific)
+        #   - RBFExpansion     (rbf)
+        self.expander = build_expander(
             state_dim=state_dim,
+            expansion_type=expansion_type,
             expansion_degree=expansion_degree,
             bias=bias,
             sine_cosine_expansion=sine_cosine_expansion,
-            expansion_type=expansion_type,
             system=system,
+            rbf_n_centers=rbf_n_centers,
+            rbf_center_selection=rbf_center_selection,
+            rbf_bandwidth_mode=rbf_bandwidth_mode,
+            rbf_knn_k=rbf_knn_k,
         )
+
+        # Public aliases used elsewhere in the model / training code
+        self.expand_names = self.expander.expand_names
+        self.state_indices = self.expander.state_indices
+        self.expanded_dim = self.expander.expanded_dim
 
         self.latent_dim = self.expanded_dim
 
@@ -44,7 +62,7 @@ class ML_DMD_BAND(ManualExpansion):
         # ------------------------------------------------
         self.Phi = nn.Parameter(
             torch.eye(self.latent_dim)
-            + 0.01 * torch.randn(self.latent_dim, self.latent_dim)
+            + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
         )
 
         # ------------------------------------------------
@@ -89,7 +107,7 @@ class ML_DMD_BAND(ManualExpansion):
 
     def _advance_z(self, z):
         """Advances the latent state z by one step using the current Phi and Lambda."""
-        I_eps = 1e-12 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
+        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
         Phi_reg = self.Phi + I_eps
         
         b = torch.linalg.solve(Phi_reg, z.T).T
@@ -104,11 +122,11 @@ class ML_DMD_BAND(ManualExpansion):
 
     def forward(self, x):
         # Directly expand raw state
-        z = self.expand(x)
+        z = self.expander.expand(x)
         z = torch.clamp(z, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
 
         # Reg for solve
-        I_eps = 1e-12 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
+        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
         Phi_reg = self.Phi + I_eps
 
         # Project to modal coordinates
@@ -122,7 +140,7 @@ class ML_DMD_BAND(ManualExpansion):
         z_next = b_next @ self.Phi.T
 
         # Back to state dims (no unscaling needed)
-        x_next = self.de_expand(z_next)
+        x_next = self.expander.de_expand(z_next)
         return x_next
 
     # ------------------------------------------------
@@ -131,8 +149,8 @@ class ML_DMD_BAND(ManualExpansion):
 
     def compute_loss(self, x, x_next_true, future_x=None):
         # Expand raw inputs directly
-        z = self.expand(x)
-        z_next_true = self.expand(x_next_true)
+        z = self.expander.expand(x)
+        z_next_true = self.expander.expand(x_next_true)
         
         z = torch.clamp(z, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
         z_next_true = torch.clamp(z_next_true, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
@@ -141,7 +159,7 @@ class ML_DMD_BAND(ManualExpansion):
         z_next_pred = self._advance_z(z)
         
         loss_lift = torch.mean((z_next_pred - z_next_true)**2)
-        x_next_pred = self.de_expand(z_next_pred)
+        x_next_pred = self.expander.de_expand(z_next_pred)
         loss_state = nn.MSELoss()(x_next_pred, x_next_true)
 
         # 2. Multi-step Rollout Loss
@@ -156,7 +174,7 @@ class ML_DMD_BAND(ManualExpansion):
                 for k in range(1, horizon):
                     z_curr_pred = self._advance_z(z_curr_pred)
                     # Remove self.scale_state() here
-                    z_true_k = self.expand(future_x[:, k, :])
+                    z_true_k = self.expander.expand(future_x[:, k, :])
                     z_true_k = torch.clamp(z_true_k, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
                     
                     loss_rollout += torch.mean((z_curr_pred - z_true_k)**2)
@@ -196,20 +214,31 @@ class ML_DMD_BAND(ManualExpansion):
         loss_same_sign = torch.mean(torch.relu(b * c))
         loss_sparsity = torch.mean(torch.abs(b)) + torch.mean(torch.abs(c))
 
-        # G = phi_phys.T @ phi_phys
-        # I = torch.eye(G.shape[0], device=G.device, dtype=G.dtype)
-        # loss_phi_orth = torch.norm(G - I, p='fro') ** 2 / float(G.shape[0] ** 2)
+        # --------------------------------------------------
+        # ANNEALING LOGIC
+        # --------------------------------------------------
+        start_weight = 0.01
+        end_weight = 0.5
+        ramp_epochs = 200.0  # Number of epochs over which to increase the weight
+
+        # Calculate linear interpolation, capped at end_weight
+        if self.current_epoch < ramp_epochs:
+            # Linearly scale from 0.01 to 0.5
+            structural_weight = start_weight + (end_weight - start_weight) * (self.current_epoch / ramp_epochs)
+        else:
+            # Stay at 0.5 after the ramp period
+            structural_weight = end_weight
 
         # --------------------------------------------------
-        # Total Loss Compilation (Using your exact requested weights)
+        # Total Loss Compilation
         # --------------------------------------------------
         loss_total = (
             loss_lift
-            + 5.0 * loss_state          
-            + 1.0 * loss_rollout 
-            + 0.01 * loss_unit_length   
-            + 5.0 * loss_manifold      
-            + 5.0 * loss_same_sign
+            + 0.5 * loss_state
+            + 0.1 * loss_rollout
+            + 1e-3 * loss_unit_length
+            + structural_weight * loss_manifold      
+            + structural_weight * loss_same_sign     
             + 1e-5 * loss_sparsity
         )
         
@@ -221,7 +250,7 @@ class ML_DMD_BAND(ManualExpansion):
             "manifold": loss_manifold.item(),
             "same_sign": loss_same_sign.item(),
             "lam_sp": loss_sparsity.item(),
-            # "phi_orth": loss_phi_orth.item(),
+            "struct_weight": structural_weight,  # Helpful to track in logs
         }
         
         return (loss_total, loss_dict)
@@ -240,8 +269,15 @@ class ML_DMD_BAND(ManualExpansion):
             x = x0
 
         traj = [x.squeeze(0)]
+        
+        # 1. Expand the state to latent space exactly ONCE
+        z = self.expander.expand(x)
+        z = torch.clamp(z, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
+
+        # 2. Rollout completely in the latent space
         for _ in range(steps):
-            x = self.forward(x)
-            traj.append(x.squeeze(0))
+            z = self._advance_z(z)               # Step linearly forward!
+            x_next = self.expander.de_expand(z)           # Peek down to grab the physical state
+            traj.append(x_next.squeeze(0))
 
         return torch.stack(traj)

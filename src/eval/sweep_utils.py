@@ -60,7 +60,7 @@ def build_model(args, state_dim, system_name, device):
 
 def compute_loader_metrics(model, loader, device):
     if loader is None or len(loader.dataset) == 0:
-        return None, None, None
+        return None, None
 
     model.eval()
 
@@ -70,7 +70,18 @@ def compute_loader_metrics(model, loader, device):
     total_samples = 0
 
     with torch.no_grad():
-        for x, y in loader:
+        for batch in loader:
+            # Support datasets that return either (x, y) or (x, y, future_targets)
+            if isinstance(batch, (list, tuple)):
+                if len(batch) == 2:
+                    x, y = batch
+                elif len(batch) >= 3:
+                    x, y = batch[0], batch[1]
+                else:
+                    raise ValueError(f"Unsupported batch format with length {len(batch)}")
+            else:
+                raise ValueError("Unsupported batch format from DataLoader")
+
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
 
