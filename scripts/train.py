@@ -644,7 +644,7 @@ def main():
     elif args.model == "mlp_baseline":
         model = MLP_BlackBox(
             state_dim=state_dim,
-            hidden_dim=128,  # You can parameterize these via argparse if you want
+            hidden_dim=64,
             num_layers=4
         ).to(device)
 

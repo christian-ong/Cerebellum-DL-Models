@@ -26,13 +26,13 @@ source .venv/bin/activate
 
 # ----------------------------------
 # Linear Systems (Using example defaults)
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_trig_large/long --epochs 100
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_large/short --epochs 100
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_trig_small/long --epochs 100
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_trig_medium/long --epochs 100
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_small/short --epochs 100 
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/saddle_point/long --epochs 100
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/degenerate_node/long --epochs 100
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/inward_spiral/short --epochs 100
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/harmonic_oscillator/short --epochs 100
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/duffing/short --epochs 100
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_trig_large/long --epochs 200 --lr 1e-5 --name long
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_large/short --epochs 200 --lr 1e-5 --name short
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_trig_small/long --epochs 200 --lr 1e-5 --name long
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_trig_medium/long --epochs 200 --lr 1e-5 --name long
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_small/short --epochs 200 --lr 1e-5 --name short
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/saddle_point/long --epochs 200 --lr 1e-5 --name long
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/degenerate_node/long --epochs 200 --lr 1e-5 --name long
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/inward_spiral/short --epochs 200 --lr 1e-5 --name short
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/harmonic_oscillator/short --epochs 200 --lr 1e-5 --name short
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/duffing/short --epochs 200 --lr 1e-5 --name short

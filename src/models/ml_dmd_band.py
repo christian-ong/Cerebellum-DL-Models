@@ -155,14 +155,18 @@ class ML_DMD_BAND(nn.Module):
         z = torch.clamp(z, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
         z_next_true = torch.clamp(z_next_true, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
 
+        # --------------------------------------------------
         # 1. One-Step Dynamics
+        # --------------------------------------------------
         z_next_pred = self._advance_z(z)
         
         loss_lift = torch.mean((z_next_pred - z_next_true)**2)
         x_next_pred = self.expander.de_expand(z_next_pred)
         loss_state = nn.MSELoss()(x_next_pred, x_next_true)
 
-        # 2. Multi-step Rollout Loss
+        # --------------------------------------------------
+        # 2. Multi-step Rollout Loss (Latent Space)
+        # --------------------------------------------------
         loss_rollout = torch.tensor(0.0, device=x.device)
         
         if future_x is not None and future_x.ndim == 3:
@@ -173,7 +177,7 @@ class ML_DMD_BAND(nn.Module):
                 
                 for k in range(1, horizon):
                     z_curr_pred = self._advance_z(z_curr_pred)
-                    # Remove self.scale_state() here
+                    
                     z_true_k = self.expander.expand(future_x[:, k, :])
                     z_true_k = torch.clamp(z_true_k, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
                     
@@ -182,10 +186,9 @@ class ML_DMD_BAND(nn.Module):
                 loss_rollout = loss_rollout / float(horizon - 1)
 
         # --------------------------------------------------
-        # 3. Structural Constraints
+        # 3. Structural Constraints (Phi)
         # --------------------------------------------------
         # Apply normalization directly to the PHYSICAL Phi.
-        # This keeps the physical matrix from generating explosive values.
         phi_phys = self.get_Phi()
         col_norms = torch.linalg.norm(phi_phys, dim=0)
         loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
@@ -195,42 +198,40 @@ class ML_DMD_BAND(nn.Module):
         # --------------------------------------------------
         b = self.eig_super
         c = self.eig_sub
-        d1 = self.eig_diag[:-1]
-        d2 = self.eig_diag[1:]
 
-        # Calculate raw mathematical distances to valid states
-        dist_uncoupled = b**2 + c**2
-        dist_rot = (b + c)**2 + (d1 - d2)**2
-        dist_jordan_upper = c**2 + (d1 - d2)**2
-        dist_jordan_lower = b**2 + (d1 - d2)**2
+        # Measure structural distance to the 3 valid shapes
+        dist_rot = (b + c)**2          # Rotation block (antisymmetric off-diagonals)
+        dist_jordan_upper = c**2       # Upper Jordan block (no sub-diagonal)
+        dist_jordan_lower = b**2       # Lower Jordan block (no super-diagonal)
 
-        # FIX: Let the network naturally fall into the closest structural basin
+        # Let the network cleanly fall into the closest structural basin
         dist_all = torch.min(
-            torch.stack([dist_uncoupled, dist_rot, dist_jordan_upper, dist_jordan_lower], dim=0), 
+            torch.stack([dist_rot, dist_jordan_upper, dist_jordan_lower], dim=0), 
             dim=0
         ).values
         loss_manifold = torch.mean(dist_all)
 
+        # Strongly penalize having the same sign (which would create unstable real eigenvalues)
         loss_same_sign = torch.mean(torch.relu(b * c))
-        loss_sparsity = torch.mean(torch.abs(b)) + torch.mean(torch.abs(c))
+        
+        # Smooth L2 Sparsity. The gradient decays smoothly toward zero, 
+        # preventing the constant force from kicking the model out of the exact minimum.
+        loss_sparsity = torch.mean(b**2) + torch.mean(c**2)
 
         # --------------------------------------------------
-        # ANNEALING LOGIC
+        # 5. ANNEALING LOGIC
         # --------------------------------------------------
         start_weight = 0.01
         end_weight = 0.5
         ramp_epochs = 200.0  # Number of epochs over which to increase the weight
 
-        # Calculate linear interpolation, capped at end_weight
         if self.current_epoch < ramp_epochs:
-            # Linearly scale from 0.01 to 0.5
             structural_weight = start_weight + (end_weight - start_weight) * (self.current_epoch / ramp_epochs)
         else:
-            # Stay at 0.5 after the ramp period
             structural_weight = end_weight
 
         # --------------------------------------------------
-        # Total Loss Compilation
+        # 6. Total Loss Compilation
         # --------------------------------------------------
         loss_total = (
             loss_lift
@@ -250,7 +251,7 @@ class ML_DMD_BAND(nn.Module):
             "manifold": loss_manifold.item(),
             "same_sign": loss_same_sign.item(),
             "lam_sp": loss_sparsity.item(),
-            "struct_weight": structural_weight,  # Helpful to track in logs
+            "struct_weight": structural_weight,  
         }
         
         return (loss_total, loss_dict)
