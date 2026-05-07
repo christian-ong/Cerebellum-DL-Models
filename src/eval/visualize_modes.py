@@ -836,7 +836,7 @@ def modes_by_quality(
 
 
 def plot_eigenvalue_spectrum(eigvals, mode_scores, score_metric, save_path=None):
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, ax = plt.subplots(figsize=(6,4))
     
     circle_color = "#9ca3af"
     
@@ -856,19 +856,19 @@ def plot_eigenvalue_spectrum(eigvals, mode_scores, score_metric, save_path=None)
     ax.plot(np.cos(theta), np.sin(theta), "--", color=circle_color, linewidth=1.2, zorder=1)
 
     x_bounds = (
-        eigvals.real.min() - min(0.1*abs(eigvals.real.min()), 0.02),
-        eigvals.real.max() + min(0.1*abs(eigvals.real.max()), 0.02)
+        eigvals.real.min() - max(0.1*abs(eigvals.real.min()), 0.02),
+        eigvals.real.max() + max(0.1*abs(eigvals.real.max()), 0.02)
     )
     y_bounds = (
-        eigvals.imag.min() - min(0.1*abs(eigvals.imag.min()), 0.02),
-        eigvals.imag.max() + min(0.1*abs(eigvals.imag.max()), 0.02)
+        eigvals.imag.min() - max(0.1*abs(eigvals.imag.min()), 0.02),
+        eigvals.imag.max() + max(0.1*abs(eigvals.imag.max()), 0.02)
     )
     ax.set_xlim(x_bounds)
     ax.set_ylim(y_bounds)
     
     ax.axhline(0, color=circle_color, linewidth=0.8, alpha=0.5)
     ax.axvline(0, color=circle_color, linewidth=0.8, alpha=0.5)
-    ax.set_aspect("equal", adjustable="box")
+    # ax.set_aspect("equal", adjustable="box")
     ax.set_title(f"Eigenvalue Spectrum (Colored by {score_metric})", fontsize=12)
     ax.set_xlabel("$\mathbb{R}(\lambda)$")
     ax.set_ylabel("$\mathbb{I}(\lambda)$")
@@ -960,53 +960,82 @@ def plot_freq_magnitude(eigvals, mode_scores, score_metric, save_path=None):
         plt.show()
 
 
-def plot_mode_trajectories(model, Phi, Lambda, real_traj, save_path=None):
+def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None):
     """
-    Plot data* projected onto one mode at a time.
-    data*:
-        - real_traj: true trajectory projected onto the mode (using Phi)
-        - model_traj: model rollout trajectory projected onto the mode (using Phi)
-        - mode_evolution: how the learnt mode itself evolves when propagated by Lambda (using Phi and Lambda)
+    Plot data projected onto one mode at a time to compare real vs. model evolution.
     """
-    print(f"Phi: {Phi.shape}, Lambda: {Lambda.shape}, real_traj: {real_traj.shape}")
-
     # Measure dimensions
-    n_modes = Phi.shape[1]
-    n_trajs = real_traj.shape[0]
+    n_steps = real_traj.shape[0]
+    n_trajs = real_traj.shape[1]
     state_dim = real_traj.shape[2]
+    n_modes = Phi.shape[1]
     lifted_dim = Phi.shape[0]
+    
+    # Lift real trajectory
+    real_traj_flattened = real_traj.reshape(-1, state_dim) # (n_steps * n_trajs, state_dim)
+    expanded_traj_flattened = safe_expand(model, torch.tensor(real_traj_flattened, dtype=torch.float32)).cpu().numpy() # (n_steps * n_trajs, lifted_dim)
+    expanded_traj = expanded_traj_flattened.reshape(n_steps, n_trajs, lifted_dim)
+    
+    # Grab initial conditions
+    init_conditions = real_traj[0, :, :] # (n_trajs, state_dim)
+    expanded_init_conditions = expanded_traj[0, :, :] 
 
-    # Define data
-    real_traj_flattened = real_traj.reshape(-1, state_dim)
-    real_traj_flattened = torch.as_tensor(real_traj_flattened, dtype=torch.float32)
-    expanded_traj_flattened = safe_expand(model, real_traj_flattened).cpu().numpy()
-    expanded_traj = expanded_traj_flattened.reshape(n_trajs, -1, lifted_dim)
-    expanded_init_conditions = expanded_traj[::real_traj.shape[1], :] # take the first time step of each trajectory
-
-    print(f"Expanded traj shape: {expanded_traj.shape}")
-    print(f"Expanded init conditions shape: {expanded_init_conditions.shape}")
-
-
-    ### Real trajectory ###
-    real_proj = expanded_traj_flattened @ Phi # project the expanded trajectory onto the modes
-    real_proj = real_proj.reshape(n_trajs, -1, n_modes) # reshape back to (n_trajs, traj_len, n_modes)
-
-    print(f"Real trajectory projected onto modes shape: {real_proj.shape}")
-
+    ### Real trajectory projected onto modes ###
+    real_proj = expanded_traj @ Phi 
 
     ### Model rollout trajectory ###
-    
+    model_rollouts = model.rollout(init_conditions, steps=n_steps-1).detach().numpy() # (n_steps, n_trajs, state_dim)
+    model_rollouts_flattened = torch.tensor(model_rollouts, dtype=torch.float32).reshape(-1, state_dim) # (n_steps * n_trajs, state_dim)
+    model_rollouts_flattened_expanded = safe_expand(model, model_rollouts_flattened).detach().numpy()
+    model_rollouts_expanded = model_rollouts_flattened_expanded.reshape(n_steps, n_trajs, lifted_dim) # (n_steps, n_trajs, lifted_dim)
+    model_proj = model_rollouts_expanded @ Phi
 
-
-
-
+    # print(f"Model rollouts shape: {model_rollouts.shape}, Model rollouts expanded shape: {model_rollouts_expanded.shape}")
 
     ### Mode evolution under Lambda ###
-    mode_evolution = Phi @ np.diag(Lambda) @ np.linalg.pinv(Phi) @ Phi[:, best_ids]
+    mode_evolution = np.zeros((n_steps, n_trajs, n_modes), dtype=complex)
+    
+    # Initial mode amplitudes
+    z0 = expanded_init_conditions @ Phi
+    
+    # Extract eigenvalues if Lambda is the full matrix
+    eigenvalues = np.diag(Lambda) if Lambda.ndim > 1 else Lambda
 
-    axes[-1].set_xlabel("Time Steps")
-    fig.suptitle("Koopman Mode Evolution", fontsize=14)
+    for t in range(n_steps):
+        mode_evolution[t, :, :] = z0 * (eigenvalues ** t)
+
+    ### Plotting ###
+    fig, axes = plt.subplots(n_trajs, n_modes, figsize=(2.5 * n_modes, 10), sharex=True)
+    if n_modes == 1: axes = [axes]
+
+    time = np.arange(n_steps)
+
+    for i in range(n_modes): # columns
+        for traj_idx in range(n_trajs): # rows
+        
+            # Label columns
+            if i == 0:
+                axes[traj_idx,i].set_ylabel(f"Initial Condition {traj_idx + 1}")
+
+            # Label rows
+            if traj_idx == 0:
+                axes[traj_idx,i].set_title(f"Mode ?", fontsize=10)
+
+            # Plot first trajectory for clarity (index 0)
+            axes[traj_idx,i].plot(time, real_proj[:, traj_idx, i].real, 'k-', label='Real (Proj)', alpha=0.6)
+            axes[traj_idx,i].plot(time, model_proj[:, traj_idx, i].real, 'r--', label='Model Rollout')
+            axes[traj_idx,i].plot(time, mode_evolution[:, traj_idx, i].real, 'b:', label='$\Lambda$ Evolution')
+
+            # Legend info
+            if i == 0 and traj_idx == 0:
+                # Grab handles and labels from this specific subplot
+                handles, labels = axes[traj_idx, i].get_legend_handles_labels()
+            
+        axes[-1, traj_idx].set_xlabel("Time Steps")
+    fig.suptitle("Koopman Mode Evolution (Real Part)", fontsize=22)
     plt.tight_layout()
+    plt.subplots_adjust(top=0.92) # move plots down to avoid overlap
+    fig.legend(handles, labels, loc='upper left', ncol=3, fontsize=14, frameon=True)
     
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')

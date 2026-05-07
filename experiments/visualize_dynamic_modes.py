@@ -9,6 +9,13 @@ from src.eval.visualize_modes import *
 This script visualizes the dynamic modes and eigensystem of a trained Koopman model.
 
 python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_long_spec10 --data_path data\trajectories\nonlinear\closed_trig_large\long\test.npz
+
+python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_long_gen3_fix3 --data_path data/trajectories/linear/saddle_point/long
+
+python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_long_spec10_fix3 --data_path data/trajectories/nonlinear/closed_trig_large/long
+
+python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_short_spec10_fix3 --data_path data/trajectories/nonlinear/duffing/long
+
 """
 
 # --------------------------------------------------
@@ -229,14 +236,14 @@ plot_freq_magnitude(
 # Visualize mode trajectories
 # --------------------------------------------------
 # Parameters
-n_modes = 4
+n_modes = 10
 n_trajectories = 3
 n_steps = 1000
 
-plot_trajectories = trajectories[:n_trajectories, :n_steps, :] # (id, steps, state_dim)
+plot_trajectories = trajectories[:n_steps, :n_trajectories, :] # (steps, id, state_dim)
 plot_Phi = sorted_data["model"]["Phi"][:, :n_modes] # (latent_dim, n_modes)
 plot_Lambda = sorted_data["model"]["Lambda"][:n_modes, :n_modes]
-plot_mode_trajectories(
+plot_koopman_mode_rollout(
     model=model,
     Phi=plot_Phi,
     Lambda=plot_Lambda,
