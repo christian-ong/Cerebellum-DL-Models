@@ -193,10 +193,10 @@ sorted_data = {
 if debug_printing:
     print(f"Total modes: {num_modes}")
     print(f"Top {n_top_modes} modes:")
-    print("  Model:")
+    print(f"  Model:")
     print(f"    Indices: {sorted_data['model']['indeces'][:n_top_modes]}")
     print(f"    Scores: {[f'{s:.4f}' for s in sorted_data['model']['scores'][:n_top_modes]]}")
-    print("\n  Analytic:")
+    print(f"  Analytic:")
     print(f"    Indices: {sorted_data['analytic']['indeces'][:n_top_modes]}")
     print(f"    Scores: {[f'{s:.4f}' for s in sorted_data['analytic']['scores'][:n_top_modes]]}")
 
@@ -204,24 +204,23 @@ if debug_printing:
 # Plot eigenfunctions (top N modes)
 # --------------------------------------------------
 # Plot
-plot_complex_field(
+plot_eigenfunctions(
     grid_points=grid_points, 
     grid_points_expanded=grid_points_expanded, 
     Phi=sorted_data["model"]["Phi"][:, :n_top_modes], 
-    scores=sorted_data["model"]["scores"][:n_top_modes], 
+    scores=sorted_data["model"]["Lambda"][:n_top_modes].diagonal(), 
+    score_metric=order_modes_by,
     complex_pair_idx=sorted_data["model"]["complex_pairs"],
     save_path=os.path.join(save_dir, "eigenfunctions.png")
 )
 
-os._exit(0)
-
 # --------------------------------------------------
 # Spectrum plot with quality coloring
 # --------------------------------------------------
-plot_quality_spectrum(
-    eigvals_analytic, 
-    scores_analytic, 
-    theme="dark", 
+plot_eigenvalue_spectrum(
+    eigvals=sorted_data["model"]["Lambda"][:n_top_modes].diagonal(), 
+    mode_scores=sorted_data["model"]["scores"][:n_top_modes], 
+    score_metric=order_modes_by,
     save_path=os.path.join(save_dir, "eigenvalue_spectrum.png")
 )
 
@@ -229,9 +228,9 @@ plot_quality_spectrum(
 # Visualize eigenvalue frequencies vs magnitudes
 # --------------------------------------------------
 plot_freq_magnitude(
-    eigvals_analytic, 
-    scores_analytic, 
-    theme="dark", 
+    eigvals=sorted_data["model"]["Lambda"][:n_top_modes].diagonal(), 
+    mode_scores=sorted_data["model"]["scores"][:n_top_modes], 
+    score_metric=order_modes_by,
     save_path=os.path.join(save_dir, "freq_magnitude.png")
 )
 

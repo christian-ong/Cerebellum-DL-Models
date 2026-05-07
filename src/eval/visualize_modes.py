@@ -530,12 +530,10 @@ def rotation_blocks_to_complex(Lambda, Phi, complex_pair_idx):
         # find complex value
         complex_val_1 = a + 1j*b
         complex_val_2 = d + 1j*c
-        avg_complex_val = (a + d)/2 + 1j*(b - c)/2
-        print(avg_complex_val)
 
         # In Lambda: replace block with complex values on diagonal
-        Lambda_complex[i, i] = avg_complex_val
-        Lambda_complex[j, j] = np.conj(avg_complex_val)
+        Lambda_complex[i, i] = complex_val_1 
+        Lambda_complex[j, j] = complex_val_2 # should be conjugate of complex_val_1, but allow assymetric imperfections
         Lambda_complex[i, j] = 0
         Lambda_complex[j, i] = 0
 
@@ -678,11 +676,12 @@ def get_real_representation(V, eigvals):
     return V_real, Lambda_real
 
 
-def plot_complex_field(
+def plot_eigenfunctions(
         grid_points, 
         grid_points_expanded, 
         Phi,
         scores,
+        score_metric,
         complex_pair_idx,
         cmap="inferno", 
         save_path=None
@@ -719,8 +718,8 @@ def plot_complex_field(
                 label = (
                     pair_string + 
                     rf"$\mathbf{{EF{mode_idx+1}}}$" + 
-                    f"\nScore: {scores[mode_idx]:.4f}" +
-                    f"\n{label}")
+                    f"\n{score_metric}: {scores[mode_idx]:.3f}" +
+                    f"\n\n{label}")
             ax = axes[i, mode_idx]
             im = ax.imshow(data.reshape(grid_n, grid_n), extent=extent, origin="lower", cmap=cmap, aspect='auto')
             ax.set_title(f"{label}")
@@ -811,10 +810,10 @@ def modes_by_quality(
     return best_ids, mode_score, residual_mean
 
 
-def plot_quality_spectrum(eigvals, mode_scores, theme="dark", save_path=None):
+def plot_eigenvalue_spectrum(eigvals, mode_scores, score_metric, save_path=None):
     fig, ax = plt.subplots(figsize=(6, 6))
     
-    circle_color = "#9ca3af" if theme == "dark" else "#374151"
+    circle_color = "#9ca3af"
     
     scatter = ax.scatter(
         eigvals.real, 
@@ -831,20 +830,26 @@ def plot_quality_spectrum(eigvals, mode_scores, theme="dark", save_path=None):
     theta = np.linspace(0, 2 * np.pi, 300)
     ax.plot(np.cos(theta), np.sin(theta), "--", color=circle_color, linewidth=1.2, zorder=1)
 
-    x_bounds = (eigvals.real.min() - 0.1, eigvals.real.max() + 0.1)
-    y_bounds = (eigvals.imag.min() - 0.1, eigvals.imag.max() + 0.1)
+    x_bounds = (
+        eigvals.real.min() - min(0.1*abs(eigvals.real.min()), 0.02),
+        eigvals.real.max() + min(0.1*abs(eigvals.real.max()), 0.02)
+    )
+    y_bounds = (
+        eigvals.imag.min() - min(0.1*abs(eigvals.imag.min()), 0.02),
+        eigvals.imag.max() + min(0.1*abs(eigvals.imag.max()), 0.02)
+    )
     ax.set_xlim(x_bounds)
     ax.set_ylim(y_bounds)
     
     ax.axhline(0, color=circle_color, linewidth=0.8, alpha=0.5)
     ax.axvline(0, color=circle_color, linewidth=0.8, alpha=0.5)
     ax.set_aspect("equal", adjustable="box")
-    ax.set_title("Eigenvalue Spectrum (Colored by Quality)", fontsize=12)
+    ax.set_title(f"Eigenvalue Spectrum (Colored by {score_metric})", fontsize=12)
     ax.set_xlabel("$\mathbb{R}(\lambda)$")
     ax.set_ylabel("$\mathbb{I}(\lambda)$")
     
     cbar = plt.colorbar(scatter, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label('Mode Quality Score', rotation=270, labelpad=15)
+    cbar.set_label(f'Mode {score_metric}', rotation=270, labelpad=15)
     
     plt.grid(True, linestyle=':', alpha=0.3)
     plt.tight_layout()
@@ -856,12 +861,12 @@ def plot_quality_spectrum(eigvals, mode_scores, theme="dark", save_path=None):
         plt.show()
 
 
-def plot_freq_magnitude(eigvals, mode_scores, theme="dark", save_path=None):
+def plot_freq_magnitude(eigvals, mode_scores, score_metric, save_path=None):
     magnitudes = np.abs(eigvals)
     frequencies = np.abs(np.angle(eigvals)) / np.pi 
     
     fig, ax = plt.subplots(figsize=(8, 5))
-    circle_color = "#9ca3af" if theme == "dark" else "#374151"
+    circle_color = "#9ca3af"
     
     scatter = ax.scatter(
         frequencies, 
@@ -874,21 +879,42 @@ def plot_freq_magnitude(eigvals, mode_scores, theme="dark", save_path=None):
         linewidths=0.5
     )
 
-    x_spread = (frequencies.max() - frequencies.min())
-    y_spread = (magnitudes.max() - magnitudes.min())
-    plot_checklist = np.zeros(len(mode_scores), dtype=bool)
+    ### Annotate overlapping points together
+    # Threshold for how close points need to be to be considered overlapping (as a fraction of the total spread)
+    overlap_th = 0.05
+
+    # Calculate spreads for dynamic thresholding
+    x_spread = (frequencies.max() - frequencies.min()) 
+    y_spread = (magnitudes.max() - magnitudes.min()) 
+    x_th = overlap_th * x_spread + 1e-4
+    y_th = overlap_th * y_spread + 1e-4
+
+    # Loop through points
+    plot_checklist = np.zeros(len(eigvals), dtype=bool)  # keep track of annotated points
     for i, (freq, mag) in enumerate(zip(frequencies, magnitudes)):
+
+        # skip if already annotated
         if plot_checklist[i]:
             continue
-        overlap_th = 0.02
-        nearby_indices = np.where((np.abs(frequencies - freq) < overlap_th * x_spread) & (np.abs(magnitudes - mag) < overlap_th * y_spread))[0]
+        plot_checklist[i] = True
+        
+        # loop through nearby points
+        nearby_indices = np.where((np.abs(frequencies - freq) < x_th) & (np.abs(magnitudes - mag) < y_th))[0]
         label_string = f"{i}"
         for near_idx in nearby_indices:
-            if near_idx != i and not plot_checklist[near_idx]:
-                label_string += f", {near_idx}"
-                plot_checklist[near_idx] = True
-        ax.text(freq, mag+overlap_th * y_spread, label_string, fontsize=8, ha='center', va='center')
-        plot_checklist[i] = True
+
+            # skip self or if already annotated
+            if (near_idx == i) or (plot_checklist[near_idx]):
+                continue
+
+            # add to label and mark as annotated
+            label_string += f", {near_idx}"
+            plot_checklist[near_idx] = True
+
+        # label cluster
+        x_coord = freq
+        y_coord = mag - 0.5 * overlap_th * y_spread  # offset label slightly below the cluster
+        ax.text(x_coord, y_coord, label_string, fontsize=8, ha='center', va='center')
     
     ax.axhline(1.0, color=circle_color, linestyle='--', alpha=0.6, label="Unit Circle (Stable)")
     
@@ -897,7 +923,7 @@ def plot_freq_magnitude(eigvals, mode_scores, theme="dark", save_path=None):
     ax.set_ylabel("Magnitude ($|\lambda|$)")
     
     cbar = plt.colorbar(scatter, ax=ax)
-    cbar.set_label('Mode Quality Score')
+    cbar.set_label(f'Mode {score_metric}')
     
     plt.grid(True, linestyle=':', alpha=0.3)
     plt.tight_layout()
