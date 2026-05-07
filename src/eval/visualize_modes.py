@@ -935,44 +935,51 @@ def plot_freq_magnitude(eigvals, mode_scores, score_metric, save_path=None):
         plt.show()
 
 
-def plot_mode_trajectories(model, W, eigvals, z_scale, best_ids, real_traj, save_path=None):
-    n_steps = real_traj.shape[0]
-    t = np.arange(n_steps)
-    
-    with torch.no_grad():
-        z_real = model.expand(torch.as_tensor(real_traj, dtype=torch.float32)).cpu().numpy() / z_scale
-        phi_real_traj = z_real @ W
-    
-    xt = torch.as_tensor(real_traj[0:1, :], dtype=torch.float32)
-    phi_nn_traj = []
-    with torch.no_grad():
-        for _ in range(n_steps):
-            z_t = model.expand(xt).cpu().numpy() / z_scale
-            phi_nn_traj.append(z_t @ W)
-            xt = model(xt)
-    phi_nn_traj = np.array(phi_nn_traj).squeeze()
-    
-    fig, axes = plt.subplots(len(best_ids), 1, figsize=(12, 2.5 * len(best_ids)), sharex=True)
-    if len(best_ids) == 1: axes = [axes]
+def plot_mode_trajectories(model, Phi, Lambda, real_traj, save_path=None):
+    """
+    Plot data* projected onto one mode at a time.
+    data*:
+        - real_traj: true trajectory projected onto the mode (using Phi)
+        - model_traj: model rollout trajectory projected onto the mode (using Phi)
+        - mode_evolution: how the learnt mode itself evolves when propagated by Lambda (using Phi and Lambda)
+    """
+    print(f"Phi: {Phi.shape}, Lambda: {Lambda.shape}, real_traj: {real_traj.shape}")
 
-    for i, m_idx in enumerate(best_ids):
-        ax = axes[i]
-        lam = eigvals[m_idx]
-        phi0 = phi_real_traj[0, m_idx]
-        
-        phi_theory = phi0 * (lam ** t)
-        
-        ax.plot(t, phi_real_traj[:, m_idx].real, 'k-', alpha=0.3, label='Real Data (Ground Truth)', linewidth=3)
-        ax.plot(t, phi_nn_traj[:, m_idx].real, 'o', markersize=2, label='Model Prediction (NN Rollout)', alpha=0.7)
-        ax.plot(t, phi_theory.real, '--', color='red', label='Theoretical Linear ($\lambda^t$)', linewidth=1.5)
-        
-        ax.set_ylabel(f"$\phi_{{{m_idx}}}(x)$")
-        ax.set_title(f"Mode {m_idx} | $\lambda = {lam.real:.3f} + {lam.imag:.3f}j$", fontsize=10, loc='right')
-        if i == 0:
-            ax.legend(loc='upper right', ncol=3, fontsize='small', frameon=True)
+    # Measure dimensions
+    n_modes = Phi.shape[1]
+    n_trajs = real_traj.shape[0]
+    state_dim = real_traj.shape[2]
+    lifted_dim = Phi.shape[0]
+
+    # Define data
+    real_traj_flattened = real_traj.reshape(-1, state_dim)
+    expanded_traj_flattened = model.expand(torch.tensor(real_traj_flattened, dtype=torch.float32)).cpu().numpy()
+    expanded_traj = expanded_traj_flattened.reshape(n_trajs, -1, lifted_dim)
+    expanded_init_conditions = expanded_traj[::real_traj.shape[1], :] # take the first time step of each trajectory
+
+    print(f"Expanded traj shape: {expanded_traj.shape}")
+    print(f"Expanded init conditions shape: {expanded_init_conditions.shape}")
+
+
+    ### Real trajectory ###
+    real_proj = expanded_traj_flattened @ Phi # project the expanded trajectory onto the modes
+    real_proj = real_proj.reshape(n_trajs, -1, n_modes) # reshape back to (n_trajs, traj_len, n_modes)
+
+    print(f"Real trajectory projected onto modes shape: {real_proj.shape}")
+
+
+    ### Model rollout trajectory ###
+    
+
+
+
+
+
+    ### Mode evolution under Lambda ###
+    mode_evolution = Phi @ np.diag(Lambda) @ np.linalg.pinv(Phi) @ Phi[:, best_ids]
 
     axes[-1].set_xlabel("Time Steps")
-    fig.suptitle("Koopman Mode Evolution: Reality vs. Model vs. Theory", fontsize=14)
+    fig.suptitle("Koopman Mode Evolution", fontsize=14)
     plt.tight_layout()
     
     if save_path:

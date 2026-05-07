@@ -29,7 +29,7 @@ order_modes_by = "magnitude" # "magnitude" (abs lambda), "quality", "power", "en
 detect_complex_modes = True
 complex_mode_threshold = 1e-3
 
-debug_printing = True
+debug_printing = False
 
 # Load test trajectories to find true boundaries and system name dynamically
 test_data_path = resolve_split_npz_path(args.data_path, "test")
@@ -56,6 +56,7 @@ else:
 
 Phi_model, Lambda_model, Lambda_model_eig, V, W, K = get_koopman_eigensystem(model)
 num_modes = Lambda_model.shape[0]
+n_top_modes = min(n_top_modes, num_modes)
 
 # Create the output directory for figures
 save_dir = f"experiments/figures/{args.model_name}/{system}/{args.custom_name}"
@@ -159,9 +160,6 @@ else:
 # Apply sorting
 sorting = sorting_info[order_modes_by]
 
-print("hello")
-print(sorting["indices_model"]) # [3 0 6 7 8 9 5 4 1 2]
-print(complex_pair_idx) # [(8, 9), (6, 7), (4, 5)]
 # update complex pair indices to reflect sorting
 if detect_complex_modes:
     sorted_complex_pair_idx = []
@@ -228,8 +226,8 @@ plot_eigenvalue_spectrum(
 # Visualize eigenvalue frequencies vs magnitudes
 # --------------------------------------------------
 plot_freq_magnitude(
-    eigvals=sorted_data["model"]["Lambda"][:n_top_modes].diagonal(), 
-    mode_scores=sorted_data["model"]["scores"][:n_top_modes], 
+    eigvals=sorted_data["model"]["Lambda"].diagonal(), 
+    mode_scores=sorted_data["model"]["scores"], 
     score_metric=order_modes_by,
     save_path=os.path.join(save_dir, "freq_magnitude.png")
 )
@@ -237,27 +235,35 @@ plot_freq_magnitude(
 # --------------------------------------------------
 # Visualize mode trajectories
 # --------------------------------------------------
-single_trajectory = trajectories[:, 0, :] # Take the first trajectory for visualization
+# Parameters
+n_modes = 4
+n_trajectories = 3
+n_steps = 1000
+
+plot_trajectories = trajectories[:n_trajectories, :n_steps, :] # (id, steps, state_dim)
+plot_Phi = sorted_data["model"]["Phi"][:, :n_modes] # (latent_dim, n_modes)
+plot_Lambda = sorted_data["model"]["Lambda"][:n_modes, :n_modes]
 plot_mode_trajectories(
-    model, 
-    W, 
-    eigvals_analytic, 
-    z_scale, 
-    sorted_idx_analytic[:n_top_modes], 
-    single_trajectory, 
+    model=model,
+    Phi=plot_Phi,
+    Lambda=plot_Lambda,
+    real_traj=plot_trajectories,
     save_path=os.path.join(save_dir, "mode_trajectories.png")
 )
+
+os._exit(0)
 
 # --------------------------------------------------
 # Visualize mode contributions to state reconstruction
 # --------------------------------------------------
 with torch.no_grad():
+    single_trajectory = trajectories[:,0,:] # shape (T, state_dim)
     z_real = model.expand(torch.as_tensor(single_trajectory)).cpu().numpy() / z_scale
     phi_real_traj = z_real @ W
 plot_mode_contributions_vs_quality(
     V, 
     phi_real_traj, 
-    sorted_idx_analytic[:n_top_modes], 
+    sorted_idx_analytic, 
     scores_analytic, 
     model.state_dim, 
     n_top=10, 
