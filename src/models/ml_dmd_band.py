@@ -89,7 +89,7 @@ class ML_DMD_BAND(ManualExpansion):
 
     def _advance_z(self, z):
         """Advances the latent state z by one step using the current Phi and Lambda."""
-        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
+        I_eps = 1e-12 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
         Phi_reg = self.Phi + I_eps
         
         b = torch.linalg.solve(Phi_reg, z.T).T
@@ -108,7 +108,7 @@ class ML_DMD_BAND(ManualExpansion):
         z = torch.clamp(z, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
 
         # Reg for solve
-        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
+        I_eps = 1e-12 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
         Phi_reg = self.Phi + I_eps
 
         # Project to modal coordinates
@@ -196,9 +196,9 @@ class ML_DMD_BAND(ManualExpansion):
         loss_same_sign = torch.mean(torch.relu(b * c))
         loss_sparsity = torch.mean(torch.abs(b)) + torch.mean(torch.abs(c))
 
-        G = phi_phys.T @ phi_phys
-        I = torch.eye(G.shape[0], device=G.device, dtype=G.dtype)
-        loss_phi_orth = torch.norm(G - I, p='fro') ** 2 / float(G.shape[0] ** 2)
+        # G = phi_phys.T @ phi_phys
+        # I = torch.eye(G.shape[0], device=G.device, dtype=G.dtype)
+        # loss_phi_orth = torch.norm(G - I, p='fro') ** 2 / float(G.shape[0] ** 2)
 
         # --------------------------------------------------
         # Total Loss Compilation (Using your exact requested weights)
@@ -211,7 +211,6 @@ class ML_DMD_BAND(ManualExpansion):
             + 5.0 * loss_manifold      
             + 5.0 * loss_same_sign
             + 1e-5 * loss_sparsity
-            + 1e-5 * loss_phi_orth
         )
         
         loss_dict = {
@@ -222,7 +221,7 @@ class ML_DMD_BAND(ManualExpansion):
             "manifold": loss_manifold.item(),
             "same_sign": loss_same_sign.item(),
             "lam_sp": loss_sparsity.item(),
-            "phi_orth": loss_phi_orth.item(),
+            # "phi_orth": loss_phi_orth.item(),
         }
         
         return (loss_total, loss_dict)

@@ -24,7 +24,8 @@ MODEL_CHOICES = [
     "dmd_baseline",
     "regression_dmd",
     "ml_lineardynamics",
-    "ml_dmd",
+    "ml_dmd_free",
+    "ml_dmd_band",
     "sindy_baseline",
 ]
 

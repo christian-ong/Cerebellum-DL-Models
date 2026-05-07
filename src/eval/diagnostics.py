@@ -128,7 +128,7 @@ def resolve_mode_subsets(
     if subset_strategy == "amplitude":
             if model_name == "regression_dmd":
                 info = compute_regression_mode_ranking_by_amplitude(X=X, traj_id=traj_id, model=model)
-            elif model_name == "ml_dmd":
+            elif model_name == "ml_dmd_free" or model_name == "ml_dmd_band":
                 info = compute_ml_dmd_mode_ranking_by_amplitude(X=X, traj_id=traj_id, model=model)
             else:
                 raise ValueError(f"Amplitude ranking not implemented for {model_name}")

@@ -7,11 +7,9 @@ from torch.utils.data import DataLoader
 
 from src.models.linear_baseline import rollout_linear_map
 from src.models.dmd_baseline import rollout_dmd_eig
-# from src.models.deprecated.ml_dmd import ML_DMD
-# from src.models.deprecated.ml_eigen_dmd import MLEigenDMD
 from src.models.regression_dmd import Regression_DMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
-from src.models.ml_dmd_free import ML_DMD
+from src.models.ml_dmd_free import ML_DMD_FREE
 from src.models.ml_dmd_band import ML_DMD_BAND
 from src.models.sindy_baseline import SINDyBaseline
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
@@ -223,11 +221,11 @@ def load_model(
         extras["ckpt"] = ckpt
         return model, extras
 
-    if model_name == "ml_dmd":
+    if model_name == "ml_dmd_free":
         ckpt = torch.load(model_path, map_location=device)
         train_args = ckpt["train_args"]
 
-        model = ML_DMD(
+        model = ML_DMD_FREE(
             state_dim=ckpt["state_dim"],
             expansion_degree=train_args["expansion_degree"],
             bias=_to_bool(train_args.get("bias", "true"), default=True),
@@ -280,7 +278,7 @@ def supports_mode_subset_rollout(model_name: str, model, extras: Dict[str, Any])
     if model_name == "regression_dmd":
         rollout_mode = extras.get("rollout_mode", "DMD")
         return rollout_mode in {"DMD", "projected_DMD"}
-    if model_name == "ml_dmd":
+    if model_name == "ml_dmd_free":
         return True
     return False
 
@@ -308,7 +306,7 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
 
     with torch.inference_mode():
         # --- NEW: Native Mode Subsetting for ML-DMD ---
-        if model_name == "ml_dmd" and mode_indices is not None:
+        if model_name == "ml_dmd_free" and mode_indices is not None:
             x0_t = torch.as_tensor(x0, dtype=torch.float32, device=next(model.parameters()).device)
             if x0_t.ndim == 1:
                 x0_t = x0_t.unsqueeze(0)

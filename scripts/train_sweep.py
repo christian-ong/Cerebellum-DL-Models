@@ -8,20 +8,16 @@ from torch.utils.data import DataLoader
 
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
 from src.eval.sweep_utils import (
-    maybe_set_z_scale,
     build_run_name,
     build_model,
     compute_loader_metrics,
     compute_rollout_metrics,
 )
 
-
 EVAL_HORIZONS = [10, 100, 500]
-
 
 def fmt_metric(x):
     return f"{x:.6e}" if x is not None else "None"
-
 
 def print_multi_horizon_metrics(metrics_dict, gamma, prefix=""):
     if metrics_dict is None:
@@ -30,18 +26,13 @@ def print_multi_horizon_metrics(metrics_dict, gamma, prefix=""):
 
     for h in EVAL_HORIZONS:
         rmse = metrics_dict.get(f"rollout_rmse_h{h}")
-        nrmse = metrics_dict.get(f"rollout_nrmse_h{h}")
         w_rmse = metrics_dict.get(f"discounted_mean_rmse_h{h}_g{gamma:.2f}")
-        w_nrmse = metrics_dict.get(f"discounted_mean_nrmse_h{h}_g{gamma:.2f}")
 
         print(
             f"{prefix}h={h:3d} | "
             f"RMSE: {fmt_metric(rmse)} | "
-            f"NRMSE: {fmt_metric(nrmse)} | "
             f"W-RMSE: {fmt_metric(w_rmse)} | "
-            f"W-NRMSE: {fmt_metric(w_nrmse)}"
         )
-
 
 def add_prefixed_metrics(log_dict, metrics_dict, prefix):
     if metrics_dict is None:
@@ -50,10 +41,8 @@ def add_prefixed_metrics(log_dict, metrics_dict, prefix):
     for k, v in metrics_dict.items():
         log_dict[f"{prefix}{k}"] = v
 
-
 def _is_scalar_number(v):
     return isinstance(v, (int, float, np.floating)) and np.isfinite(v)
-
 
 def update_best_metrics(best_metrics, current_metrics, current_epoch):
     for key, value in current_metrics.items():
@@ -61,25 +50,6 @@ def update_best_metrics(best_metrics, current_metrics, current_epoch):
             continue
         if key not in best_metrics or value < best_metrics[key]["value"]:
             best_metrics[key] = {"value": float(value), "epoch": int(current_epoch)}
-
-def resolve_ml_state_normalization(args, system_name):
-    """
-    Decide whether to standardize state before expansion for ML models.
-
-    auto: defaults to False for ML Koopman models (since mean-shifting 
-    corrupts polynomial basis independence), true otherwise.
-    """
-    if args.normalize_state_for_ml != "auto":
-        return args.normalize_state_for_ml == "true"
-
-    is_ml_model = args.model in {"ml_lineardynamics", "ml_dmd"}
-
-    # Mathematically, shifting state variables before applying polynomial 
-    # dictionaries creates parasitic lower-degree terms. Disable by default.
-    if is_ml_model:
-        return False
-
-    return True
 
 def main():
     parser = argparse.ArgumentParser(description="Fast W&B sweep training for Koopman models")
@@ -90,7 +60,8 @@ def main():
         required=True,
         choices=[
             "ml_linear_dynamics",
-            "ml_dmd",
+            "ml_dmd_free",
+            "ml_dmd_band",
         ],
     )
     parser.add_argument("--data_path", type=str, required=True)
@@ -103,7 +74,6 @@ def main():
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-6)
-    parser.add_argument("--normalize_state_for_ml", type=str.lower, choices=["true", "false", "auto"], default="auto")
 
     # model hyperparameters
     parser.add_argument("--bias", type=str.lower, choices=["true", "false"], default="true")
@@ -141,19 +111,6 @@ def main():
     train_X = meta["X"]
     state_dim = train_X.shape[-1]
 
-    train_state_mean = torch.tensor(
-        np.mean(train_X, axis=(0, 1)),
-        dtype=torch.float32,
-        device=device,
-    )
-
-    train_state_scale = torch.tensor(
-        np.std(train_X, axis=(0, 1)),
-        dtype=torch.float32,
-        device=device,
-    )
-    train_state_scale = torch.clamp(train_state_scale, min=1e-6)
-
     if train_X.ndim != 3:
         raise ValueError("Expected X to have shape (T, n_traj, d).")
 
@@ -171,9 +128,6 @@ def main():
     print(f"Train trajectory tensor shape: {train_X.shape}")
     print(f"Val trajectory tensor shape:   {val_X.shape}")
     print(f"Test trajectory tensor shape:  {test_X.shape}")
-
-    normalize_state_for_ml = resolve_ml_state_normalization(args, system_name)
-    print(f"ML state normalization before expansion: {normalize_state_for_ml}")
 
     # --------------------------------------------------
     # W&B init
@@ -197,7 +151,6 @@ def main():
             **vars(args),
             "system": system_name,
             "state_dim": int(state_dim),
-            "effective_normalize_state_for_ml": normalize_state_for_ml,            
             "group_name": f"{system_name}_{args.model}",
             "model_name": args.model,
             "system_name": system_name,
@@ -253,10 +206,6 @@ def main():
     if hasattr(model, "expand_names"):
         print(f"Expanded features: {len(model.expand_names)}")
         print(model.expand_names)
-    if normalize_state_for_ml and hasattr(model, "set_state_scale"):
-        model.set_state_scale(train_state_mean, train_state_scale)
-
-    maybe_set_z_scale(model, train_loader, device)
 
     # --------------------------------------------------
     # Optimizer
@@ -342,13 +291,12 @@ def main():
 
         # one-step validation every epoch
         print("Computing validation one-step metrics...")
-        val_loss, val_one_step_rmse, val_one_step_nrmse = compute_loader_metrics(
-            model, val_loader, device, state_scale=train_state_scale
+        val_loss, val_one_step_rmse = compute_loader_metrics(
+            model, val_loader, device
         )
 
         print(f"Val loss:          {fmt_metric(val_loss)}")
         print(f"Val one-step RMSE: {fmt_metric(val_one_step_rmse)}")
-        print(f"Val one-step NRMSE: {fmt_metric(val_one_step_nrmse)}")
 
         # rollout validation
         do_rollout_eval = ((epoch + 1) % args.eval_every == 0) or (epoch == args.epochs - 1)
@@ -365,8 +313,7 @@ def main():
                 device=device,
                 horizon=args.rollout_horizon,
                 gamma=args.rollout_gamma,
-                max_trajs=args.max_val_rollout_trajs,
-                state_scale=train_state_scale,
+                max_trajs=args.max_val_rollout_trajs
             )
 
             print_multi_horizon_metrics(
@@ -389,9 +336,6 @@ def main():
 
         if val_one_step_rmse is not None:
             log_dict["val_one_step_rmse"] = val_one_step_rmse
-        
-        if val_one_step_nrmse is not None:
-            log_dict["val_one_step_nrmse"] = val_one_step_nrmse
 
         if val_rollout_metrics is not None:
             add_prefixed_metrics(log_dict, val_rollout_metrics, "val_")
@@ -434,8 +378,8 @@ def main():
     # Final validation (last epoch weights)
     # --------------------------------------------------
     print("\n===== FINAL EPOCH VALIDATION =====")
-    val_final_loss, val_final_one_step_rmse, val_final_one_step_nrmse = compute_loader_metrics(
-        model, val_loader, device, state_scale=train_state_scale
+    val_final_loss, val_final_one_step_rmse = compute_loader_metrics(
+        model, val_loader, device
     )
 
     val_final_rollout_metrics = compute_rollout_metrics(
@@ -444,13 +388,11 @@ def main():
         device=device,
         horizon=args.rollout_horizon,
         gamma=args.rollout_gamma,
-        max_trajs=args.max_val_rollout_trajs,
-        state_scale=train_state_scale,
+        max_trajs=args.max_val_rollout_trajs
     )
 
     print(f"val_final_loss:          {fmt_metric(val_final_loss)}")
     print(f"val_final_one_step_rmse: {fmt_metric(val_final_one_step_rmse)}")
-    print(f"val_final_one_step_nrmse:{fmt_metric(val_final_one_step_nrmse)}")
     print_multi_horizon_metrics(
         val_final_rollout_metrics,
         gamma=args.rollout_gamma,
@@ -459,8 +401,7 @@ def main():
 
     val_final_log = {
         "val_final_loss": val_final_loss,
-        "val_final_one_step_rmse": val_final_one_step_rmse,
-        "val_final_one_step_nrmse": val_final_one_step_nrmse,
+        "val_final_one_step_rmse": val_final_one_step_rmse
     }
     add_prefixed_metrics(val_final_log, val_final_rollout_metrics, "val_final_")
     wandb.log(val_final_log)
@@ -469,8 +410,8 @@ def main():
     # Final test
     # --------------------------------------------------
     print("\n===== FINAL TEST =====")
-    test_loss, test_one_step_rmse, test_one_step_nrmse = compute_loader_metrics(
-        model, test_loader, device, state_scale=train_state_scale
+    test_loss, test_one_step_rmse = compute_loader_metrics(
+        model, test_loader, device
     )
 
     test_rollout_metrics = compute_rollout_metrics(
@@ -479,13 +420,11 @@ def main():
         device=device,
         horizon=args.rollout_horizon,
         gamma=args.rollout_gamma,
-        max_trajs=args.max_test_rollout_trajs,
-        state_scale=train_state_scale,
+        max_trajs=args.max_test_rollout_trajs
     )
 
     print(f"test_loss:          {fmt_metric(test_loss)}")
     print(f"test_one_step_rmse: {fmt_metric(test_one_step_rmse)}")
-    print(f"test_one_step_nrmse: {fmt_metric(test_one_step_nrmse)}")
     print_multi_horizon_metrics(
         test_rollout_metrics,
         gamma=args.rollout_gamma,
@@ -494,8 +433,7 @@ def main():
 
     test_log = {
         "test_loss": test_loss,
-        "test_one_step_rmse": test_one_step_rmse,
-        "test_one_step_nrmse": test_one_step_nrmse,
+        "test_one_step_rmse": test_one_step_rmse
     }
     add_prefixed_metrics(test_log, test_rollout_metrics, "test_")
     wandb.log(test_log)
@@ -505,9 +443,6 @@ def main():
     # --------------------------------------------------
     wandb.summary["val_final_one_step_rmse"] = val_final_one_step_rmse
     wandb.summary["test_one_step_rmse"] = test_one_step_rmse
-
-    wandb.summary["val_final_one_step_nrmse"] = val_final_one_step_nrmse
-    wandb.summary["test_one_step_nrmse"] = test_one_step_nrmse
 
     wandb.summary["val_final_loss"] = val_final_loss
     wandb.summary["test_loss"] = test_loss

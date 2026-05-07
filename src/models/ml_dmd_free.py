@@ -3,7 +3,7 @@ import torch.nn as nn
 
 from src.models.expander import build_expander
 
-class ML_DMD(nn.Module):
+class ML_DMD_FREE(nn.Module):
     """
     Manual expansion + learned Koopman eigendecomposition.
 

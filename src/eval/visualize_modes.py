@@ -5,7 +5,7 @@ import sympy
 from scipy.linalg import expm
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
-from src.models.ml_dmd_free import ML_DMD
+from src.models.ml_dmd_free import ML_DMD_FREE
 from src.models.ml_dmd_band import ML_DMD_BAND
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 
@@ -39,7 +39,7 @@ def safe_de_expand(model, x):
 
 def build_model_from_checkpoint(model_path):
     ckpt = torch.load(model_path, map_location="cpu")
-    model_name = ckpt.get("model", "ml_dmd")
+    model_name = ckpt.get("model", "ml_dmd_free")
     train_args = ckpt["train_args"]
     
     kwargs = {
@@ -51,8 +51,8 @@ def build_model_from_checkpoint(model_path):
         "system": ckpt["system"],
     }
 
-    if model_name == "ml_dmd":
-        model = ML_DMD(**kwargs)
+    if model_name == "ml_dmd_free":
+        model = ML_DMD_FREE(**kwargs)
     elif model_name == "ml_dmd_band":
         model = ML_DMD_BAND(**kwargs)
     elif model_name == "ml_lineardynamics":

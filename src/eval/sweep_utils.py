@@ -2,53 +2,8 @@ import numpy as np
 import torch
 
 from src.models.ml_linear_dynamics import ML_LinearDynamics
-from src.models.ml_dmd_free import ML_DMD
-
-
-def maybe_set_z_scale(model, train_loader, device):
-    if hasattr(model, "expand") and hasattr(model, "set_z_scale"):
-        print("Setting z_scale from training data (Std Deviation)...")
-        with torch.no_grad():
-            count = 0
-            z_sum = None
-            z_sumsq = None
-
-            for batch in train_loader:
-                x_batch = batch[0]
-                x_batch = x_batch.to(device)
-                if hasattr(model, "scale_state"):
-                    x_batch = model.scale_state(x_batch)
-                z_batch = model.expand(x_batch)
-                z_batch = z_batch.reshape(-1, z_batch.shape[-1])
-
-                batch_n = z_batch.shape[0]
-                batch_sum = torch.sum(z_batch, dim=0)
-                batch_sumsq = torch.sum(z_batch * z_batch, dim=0)
-
-                if z_sum is None:
-                    z_sum = batch_sum
-                    z_sumsq = batch_sumsq
-                else:
-                    z_sum = z_sum + batch_sum
-                    z_sumsq = z_sumsq + batch_sumsq
-                count += batch_n
-
-            if count > 0:
-                # Streaming std: var = E[x^2] - E[x]^2
-                z_mean = z_sum / count
-                z_var = z_sumsq / count - z_mean * z_mean
-                z_var = torch.clamp(z_var, min=0.0)
-                z_scale = torch.sqrt(z_var)
-
-                # Use std to normalize basis functions: equalize their amplitudes.
-                # IMPORTANT: near-constant features (e.g. bias term "1") should not
-                # get tiny scales, otherwise they explode after division.
-                near_constant = z_scale < 1e-3
-                z_scale = torch.where(near_constant, torch.ones_like(z_scale), z_scale)
-                z_scale = torch.clamp(z_scale, min=1e-2, max=1e2)
-                model.set_z_scale(z_scale)
-        print("z_scale set.")
-
+from src.models.ml_dmd_free import ML_DMD_FREE
+from src.models.ml_dmd_band import ML_DMD_BAND
 
 def build_run_name(args, system_name, run_id=None):
     parts = [system_name, args.model]
@@ -77,8 +32,18 @@ def build_model(args, state_dim, system_name, device):
             system=system_name,
         ).to(device)
 
-    elif args.model == "ml_dmd":
-        model = ML_DMD(
+    elif args.model == "ml_dmd_free":
+        model = ML_DMD_FREE(
+            state_dim=state_dim,
+            expansion_degree=args.expansion_degree,
+            bias=args.bias == "true",
+            sine_cosine_expansion=args.sine_cosine_expansion == "true",
+            expansion_type=args.expansion_type,
+            system=system_name if args.expansion_type == "specific" else None,
+        ).to(device)
+
+    elif args.model == "ml_dmd_band":
+        model = ML_DMD_BAND(
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
             bias=args.bias == "true",
@@ -93,25 +58,14 @@ def build_model(args, state_dim, system_name, device):
     return model
 
 
-def compute_loader_metrics(model, loader, device, state_scale=None):
+def compute_loader_metrics(model, loader, device):
     if loader is None or len(loader.dataset) == 0:
         return None, None, None
-
-    if state_scale is None:
-        raise ValueError("state_scale must be provided for one-step NRMSE computation.")
-
-    if isinstance(state_scale, np.ndarray):
-        state_scale = torch.tensor(state_scale, dtype=torch.float32, device=device)
-    else:
-        state_scale = state_scale.to(device)
-
-    state_scale = state_scale + 1e-8
 
     model.eval()
 
     total_loss = 0.0
     total_sq_err = 0.0
-    total_sq_err_norm = 0.0
     total_numel = 0
     total_samples = 0
 
@@ -129,14 +83,12 @@ def compute_loader_metrics(model, loader, device, state_scale=None):
             total_samples += bs
 
             total_sq_err += torch.sum(diff ** 2).item()
-            total_sq_err_norm += torch.sum((diff / state_scale) ** 2).item()
             total_numel += y.numel()
 
     mean_loss = total_loss / max(total_samples, 1)
     rmse = float(np.sqrt(total_sq_err / max(total_numel, 1)))
-    nrmse = float(np.sqrt(total_sq_err_norm / max(total_numel, 1)))
 
-    return mean_loss, rmse, nrmse
+    return mean_loss, rmse
 
 def compute_rollout_metrics(
     model,
@@ -144,21 +96,15 @@ def compute_rollout_metrics(
     device,
     horizon=500,
     gamma=0.99,
-    max_trajs=None,
-    state_scale=None,
+    max_trajs=None
 ):
     """
     Computes:
       - horizon-N RMSE
-      - horizon-N NRMSE
             - weighted cumulative horizon RMSE-prediction error
-      - weighted cumulative horizon NRMSE-prediction error
 
     X expected shape: (T, N, d)
     rollout always starts from X[0] and compares predictions against X[t].
-
-    NRMSE is normalized per state dimension using the empirical standard
-    deviation of the target rollout window.
     """
     if X is None:
         return None
@@ -180,21 +126,10 @@ def compute_rollout_metrics(
 
     model.eval()
 
-    if state_scale is None:
-        raise ValueError("state_scale must be provided for rollout NRMSE computation.")
-
-    if isinstance(state_scale, np.ndarray):
-        state_scale = torch.tensor(state_scale, dtype=torch.float32, device=device)
-    else:
-        state_scale = state_scale.to(device)
-
-    state_scale = state_scale + 1e-8
-
     x = X[0]
 
     # store per-step errors
     rmse_list = []
-    nrmse_list = []
 
     with torch.no_grad():
         for h in range(1, max_h + 1):
@@ -204,22 +139,15 @@ def compute_rollout_metrics(
                 for hh in [10, 100, 500]:
                     if hh <= max_h:
                         results[f"rollout_rmse_h{hh}"] = np.nan
-                        results[f"rollout_nrmse_h{hh}"] = np.nan
                         results[f"discounted_mean_rmse_h{hh}_g{gamma:.2f}"] = np.nan
-                        results[f"discounted_mean_nrmse_h{hh}_g{gamma:.2f}"] = np.nan
                 return results
 
             diff = x - X[h]
-
             rmse_h = torch.sqrt(torch.mean(diff ** 2))
-            nrmse_h = torch.sqrt(torch.mean((diff / state_scale) ** 2))
-
             rmse_list.append(rmse_h)
-            nrmse_list.append(nrmse_h)
+
 
     rmse_tensor = torch.stack(rmse_list)     # (H,)
-    nrmse_tensor = torch.stack(nrmse_list)   # (H,)
-
     results = {}
 
     # ---- extract specific horizons ----
@@ -228,16 +156,11 @@ def compute_rollout_metrics(
     for h in eval_points:
         if h <= max_h:
             results[f"rollout_rmse_h{h}"] = float(rmse_tensor[h-1].item())
-            results[f"rollout_nrmse_h{h}"] = float(nrmse_tensor[h-1].item())
-
             weights = torch.tensor(
                 [gamma ** i for i in range(1, h + 1)],
                 device=device
             )
             weighted_rmse = torch.sum(weights * rmse_tensor[:h]) / torch.sum(weights)
-            weighted_nrmse = torch.sum(weights * nrmse_tensor[:h]) / torch.sum(weights)
-
             results[f"discounted_mean_rmse_h{h}_g{gamma:.2f}"] = float(weighted_rmse.item())
-            results[f"discounted_mean_nrmse_h{h}_g{gamma:.2f}"] = float(weighted_nrmse.item())
 
     return results
