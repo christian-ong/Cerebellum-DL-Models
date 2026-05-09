@@ -221,7 +221,7 @@ def load_model(
         extras["ckpt"] = ckpt
         return model, extras
 
-    if model_name == "ml_dmd_free":
+    if model_name == "ml_dmd_free" or model_name == "hardcoded_dmd":
         ckpt = torch.load(model_path, map_location=device)
         train_args = ckpt["train_args"]
 
