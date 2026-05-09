@@ -1,0 +1,104 @@
+"""
+python -m scripts.set_weights
+
+This script lets you manually set model weights.
+"""
+import argparse
+import os
+import numpy as np
+import torch
+from torch import device
+from torch.utils.data import DataLoader
+from src.data_generation.load_data import OneStepTrajectoryDataset
+from src.models.ml_dmd_free import ML_DMD_FREE
+from src.eval.visualize_modes import get_system_matrices, get_sorted_jordan_form, get_real_representation
+
+"""
+python -m scripts.set_weights --system_name closed_trig_large --expansion_degree 3
+"""
+
+# =========================================
+parser = argparse.ArgumentParser(
+        description="Train linear baselines, DMD/EDMD, or AE models"
+    )
+parser.add_argument("--expansion_degree", type=int, default=3, help="Degree of expansion for the model")
+parser.add_argument("--system_name", type=str, default="closed_trig_large", help="Name of the system to use")
+parser.add_argument("--truncate", type=str, default="before", choices=["before", "after"], help="Truncate system before or after computing modes")
+args = parser.parse_args()
+expansion_degree = args.expansion_degree
+system_name = args.system_name
+
+custom_name = f"deg{expansion_degree}"
+
+# =========================================
+# Custom weights
+A_c, A_d, _, _, system_expansion_names = get_system_matrices(
+    system=system_name,
+)
+
+if args.truncate == "before":
+    A_d = A_d[:expansion_degree, :expansion_degree]
+    Lambda_jordan, V_theory = get_sorted_jordan_form(A_d)
+
+if args.truncate == "after":
+    Lambda_jordan, V_theory = get_sorted_jordan_form(A_d)
+    custom_lambda = Lambda_jordan[:expansion_degree, :expansion_degree]
+    custom_phi = V_theory[:, :expansion_degree]
+
+# To real representation
+V_theory, Lambda_jordan = get_real_representation(V_theory, np.diag(Lambda_jordan))
+custom_lambda = torch.tensor(Lambda_jordan, dtype=torch.float64)
+custom_phi = torch.tensor(V_theory, dtype=torch.float64)
+
+
+model_name = "hardcoded_dmd"
+expansion_type = "specific"
+bias = True if "1" in system_expansion_names else False
+sine_cosine_expansion=True if "sin" in system_expansion_names else False
+
+# =========================================
+state_dim = 2 if "lorenz" not in system_name else 3
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = ML_DMD_FREE(
+    state_dim=state_dim,
+    expansion_degree=expansion_degree,
+    bias=bias,
+    sine_cosine_expansion=sine_cosine_expansion,
+    expansion_type=expansion_type,
+    system=system_name,
+).to(device)
+
+# Set custom weights here
+with torch.no_grad():
+    # Update the learned parameters
+    # We use .copy_() to update the tensor data in-place
+    model.Phi.copy_(custom_phi)
+    model.Lambda.copy_(custom_lambda)
+    print("here2:", model.Phi, model.Lambda)
+
+# Save the model so you can use it in your evaluation scripts
+save_path = f"data/models/{model_name}/{system_name}/{custom_name}/model.pt"
+
+os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+torch.save({
+    "model": model_name,
+    "system": system_name,
+    "state_dim": state_dim,
+    "model_state_dict": model.state_dict(),
+    "expand_names": model.expand_names,
+    "train_args": {
+        "expansion_degree": expansion_degree,
+        "expansion_type": expansion_type,
+        "bias": bias,
+        "sine_cosine_expansion": sine_cosine_expansion
+    }
+}, save_path)
+
+
+print(model.expand_names)
+print(model.Phi)
+print(model.Lambda)
+
+print(f"\nModel with custom weights saved to: {save_path}")
