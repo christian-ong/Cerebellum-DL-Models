@@ -265,7 +265,7 @@ def main():
     parser.add_argument(
         "--rollout_horizon",
         type=int,
-        default=20,
+        default=5,
         help="Rollout supervision horizon for loss computation.",
     )
     parser.add_argument(
@@ -638,7 +638,11 @@ def main():
             bias=args.bias == "true",
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             expansion_type=args.expansion_type,
-            system=system_name if args.expansion_type == "specific" else None
+            system=system_name if args.expansion_type == "specific" else None,
+            rbf_n_centers=args.rbf_n_centers,
+            rbf_center_selection=args.rbf_center_selection,
+            rbf_bandwidth_mode=args.rbf_bandwidth_mode,
+            rbf_knn_k=args.rbf_knn_k,
         ).to(device)
 
     elif args.model == "mlp_baseline":
@@ -659,7 +663,7 @@ def main():
         print(f"Expand names: {model.expand_names}")
     
     # Train
-    model, (train_losses, batch_val_losses, epoch_val_losses, loss_components_val), best_checkpoint = train_onestep(
+    model, (train_losses, epoch_val_losses, loss_components_val), best_checkpoint = train_onestep(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
@@ -715,8 +719,7 @@ def main():
     )
     
     loss_path = os.path.join(save_dir, "losses.npz")
-    np.savez(loss_path, train_losses=train_losses, batch_val_losses=batch_val_losses,
-             epoch_val_losses=epoch_val_losses, loss_components_val=loss_components_val)
+    np.savez(loss_path, train_losses=train_losses, epoch_val_losses=epoch_val_losses, loss_components_val=loss_components_val)
     
     print(f"Saved best model to {best_save_path}")
     print(f"Saved last model to {last_save_path}")

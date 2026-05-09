@@ -108,35 +108,32 @@ class ML_LinearDynamics(nn.Module):
     def compute_loss(self, x, x_next_true, future_x=None):
         z = self.expander.expand(x)
         z_next_true = self.expander.expand(x_next_true)
-
         z_next_pred = self._advance_z(z)
 
-        # 1) Lifted Koopman loss
-        diff = z_next_pred - z_next_true
-        loss_lift = torch.mean(diff**2)
+        loss_lift = torch.mean((z_next_pred - z_next_true)**2)
+        loss_state = nn.MSELoss()(self.expander.de_expand(z_next_pred), x_next_true)
 
-        # 2) State prediction loss
-        x_next_pred = self.expander.de_expand(z_next_pred)
-        loss_state = nn.MSELoss()(x_next_pred, x_next_true)
-
-        # 3) Multi-step Rollout Loss
         loss_rollout = torch.tensor(0.0, device=x.device)
         if future_x is not None and future_x.ndim == 3:
             horizon = min(self.rollout_horizon, future_x.shape[1])
             if horizon >= 2:
-                z_curr_pred = z_next_pred 
+                # PRE-EXPAND FUTURE TARGETS (Saves massive time)
+                # This moves from (N, T, d) -> (T, N, dz)
+                z_targets = self.expander.expand(future_x.reshape(-1, self.state_dim))
+                z_targets = z_targets.reshape(x.shape[0], future_x.shape[1], -1)
+
+                z_curr = z_next_pred
                 for k in range(1, horizon):
-                    z_curr_pred = self._advance_z(z_curr_pred)
-                    z_true_k = self.expander.expand(future_x[:, k, :])
-                    z_true_k = torch.clamp(z_true_k, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
-                    loss_rollout += torch.mean((z_curr_pred - z_true_k)**2)
-                loss_rollout = loss_rollout / float(horizon - 1)
+                    z_curr = self._advance_z(z_curr)
+                    loss_rollout += torch.mean((z_curr - z_targets[:, k, :])**2)
+                    loss_rollout += torch.mean((self.expander.de_expand(z_curr) - future_x[:, k, :])**2)
+                loss_rollout /= (horizon - 1)
 
         # Total loss
         loss = (
             loss_lift 
             + 0.5 * loss_state 
-            + 0.1 * loss_rollout
+            + 1.0 * loss_rollout    # INCREASED: 0.1 -> 1.0
         )
 
         loss_dict = {

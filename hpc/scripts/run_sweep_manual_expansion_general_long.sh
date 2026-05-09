@@ -28,7 +28,7 @@ source .venv/bin/activate
 # SWEEP
 # ----------------------------------
 
-SWEEP_ID=DeepLearningP4Destruction/Cerebellum-DL-Models/bt4lytak
+SWEEP_ID=DeepLearningP4Destruction/koopman-operator-learning/jenor1kx
 
 # ----------------------------------
 # RUN (ONLY ONE AGENT!)

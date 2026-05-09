@@ -30,6 +30,10 @@ def build_model(args, state_dim, system_name, device):
             bias=args.bias == "true",
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             system=system_name,
+            rbf_n_centers=getattr(args, "rbf_n_centers", 50),
+            rbf_center_selection=getattr(args, "rbf_center_selection", "farthest"),
+            rbf_bandwidth_mode=getattr(args, "rbf_bandwidth_mode", "knn"),
+            rbf_knn_k=getattr(args, "rbf_knn_k", 5),
         ).to(device)
 
     elif args.model == "ml_dmd_free":
@@ -40,6 +44,10 @@ def build_model(args, state_dim, system_name, device):
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             expansion_type=args.expansion_type,
             system=system_name if args.expansion_type == "specific" else None,
+            rbf_n_centers=getattr(args, "rbf_n_centers", 50),
+            rbf_center_selection=getattr(args, "rbf_center_selection", "farthest"),
+            rbf_bandwidth_mode=getattr(args, "rbf_bandwidth_mode", "knn"),
+            rbf_knn_k=getattr(args, "rbf_knn_k", 5),
         ).to(device)
 
     elif args.model == "ml_dmd_band":
@@ -50,6 +58,10 @@ def build_model(args, state_dim, system_name, device):
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             expansion_type=args.expansion_type,
             system=system_name if args.expansion_type == "specific" else None,
+            rbf_n_centers=getattr(args, "rbf_n_centers", 50),
+            rbf_center_selection=getattr(args, "rbf_center_selection", "farthest"),
+            rbf_bandwidth_mode=getattr(args, "rbf_bandwidth_mode", "knn"),
+            rbf_knn_k=getattr(args, "rbf_knn_k", 5),
         ).to(device)
 
     else:
@@ -105,18 +117,10 @@ def compute_rollout_metrics(
     model,
     X,
     device,
-    horizon=500,
+    eval_horizons=[5, 50, 100],
     gamma=0.99,
     max_trajs=None
 ):
-    """
-    Computes:
-      - horizon-N RMSE
-            - weighted cumulative horizon RMSE-prediction error
-
-    X expected shape: (T, N, d)
-    rollout always starts from X[0] and compares predictions against X[t].
-    """
     if X is None:
         return None
 
@@ -125,52 +129,65 @@ def compute_rollout_metrics(
     else:
         X = X.to(device)
 
-    T, N, d = X.shape
-
-    if max_trajs is not None and N > max_trajs:
+    # Subsample trajectories if requested to speed up sweep evaluation
+    if max_trajs is not None and max_trajs < X.shape[1]:
         X = X[:, :max_trajs, :]
-        T, N, d = X.shape
 
-    max_h = min(horizon, T - 1)
+    T, N, d = X.shape
+    max_requested_h = max(eval_horizons)
+    max_h = min(max_requested_h, T - 1)
+    
     if max_h < 1:
         return None
 
     model.eval()
-
-    x = X[0]
-
-    # store per-step errors
+    results = {"rollout_failed": 0.0}
     rmse_list = []
 
     with torch.no_grad():
+        # 1. EXPAND ONCE
+        z = model.expander.expand(X[0])
+        z = torch.clamp(z, min=-model.max_abs_z_norm, max=model.max_abs_z_norm)
+
+        # 2. IDENTIFY EFFICIENT PATH
+        # Check if it's a DMD model (has Phi/Lambda) to use Modal Space
+        is_dmd = hasattr(model, 'get_Phi') and hasattr(model, 'get_Lambda')
+        
+        if is_dmd:
+            Phi = model.get_Phi()
+            I_eps = 1e-6 * torch.eye(model.latent_dim, device=device)
+            current_state = torch.linalg.solve(Phi + I_eps, z.mT).mT
+            operator = model.get_Lambda().mT
+        else:
+            current_state = z
+            operator = model.get_K() # FIX 2: get_K() returns K.weight.mT, which is mathematically correct for z @ operator
+
+        # 3. ROLLOUT LOOP (Pure Matmuls)
         for h in range(1, max_h + 1):
-            x = model(x)
-            if not torch.isfinite(x).all():
-                results = {"rollout_failed": 1.0}
-                for hh in [10, 100, 500]:
-                    if hh <= max_h:
-                        results[f"rollout_rmse_h{hh}"] = np.nan
-                        results[f"discounted_mean_rmse_h{hh}_g{gamma:.2f}"] = np.nan
+            current_state = current_state @ operator
+            
+            if is_dmd:
+                z_step = current_state @ model.get_Phi().mT # FIX 3: Use get_Phi() here too
+                x_pred = model.expander.de_expand(z_step)
+            else:
+                x_pred = model.expander.de_expand(current_state)
+
+            if not torch.isfinite(x_pred).all():
+                results["rollout_failed"] = 1.0
+                for hh in eval_horizons:
+                    results[f"rollout_rmse_h{hh}"] = np.nan
+                    results[f"discounted_mean_rmse_h{hh}_g{gamma:.2f}"] = np.nan
                 return results
 
-            diff = x - X[h]
-            rmse_h = torch.sqrt(torch.mean(diff ** 2))
-            rmse_list.append(rmse_h)
+            diff = x_pred - X[h]
+            rmse_list.append(torch.sqrt(torch.mean(diff ** 2)))
 
-
-    rmse_tensor = torch.stack(rmse_list)     # (H,)
-    results = {}
-
-    # ---- extract specific horizons ----
-    eval_points = [10, 100, 500]
-
-    for h in eval_points:
+    # 4. PROCESS HORIZONS
+    rmse_tensor = torch.stack(rmse_list)
+    for h in eval_horizons:
         if h <= max_h:
             results[f"rollout_rmse_h{h}"] = float(rmse_tensor[h-1].item())
-            weights = torch.tensor(
-                [gamma ** i for i in range(1, h + 1)],
-                device=device
-            )
+            weights = torch.tensor([gamma ** i for i in range(1, h + 1)], device=device)
             weighted_rmse = torch.sum(weights * rmse_tensor[:h]) / torch.sum(weights)
             results[f"discounted_mean_rmse_h{h}_g{gamma:.2f}"] = float(weighted_rmse.item())
 

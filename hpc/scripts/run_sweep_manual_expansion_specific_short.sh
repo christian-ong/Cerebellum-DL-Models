@@ -28,7 +28,7 @@ source .venv/bin/activate
 # SWEEP
 # ----------------------------------
 
-SWEEP_ID=DeepLearningP4Destruction/Cerebellum-DL-Models/0uptgwvc
+SWEEP_ID=DeepLearningP4Destruction/koopman-operator-learning/0uptgwvc
 
 # ----------------------------------
 # RUN (ONLY ONE AGENT!)

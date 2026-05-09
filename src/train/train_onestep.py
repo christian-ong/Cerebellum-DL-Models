@@ -138,7 +138,6 @@ def train_onestep(
 
     all_train_losses = []
     epoch_val_losses = []
-    batch_val_losses = []
     best_state_dict = None
     best_epoch = -1
     best_val_loss = float("inf")
@@ -152,9 +151,6 @@ def train_onestep(
         train_losses = []
         current_lr = optimizer.param_groups[0]["lr"]
         comp_sums = {}
-
-        # Create validation iterator once per epoch
-        val_iter = iter(val_loader) if val_loader is not None else None
 
         for batch in tqdm(train_loader):
 
@@ -202,47 +198,6 @@ def train_onestep(
             for k, v in loss_dict.items():
                 comp_sums[k] = comp_sums.get(k, 0.0) + float(v) * batch_size
             n_train += batch_size
-
-            # -------------------
-            # Batch validation
-            # -------------------
-            if val_loader is not None:
-
-                model.eval()
-
-                with torch.no_grad():
-
-                    # get next validation batch
-                    try:
-                        val_batch = next(val_iter)
-                    except StopIteration:
-                        val_iter = iter(val_loader)
-                        val_batch = next(val_iter)
-
-                    if len(val_batch) == 2:
-                        x_val, y_val = val_batch
-                        future_val_targets = None
-                    else:
-                        x_val, y_val, future_val_targets = val_batch
-
-                    x_val = x_val.to(device)
-                    y_val = y_val.to(device)
-                    if future_val_targets is not None:
-                        future_val_targets = future_val_targets.to(device, non_blocking=True)
-                    if hasattr(model, "compute_loss"):
-                        if future_val_targets is not None:
-                            val_loss, _ = unpack_loss_output(
-                                model.compute_loss(x_val, y_val, future_val_targets)
-                            )
-                        else:
-                            val_loss, _ = unpack_loss_output(model.compute_loss(x_val, y_val))
-                    else:
-                        y_val_hat = model(x_val)
-                        val_loss = loss_fn(y_val_hat, y_val)
-
-                    batch_val_losses.append(val_loss.item())
-
-                model.train()
 
         train_loss /= n_train
         all_train_losses.extend(train_losses)
@@ -333,7 +288,6 @@ def train_onestep(
 
     losses = (
         all_train_losses,
-        batch_val_losses,
         epoch_val_losses,
         None,
     )
