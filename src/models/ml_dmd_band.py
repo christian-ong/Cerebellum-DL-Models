@@ -58,6 +58,13 @@ class ML_DMD_BAND(nn.Module):
         self.rotation_act_scale = 1e-3
 
         # ------------------------------------------------
+        # Fixed lifted-feature scaling (dataset-level stats, not batch stats)
+        # ------------------------------------------------
+        self.register_buffer("lift_mean", torch.zeros(self.latent_dim))
+        self.register_buffer("lift_scale", torch.ones(self.latent_dim))
+        self.lift_norm_eps = 1e-6
+
+        # ------------------------------------------------
         # Eigenvector matrix Φ
         # ------------------------------------------------
         self.Phi = nn.Parameter(
@@ -80,6 +87,20 @@ class ML_DMD_BAND(nn.Module):
         # ------------------------------------------------
         self.max_abs_z_norm = 1e6
         self.rollout_horizon = 20
+        self.current_epoch = 0
+
+    def set_lifted_normalization_stats(self, mean, scale):
+        mean = torch.as_tensor(mean, dtype=self.lift_mean.dtype, device=self.lift_mean.device)
+        scale = torch.as_tensor(scale, dtype=self.lift_scale.dtype, device=self.lift_scale.device)
+        self.lift_mean.copy_(mean)
+        self.lift_scale.copy_(torch.clamp(scale, min=self.lift_norm_eps))
+
+    def _normalize(self, z, update_stats=True):
+        del update_stats
+        return (z - self.lift_mean) / self.lift_scale
+
+    def _unnormalize(self, z_norm):
+        return z_norm * self.lift_scale + self.lift_mean
 
     # ------------------------------------------------
     # Matrix Accessors
@@ -109,7 +130,7 @@ class ML_DMD_BAND(nn.Module):
         return torch.linalg.eigvals(self.get_Lambda())
 
     def _get_modal_coords(self, z):
-        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
+        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device)
         return torch.linalg.solve(self.Phi + I_eps, z.mT).mT
 
     def _step_modal(self, b):
@@ -119,32 +140,39 @@ class ML_DMD_BAND(nn.Module):
     def _modal_to_latent(self, b):
         z = b @ self.Phi.mT
         return torch.clamp(z, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
-    
+
     # ------------------------------------------------
     # Forward pass
     # ------------------------------------------------
     def forward(self, x):
         z = self.expander.expand(x)
-        b = self._get_modal_coords(z)
+        z_norm = self._normalize(z)
+        b = self._get_modal_coords(z_norm)
         b_next = self._step_modal(b)
         # Use your helper to get clamping for free!
         z_next = self._modal_to_latent(b_next) 
-        return self.expander.de_expand(z_next)
+        z_next_physical = self._unnormalize(z_next)
+        return self.expander.de_expand(z_next_physical)
 
     # ------------------------------------------------
     # Training loss
     # ------------------------------------------------
     def compute_loss(self, x, x_next_true, future_x=None):
-        z = self.expander.expand(x)
-        z_next_true = self.expander.expand(x_next_true)
+        # compute_loss fix
+        z_raw = self.expander.expand(x)
+        z_next_true_raw = self.expander.expand(x_next_true)
+
+        z_norm = self._normalize(z_raw)
+        z_next_true_norm = self._normalize(z_next_true_raw, update_stats=False)
 
         # Use the helpers!
-        b_curr = self._get_modal_coords(z)
+        b_curr = self._get_modal_coords(z_norm)
         b_next = self._step_modal(b_curr)
-        z_next_pred = self._modal_to_latent(b_next)
+        z_next_pred_norm = self._modal_to_latent(b_next)
 
-        loss_lift = torch.mean((z_next_pred - self.expander.expand(x_next_true))**2)
-        loss_state = torch.mean((self.expander.de_expand(z_next_pred) - x_next_true)**2)
+        loss_lift = torch.mean((z_next_pred_norm - z_next_true_norm)**2)
+        z_next_phys = self._unnormalize(z_next_pred_norm)
+        loss_state = torch.mean((self.expander.de_expand(z_next_phys) - x_next_true)**2)
 
         # 3. Rollout
         loss_rollout = torch.tensor(0.0, device=x.device)
@@ -154,19 +182,23 @@ class ML_DMD_BAND(nn.Module):
                 # PRE-EXPAND FUTURE TARGETS (Massive speedup!)
                 z_targets = self.expander.expand(future_x.reshape(-1, self.state_dim))
                 z_targets = z_targets.reshape(x.shape[0], future_x.shape[1], -1)
+                z_targets_norm = self._normalize(z_targets.reshape(-1, self.latent_dim), update_stats=False)
+                z_targets_norm = z_targets_norm.reshape_as(z_targets)
 
                 b_rollout = b_next
                 for k in range(1, horizon):
                     b_rollout = self._step_modal(b_rollout)
                     z_pred_k = self._modal_to_latent(b_rollout)
-                    
-                    loss_rollout += torch.mean((z_pred_k - z_targets[:, k, :])**2)
-                    loss_rollout += torch.mean((self.expander.de_expand(z_pred_k) - future_x[:, k, :])**2)
+                    z_pred_k_phys = self._unnormalize(z_pred_k)
+                    loss_rollout += torch.mean((z_pred_k - z_targets_norm[:, k, :])**2)
+                    loss_rollout += torch.mean((self.expander.de_expand(z_pred_k_phys) - future_x[:, k, :])**2)
                 loss_rollout = loss_rollout / float(horizon - 1)
+                
         # 3. Structural Constraints (Phi)
         phi_phys = self.get_Phi()
         col_norms = torch.linalg.norm(phi_phys, dim=0)
         loss_unit_length = torch.mean((col_norms - 1.0) ** 2) # Use L2 for stable normalization
+        loss_phi_sparse = torch.mean(torch.abs(phi_phys))
 
         # 4. Lambda Regularization (The "Softened" Physics Router)
         b = self.eig_super
@@ -174,10 +206,10 @@ class ML_DMD_BAND(nn.Module):
         d = self.eig_diag
         diff_diag = d[:-1] - d[1:]
 
-        # Branch 1: Rotation Block (L2 for equality allows precision)
-        dist_rot = (b + c)**2 + (diff_diag)**2          
+        # Branch 1: Rotation Block
+        dist_rot = torch.abs(b + c) + torch.abs(diff_diag)      
         
-        # Branch 2: Independent Modes (L1 for sparsity forces true zero)
+        # Branch 2: Independent Modes
         dist_indep = torch.abs(b) + torch.abs(c)
 
         dist_all = torch.min(torch.stack([dist_rot, dist_indep], dim=0), dim=0).values
@@ -186,11 +218,11 @@ class ML_DMD_BAND(nn.Module):
         loss_same_sign = torch.mean(torch.relu(b * c))
         # Keep Overlap and Sparsity as L1 to force blocks to separate
         loss_overlap = torch.mean(torch.abs(b[:-1] * b[1:]) + torch.abs(c[:-1] * c[1:]))
-        loss_sparsity = torch.mean(torch.abs(b)) + torch.mean(torch.abs(c))
+        loss_lam_sparse = torch.mean(torch.abs(b)) + torch.mean(torch.abs(c))
 
         # 5. Annealing (Lower cap and slower ramp)
         start_weight = 0.0     
-        end_weight = 0.05      # REDUCED: 0.5 -> 0.05 (Don't let structure drown out accuracy)
+        end_weight = 0.1
         warmup_epochs = 40.0   
         ramp_epochs = 200.0  
 
@@ -211,7 +243,8 @@ class ML_DMD_BAND(nn.Module):
             + structural_weight * loss_manifold      
             + structural_weight * loss_same_sign 
             + structural_weight * loss_overlap      
-            + 1e-8 * loss_sparsity               # LOWERED: 1e-7 -> 1e-8
+            + 1e-4 * loss_lam_sparse
+            + 1e-4 * loss_phi_sparse
         )
         
         loss_dict = {
@@ -221,7 +254,8 @@ class ML_DMD_BAND(nn.Module):
             "unit": loss_unit_length.item(),
             "manifold": loss_manifold.item(),
             "overlap": loss_overlap.item(),
-            "lam_sp": loss_sparsity.item(),
+            "lam_sp": loss_lam_sparse.item(),
+            "phi_sp": loss_phi_sparse.item(),
             "struct_weight": structural_weight,
         }
         return (loss_total, loss_dict)
@@ -243,11 +277,13 @@ class ML_DMD_BAND(nn.Module):
         
         # 1. Expand the state to latent space exactly ONCE
         z = self.expander.expand(x)
-        b = self._get_modal_coords(z)
+        z_norm = self._normalize(z, update_stats=False)
+        b = self._get_modal_coords(z_norm)
         
         traj = [x.squeeze(0)]
         for _ in range(steps):
-            b = self._step_modal(b)               # Clean loop
-            z_next = self._modal_to_latent(b)     # Handles clamping automatically
-            traj.append(self.expander.de_expand(z_next).squeeze(0))
+            b = self._step_modal(b)   # MATMUL LOOP
+            z = self._modal_to_latent(b)
+            z_phys = self._unnormalize(z) # MUST unnormalize before de-expanding
+            traj.append(self.expander.de_expand(z_phys).squeeze(0))
         return torch.stack(traj)

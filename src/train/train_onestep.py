@@ -17,6 +17,52 @@ def train_onestep(
 
     model = model.to(device)
 
+    def initialize_lifted_normalization(model, loader):
+        if not hasattr(model, "set_lifted_normalization_stats"):
+            return
+        if not hasattr(model, "expander") or not hasattr(model, "expand_names"):
+            return
+
+        feature_sum = None
+        feature_sq_sum = None
+        total_count = 0
+
+        with torch.no_grad():
+            for batch in loader:
+                x = batch[0].to(device)
+                z = model.expander.expand(x)
+
+                if feature_sum is None:
+                    feature_sum = torch.zeros(z.shape[1], dtype=torch.float64, device=z.device)
+                    feature_sq_sum = torch.zeros(z.shape[1], dtype=torch.float64, device=z.device)
+
+                z64 = z.to(torch.float64)
+                feature_sum += z64.sum(dim=0)
+                feature_sq_sum += (z64 ** 2).sum(dim=0)
+                total_count += z64.shape[0]
+
+        if total_count == 0:
+            return
+
+        mean = feature_sum / total_count
+        var = torch.clamp(feature_sq_sum / total_count - mean**2, min=1e-12)
+        scale = torch.sqrt(var)
+
+        fixed_mask = []
+        for name in model.expand_names:
+            fixed_mask.append(name == "1" or ("sin(" in name) or ("cos(" in name))
+
+        if any(fixed_mask):
+            fixed_mask = torch.tensor(fixed_mask, device=mean.device, dtype=torch.bool)
+            mean = mean.clone()
+            scale = scale.clone()
+            mean[fixed_mask] = 0.0
+            scale[fixed_mask] = 1.0
+
+        model.set_lifted_normalization_stats(mean, scale)
+
+    initialize_lifted_normalization(model, train_loader)
+
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=lr,
@@ -35,7 +81,8 @@ def train_onestep(
         optimizer,
         mode="min",
         factor=0.5,
-        patience=5
+        patience=5,
+        min_lr=1e-6,
     )
 
     loss_fn = torch.nn.MSELoss()
