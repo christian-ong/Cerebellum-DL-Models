@@ -16,6 +16,8 @@ python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_
 
 python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_short_spec10_fix3 --data_path data/trajectories/nonlinear/duffing/long
 
+
+python -m experiments.visualize_dynamic_modes --model_name hardcoded_dmd --custom_name deg3 --data_path data/trajectories/nonlinear/closed_trig_large/long
 """
 
 # --------------------------------------------------
@@ -49,6 +51,8 @@ print(f"Visualizing for System: {system}")
 # Load model and eigensystem
 if "ml" in args.model_name:
     model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model_best.pt"
+elif "hardcoded_dmd" in args.model_name:
+    model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model.pt"
 else:
     model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model.npz"
     raise NotImplementedError("Sorry Kavus, I didn't implement regression models yet...")

@@ -51,7 +51,7 @@ def build_model_from_checkpoint(model_path):
         "system": ckpt["system"],
     }
 
-    if model_name == "ml_dmd_free":
+    if model_name == "ml_dmd_free" or model_name == "hardcoded_dmd":
         model = ML_DMD_FREE(**kwargs)
     elif model_name == "ml_dmd_band":
         model = ML_DMD_BAND(**kwargs)
