@@ -2,8 +2,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
-
-def train_onestep(
+def train_onestep_sweep(
     model,
     train_loader,
     val_loader,
@@ -11,8 +10,7 @@ def train_onestep(
     epochs=50,
     lr=1e-3,
     weight_decay=1e-6,
-    log_phi_every=0,
-    phi_print_max_dim=12,
+    eval_callback=None, 
 ):
 
     model = model.to(device)
@@ -81,8 +79,7 @@ def train_onestep(
         optimizer,
         mode="min",
         factor=0.5,
-        patience=5,
-        min_lr=1e-6,
+        patience=5
     )
 
     loss_fn = torch.nn.MSELoss()
@@ -114,80 +111,10 @@ def train_onestep(
             "compute_loss must return a Tensor, a (loss,) tuple, or a (loss, loss_dict) tuple"
         )
 
-    def maybe_log_matrices(epoch_idx):
-        """Print physical Phi and Lambda during training when available.
-
-        This gives immediate feedback on whether the descaled Phi and the 
-        dynamics matrix Lambda are moving towards the expected structure.
-        """
-        if log_phi_every <= 0:
-            return
-        if (epoch_idx % log_phi_every) != 0 and epoch_idx != epochs - 1:
-            return
-        
-        # We need both methods to log successfully
-        if not (hasattr(model, "get_Phi") and hasattr(model, "get_Lambda")):
-            return
-
-        try:
-            with torch.no_grad():
-                phi = model.get_Phi().detach().cpu().float().numpy()
-                lam = model.get_Lambda().detach().cpu().float().numpy()
-        except Exception as exc:
-            print(f"Matrix log skipped at epoch {epoch_idx:03d}: {exc}")
-            return
-
-        if phi.ndim != 2 or lam.ndim != 2:
-            print(f"Epoch {epoch_idx:03d} | Matrices are not 2D.")
-            return
-
-        rows, cols = phi.shape
-        diag_phi = np.diag(phi)
-        offdiag_phi = phi - np.diag(diag_phi)
-        
-        try:
-            cond_phi = float(np.linalg.cond(phi))
-            cond_str = f"{cond_phi:.2e}"
-        except Exception:
-            cond_str = "nan"
-
-        print(
-            f"Epoch {epoch_idx:03d} | Shape {rows}x{cols} | "
-            f"Phi Cond: {cond_str} | "
-            f"Phi Diag Mean: {np.mean(np.abs(diag_phi)):.2e} | "
-            f"Phi Off-Diag Mean: {np.mean(np.abs(offdiag_phi)):.2e}"
-        )
-
-        # Truncate for printing if necessary
-        print_dim = min(rows, phi_print_max_dim)
-        phi_block = phi[:print_dim, :print_dim]
-        lam_block = lam[:print_dim, :print_dim]
-        
-        if rows > phi_print_max_dim:
-             print(f"Showing top-left {print_dim}x{print_dim} block:")
-
-        # We will format them as strings, split by line, and print side-by-side
-        phi_str = np.array2string(phi_block, precision=3, suppress_small=True, max_line_width=120)
-        lam_str = np.array2string(lam_block, precision=3, suppress_small=True, max_line_width=120)
-        
-        phi_lines = phi_str.split('\n')
-        lam_lines = lam_str.split('\n')
-        
-        print(f"{'Phi (Observation -> Modes)'.center(60)} | {'Lambda (Modal Dynamics)'.center(60)}")
-        print("-" * 123)
-        
-        # Zip them together, padding with empty strings if one is somehow longer
-        for p_line, l_line in zip(phi_lines, lam_lines):
-            # Pad the Phi line to 60 characters so the divider aligns
-            p_padded = p_line.ljust(60)
-            print(f"{p_padded} | {l_line}")
-        print("-" * 123)
-
     all_train_losses = []
     epoch_val_losses = []
-    best_state_dict = None
-    best_epoch = -1
-    best_val_loss = float("inf")
+    
+    # REMOVED best_state_dict and best_val_loss tracking here
 
     for epoch in range(epochs):
         model.current_epoch = epoch
@@ -196,50 +123,36 @@ def train_onestep(
         train_loss = 0.0
         n_train = 0
         train_losses = []
-        current_lr = optimizer.param_groups[0]["lr"]
         comp_sums = {}
 
         for batch in tqdm(train_loader):
-
             if len(batch) == 2:
                 x, y = batch
                 future_targets = None
             else:
                 x, y, future_targets = batch
 
-            x = x.to(device)
-            y = y.to(device)
+            x, y = x.to(device), y.to(device)
             if future_targets is not None:
                 future_targets = future_targets.to(device)
 
             optimizer.zero_grad()
 
-            # -------------------
-            # Training loss
-            # -------------------
             if hasattr(model, "compute_loss"):
                 if future_targets is not None:
-                    loss, loss_dict = unpack_loss_output(
-                        model.compute_loss(x, y, future_targets)
-                    )
+                    loss, loss_dict = unpack_loss_output(model.compute_loss(x, y, future_targets))
                 else:
                     loss, loss_dict = unpack_loss_output(model.compute_loss(x, y))
             else:
                 y_hat = model(x)
                 loss = loss_fn(y_hat, y)
-                # Baselines that do not expose component losses only report state loss.
                 loss_dict = {"state": loss.item()}
 
-            # -------------------
-            # Backprop
-            # -------------------
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             train_losses.append(loss.item())
-
-            # Accumulate for terminal logging
             batch_size = x.size(0)
             train_loss += loss.item() * batch_size
             for k, v in loss_dict.items():
@@ -250,32 +163,20 @@ def train_onestep(
         all_train_losses.extend(train_losses)
         avg_comps = {k: v / n_train for k, v in comp_sums.items()}
 
-        preferred_order = [
-            "state",
-            "lift",       # Added lift to track the base Koopman loss
-            "rollout",    # Added rollout
-            "phi_ortho",
-            "unit",
-            "manifold",   # Replaced old lam_* keys with the new structural keys
-            "same_sign",
-            "lam_sp",
-        ]
+        preferred_order = ["state", "lift", "rollout", "phi_ortho", "unit", "manifold", "same_sign", "lam_sp"]
         ordered_comp_keys = [k for k in preferred_order if k in avg_comps]
         ordered_comp_keys.extend(sorted(k for k in avg_comps if k not in preferred_order))
         comp_str = " | ".join(f"{k} {avg_comps[k]:.2e}" for k in ordered_comp_keys)
         
-        # -------------------
         # Full validation
-        # -------------------
         val_loss = None
-
         if val_loader is not None:
             model.eval()
-            val_loss_acc = 0.0 # Use a unique name for the accumulator
+            val_loss_acc = 0.0 
             n_val = 0
 
             with torch.no_grad():
-                for val_batch in val_loader: # Use val_batch to support optional rollout windows
+                for val_batch in val_loader: 
                     if len(val_batch) == 2:
                         xv, yv = val_batch
                         future_val_targets = None
@@ -288,9 +189,7 @@ def train_onestep(
 
                     if hasattr(model, "compute_loss"):
                         if future_val_targets is not None:
-                            batch_l, _ = unpack_loss_output(
-                                model.compute_loss(xv, yv, future_val_targets)
-                            )
+                            batch_l, _ = unpack_loss_output(model.compute_loss(xv, yv, future_val_targets))
                         else:
                             batch_l, _ = unpack_loss_output(model.compute_loss(xv, yv))
                     else:
@@ -298,20 +197,12 @@ def train_onestep(
                         batch_l = loss_fn(y_hat, yv)
 
                     batch_size = xv.size(0)
-                    val_loss_acc += batch_l.item() * batch_size # Accumulate batch_l
+                    val_loss_acc += batch_l.item() * batch_size
                     n_val += batch_size
 
-            val_loss = val_loss_acc / n_val # Calculate the final average
+            val_loss = val_loss_acc / n_val 
 
         epoch_val_losses.append(val_loss)
-
-        if val_loss is not None and val_loss < best_val_loss:
-            best_val_loss = float(val_loss)
-            best_epoch = epoch
-            best_state_dict = {
-                key: value.detach().cpu().clone()
-                for key, value in model.state_dict().items()
-            }
 
         if epoch < warmup_epochs:
             warmup_scheduler.step()
@@ -322,35 +213,17 @@ def train_onestep(
 
         if val_loss is not None:
             msg = f"Epoch {epoch:03d} | lr {current_lr:.2e} | train {train_loss:.4e} | val {val_loss:.4e}"
-            if comp_str:
-                msg += f" | {comp_str}"
-            print(msg)
         else:
             msg = f"Epoch {epoch:03d} | lr {current_lr:.2e} | train {train_loss:.4e}"
-            if comp_str:
-                msg += f" | {comp_str}"
-            print(msg)
+            
+        if comp_str:
+            msg += f" | {comp_str}"
+        print(msg)
 
-        maybe_log_matrices(epoch)
+        # Trigger our callback to log to W&B
+        if eval_callback is not None:
+            eval_callback(epoch, train_loss, val_loss)
 
-    losses = (
-        all_train_losses,
-        epoch_val_losses,
-        None,
-    )
+    losses = (all_train_losses, epoch_val_losses, None)
 
-    if best_state_dict is None:
-        best_state_dict = {
-            key: value.detach().cpu().clone()
-            for key, value in model.state_dict().items()
-        }
-        best_epoch = epochs - 1
-        best_val_loss = None
-
-    best_checkpoint = {
-        "state_dict": best_state_dict,
-        "epoch": best_epoch,
-        "val_loss": best_val_loss,
-    }
-
-    return model, losses, best_checkpoint
+    return model, losses

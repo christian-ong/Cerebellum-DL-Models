@@ -51,6 +51,13 @@ class ML_DMD_FREE(nn.Module):
         self.latent_dim = self.expanded_dim
 
         # ------------------------------------------------
+        # Fixed lifted-feature scaling (dataset-level stats, not batch stats)
+        # ------------------------------------------------
+        self.register_buffer("lift_mean", torch.zeros(self.latent_dim))
+        self.register_buffer("lift_scale", torch.ones(self.latent_dim))
+        self.lift_norm_eps = 1e-6
+
+        # ------------------------------------------------
         # Eigenvector matrix Φ
         # ------------------------------------------------
         # Columns correspond to Koopman modes.
@@ -76,6 +83,19 @@ class ML_DMD_FREE(nn.Module):
         # ------------------------------------------------
         self.max_abs_z_norm = 1e6
         self.rollout_horizon = 20
+
+    def set_lifted_normalization_stats(self, mean, scale):
+        mean = torch.as_tensor(mean, dtype=self.lift_mean.dtype, device=self.lift_mean.device)
+        scale = torch.as_tensor(scale, dtype=self.lift_scale.dtype, device=self.lift_scale.device)
+        self.lift_mean.copy_(mean)
+        self.lift_scale.copy_(torch.clamp(scale, min=self.lift_norm_eps))
+
+    def _normalize(self, z, update_stats=True):
+        del update_stats
+        return (z - self.lift_mean) / self.lift_scale
+
+    def _unnormalize(self, z_norm):
+        return z_norm * self.lift_scale + self.lift_mean
 
     # ------------------------------------------------
     # Set lifted scaling
@@ -103,13 +123,17 @@ class ML_DMD_FREE(nn.Module):
         K = self.get_K()
         return torch.linalg.eigvals(K)
 
-    def _advance_z(self, z):
-        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
-        Phi_reg = self.Phi + I_eps
-        b = torch.linalg.solve(Phi_reg, z.mT).mT
-        b_next = b @ self.Lambda.mT
-        z_next = b_next @ self.Phi.mT
-        return torch.clamp(z_next, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
+    # Standardize these three helpers in ML_DMD_FREE
+    def _get_modal_coords(self, z):
+        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device)
+        return torch.linalg.solve(self.Phi + I_eps, z.mT).mT
+
+    def _step_modal(self, b):
+        return b @ self.Lambda.mT
+
+    def _modal_to_latent(self, b):
+        z = b @ self.Phi.mT
+        return torch.clamp(z, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
 
     # ------------------------------------------------
     # Forward pass
@@ -123,69 +147,63 @@ class ML_DMD_FREE(nn.Module):
 
         using the Koopman eigendecomposition.
         """
-
-        # Lift state into observable space
-        z_raw = self.expander.expand(x)
-        z = torch.clamp(z_raw, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
-        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device, dtype=self.Phi.dtype)
-        Phi_reg = self.Phi + I_eps
-        cond_number = torch.linalg.cond(self.Phi)
-        if cond_number > 1e6:
-            print(f"Warning: High condition number for Phi: {cond_number:.2e}")
-
-        # Convert to modal coordinates
-        b = torch.linalg.solve(Phi_reg, z.mT).mT
-
-        # Modal evolution
-        b_next = b @ self.Lambda.mT
-
-        # Convert back to lifted coordinates
-        z_next = b_next @ self.Phi.mT
-
-        # Recover original state
-        x_next = self.expander.de_expand(z_next)
-        return x_next
+        z = self.expander.expand(x)
+        z_norm = self._normalize(z)
+        b = self._get_modal_coords(z_norm)
+        b_next = self._step_modal(b)
+        z_next = self._modal_to_latent(b_next)
+        z_next_physical = self._unnormalize(z_next)
+        return self.expander.de_expand(z_next_physical)
 
     # ------------------------------------------------
     # Training loss
     # ------------------------------------------------
 
     def compute_loss(self, x, x_next_true, future_x=None):
-        z = self.expander.expand(x)
-        z_next_true = self.expander.expand(x_next_true)
+        z_raw = self.expander.expand(x)
+        z_next_true_raw = self.expander.expand(x_next_true)
 
-        z_next_pred = self._advance_z(z)
+        z_norm = self._normalize(z_raw)
+        z_next_true_norm = self._normalize(z_next_true_raw, update_stats=False)
 
-        # 1) Lifted loss
-        diff = z_next_pred - z_next_true
-        loss_lift = torch.mean(diff**2)
+        # Use helper for consistency
+        b_curr = self._get_modal_coords(z_norm)
+        b_next = self._step_modal(b_curr)
+        z_next_pred = self._modal_to_latent(b_next)
 
-        # 2) State prediction loss
-        x_next_pred = self.expander.de_expand(z_next_pred)
-        loss_state = nn.MSELoss()(x_next_pred, x_next_true)
+        loss_lift = torch.mean((z_next_pred - z_next_true_norm)**2)
+        loss_state = nn.MSELoss()(self.expander.de_expand(self._unnormalize(z_next_pred)), x_next_true)
 
-        # 3) Multi-step Rollout Loss
         loss_rollout = torch.tensor(0.0, device=x.device)
         if future_x is not None and future_x.ndim == 3:
             horizon = min(self.rollout_horizon, future_x.shape[1])
             if horizon >= 2:
-                z_curr_pred = z_next_pred 
-                for k in range(1, horizon):
-                    z_curr_pred = self._advance_z(z_curr_pred)
-                    z_true_k = self.expander.expand(future_x[:, k, :])
-                    z_true_k = torch.clamp(z_true_k, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
-                    loss_rollout += torch.mean((z_curr_pred - z_true_k)**2)
-                loss_rollout = loss_rollout / float(horizon - 1)
+                # PRE-EXPAND (Saves massive time!)
+                z_targets = self.expander.expand(future_x.reshape(-1, self.state_dim))
+                z_targets = z_targets.reshape(x.shape[0], future_x.shape[1], -1)
+                z_targets_norm = self._normalize(z_targets.reshape(-1, self.latent_dim), update_stats=False)
+                z_targets_norm = z_targets_norm.reshape_as(z_targets)
 
-        # 4) Φ conditioning regularization
-        col_norms = torch.linalg.norm(self.Phi, dim=0)
+                b_rollout = b_next 
+                for k in range(1, horizon):
+                    b_rollout = self._step_modal(b_rollout)
+                    z_pred_k = self._modal_to_latent(b_rollout)
+                    z_pred_k_phys = self._unnormalize(z_pred_k)
+                    loss_rollout += torch.mean((z_pred_k - z_targets_norm[:, k, :])**2)
+                    loss_rollout += torch.mean((self.expander.de_expand(z_pred_k_phys) - future_x[:, k, :])**2)
+
+                loss_rollout /= (horizon - 1)
+
+        # Structural constraints (keep existing code)
+        phi_phys = self.get_Phi()
+        col_norms = torch.linalg.norm(phi_phys, dim=0)
         loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
 
         # Total loss
         loss = (
             loss_lift 
             + 0.5 * loss_state 
-            + 0.1 * loss_rollout 
+            + 1.0 * loss_rollout    # INCREASED: 0.1 -> 1.0
             + 1e-3 * loss_unit_length
         )
 
@@ -219,12 +237,13 @@ class ML_DMD_FREE(nn.Module):
         
         # 1. Expand the state to latent space exactly ONCE
         z = self.expander.expand(x)
-        z = torch.clamp(z, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
-
-        # 2. Rollout completely in the latent space
+        z_norm = self._normalize(z, update_stats=False)
+        b = self._get_modal_coords(z_norm) # SOLVE ONCE
+        
+        traj = [x.squeeze(0)]
         for _ in range(steps):
-            z = self._advance_z(z)               # Step linearly forward!
-            x_next = self.expander.de_expand(z)           # Peek down to grab the physical state
-            traj.append(x_next.squeeze(0))
-
+            b = self._step_modal(b)   # MATMUL LOOP
+            z = self._modal_to_latent(b)
+            z_phys = self._unnormalize(z) # MUST unnormalize before de-expanding
+            traj.append(self.expander.de_expand(z_phys).squeeze(0))
         return torch.stack(traj)

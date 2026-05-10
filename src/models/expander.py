@@ -155,7 +155,7 @@ class ManualExpansion(nn.Module):
         self.expansion_type = expansion_type
         self.expand_names = []
         self.expanded_basis = []
-        self.max_poly_base_abs = 100.0
+        self.max_poly_base_abs = 2.0
 
         if expansion_type == "specific":
 

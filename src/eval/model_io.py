@@ -11,6 +11,7 @@ from src.models.regression_dmd import Regression_DMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.ml_dmd_free import ML_DMD_FREE
 from src.models.ml_dmd_band import ML_DMD_BAND
+from src.models.mlp_baseline import MLP_BlackBox
 from src.models.sindy_baseline import SINDyBaseline
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
 
@@ -263,6 +264,48 @@ def load_model(
         ).to(device)
 
         model.load_state_dict(ckpt["model_state_dict"])
+        model.eval()
+        extras["ckpt"] = ckpt
+        return model, extras
+
+    if model_name == "mlp_baseline":
+        ckpt = torch.load(model_path, map_location=device)
+        train_args = ckpt.get("train_args", {}) if isinstance(ckpt, dict) else {}
+
+        # Defaults when older checkpoints don't include these args
+        hidden_dim = int(train_args.get("hidden_dim", 64))
+        num_layers = int(train_args.get("num_layers", 4))
+
+        # Try to infer dimensions from the saved state dict if available
+        state_dim = ckpt.get("state_dim", None)
+        state_dict = ckpt.get("model_state_dict", {}) if isinstance(ckpt, dict) else {}
+
+        try:
+            if state_dim is None and "head.weight" in state_dict:
+                w = state_dict["head.weight"]
+                state_dim = int(w.shape[0])
+        except Exception:
+            state_dim = state_dim
+
+        try:
+            if "hidden_dim" not in train_args and "head.weight" in state_dict:
+                w = state_dict["head.weight"]
+                hidden_dim = int(w.shape[1])
+        except Exception:
+            pass
+
+        if state_dim is None:
+            state_dim = 2
+
+        model = MLP_BlackBox(
+            state_dim=state_dim,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+        ).to(device)
+
+        if "model_state_dict" in ckpt:
+            model.load_state_dict(ckpt["model_state_dict"])
+
         model.eval()
         extras["ckpt"] = ckpt
         return model, extras

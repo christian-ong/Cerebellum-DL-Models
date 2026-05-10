@@ -116,40 +116,40 @@ Global options (defaults):
     python -m scripts.train --model regression_dmd --data_path data/trajectories/nonlinear/lorenz --expansion_type specific --expansion_degree 10
 
 # ML Linear Dynamics + Manual Expansion
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/saddle_point --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/degenerate_node --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/inward_spiral --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/harmonic_oscillator --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/saddle_point --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/degenerate_node --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/inward_spiral --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/linear/harmonic_oscillator --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
 
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_small --epochs 20 --expansion_type specific --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec3
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_large --epochs 20 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec5
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_small --epochs 20 --expansion_type specific --expansion_degree 6 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec6_trig
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_medium --epochs 20 --expansion_type specific --expansion_degree 8 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec8_trig
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_large --epochs 20 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec10_trig
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_small --epochs 20 --expansion_type specific --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec3
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_large --epochs 20 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec5
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_trig_small --epochs 20 --expansion_type specific --expansion_degree 6 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec6_trig
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_trig_medium --epochs 20 --expansion_type specific --expansion_degree 8 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec8_trig
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/closed_trig_large --epochs 20 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec10_trig
 
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol --epochs 20 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion false --name vanderpol_gen5
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name lotkavolterra_gen3
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/pendulum --epochs 20 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion true --name pendulum_gen5_trig
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/duffing --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name duffing_gen3
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lorenz --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name lorenz_gen3
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/vanderpol --epochs 20 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion false --name vanderpol_gen5
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lotka_volterra --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name lotkavolterra_gen3
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/pendulum --epochs 20 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion true --name pendulum_gen5_trig
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/duffing --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name duffing_gen3
+    python -m scripts.train --model ml_lineardynamics --data_path data/trajectories/nonlinear/lorenz --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name lorenz_gen3
 
 # ML DMD + Manual Expansion
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/saddle_point --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/degenerate_node --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/inward_spiral --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/linear/harmonic_oscillator --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/linear/saddle_point --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/linear/degenerate_node --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/linear/inward_spiral --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/linear/harmonic_oscillator --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
 
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_small --epochs 20 --expansion_type specific --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec3
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_large --epochs 20 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec5
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_small --epochs 20 --expansion_type specific --expansion_degree 6 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec6_trig
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_medium --epochs 20 --expansion_type specific --expansion_degree 8 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec8_trig
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/closed_trig_large --epochs 20 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec10_trig
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/nonlinear/closed_small --epochs 20 --expansion_type specific --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec3
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/nonlinear/closed_large --epochs 20 --expansion_type specific --expansion_degree 5 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-5 --name spec5
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/nonlinear/closed_trig_small --epochs 20 --expansion_type specific --expansion_degree 6 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec6_trig
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/nonlinear/closed_trig_medium --epochs 20 --expansion_type specific --expansion_degree 8 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec8_trig
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/nonlinear/closed_trig_large --epochs 20 --expansion_type specific --expansion_degree 10 --bias true --sine_cosine_expansion true --weight_decay 0.0 --lr 1e-4 --name spec10_trig
 
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/vanderpol --epochs 20 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion false --name vanderpol_gen5
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lotka_volterra --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name lotkavolterra_gen3
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/pendulum --epochs 20 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion true --name pendulum_gen5_trig
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/duffing --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name duffing_gen3
-    python -m scripts.train --model ml_dmd --data_path data/trajectories/nonlinear/lorenz --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name lorenz_gen3
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/nonlinear/vanderpol --epochs 20 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion false --name vanderpol_gen5
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/nonlinear/lotka_volterra --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name lotkavolterra_gen3
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/nonlinear/pendulum --epochs 20 --expansion_type general --expansion_degree 5 --bias true --sine_cosine_expansion true --name pendulum_gen5_trig
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/nonlinear/duffing --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name duffing_gen3
+    python -m scripts.train --model ml_dmd_free --data_path data/trajectories/nonlinear/lorenz --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --name lorenz_gen3
 
 # ML DMD BAND + Manual Expansion
     python -m scripts.train --model ml_dmd_band --data_path data/trajectories/linear/saddle_point --epochs 20 --expansion_type general --expansion_degree 3 --bias true --sine_cosine_expansion false --weight_decay 0.0 --lr 1e-4
@@ -265,7 +265,7 @@ def main():
     parser.add_argument(
         "--rollout_horizon",
         type=int,
-        default=20,
+        default=5,
         help="Rollout supervision horizon for loss computation.",
     )
     parser.add_argument(
@@ -638,7 +638,11 @@ def main():
             bias=args.bias == "true",
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             expansion_type=args.expansion_type,
-            system=system_name if args.expansion_type == "specific" else None
+            system=system_name if args.expansion_type == "specific" else None,
+            rbf_n_centers=args.rbf_n_centers,
+            rbf_center_selection=args.rbf_center_selection,
+            rbf_bandwidth_mode=args.rbf_bandwidth_mode,
+            rbf_knn_k=args.rbf_knn_k,
         ).to(device)
 
     elif args.model == "mlp_baseline":
@@ -659,7 +663,7 @@ def main():
         print(f"Expand names: {model.expand_names}")
     
     # Train
-    model, (train_losses, batch_val_losses, epoch_val_losses, loss_components_val), best_checkpoint = train_onestep(
+    model, (train_losses, epoch_val_losses, loss_components_val), best_checkpoint = train_onestep(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
@@ -715,8 +719,7 @@ def main():
     )
     
     loss_path = os.path.join(save_dir, "losses.npz")
-    np.savez(loss_path, train_losses=train_losses, batch_val_losses=batch_val_losses,
-             epoch_val_losses=epoch_val_losses, loss_components_val=loss_components_val)
+    np.savez(loss_path, train_losses=train_losses, epoch_val_losses=epoch_val_losses, loss_components_val=loss_components_val)
     
     print(f"Saved best model to {best_save_path}")
     print(f"Saved last model to {last_save_path}")

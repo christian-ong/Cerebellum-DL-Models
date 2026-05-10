@@ -1,3 +1,5 @@
+project: koopman-operator-learning
+entity: DeepLearningP4Destruction
 method: grid
 
 metric:
@@ -11,16 +13,18 @@ command:
   - scripts.train_sweep
   - --epochs
   - 100
+  - --rollout_horizon
+  - 5
   - --eval_every
   - 1
   - --num_workers
-  - 0
+  - 4
   - ${args}
 
 parameters:
   model:
     values:
-      - ml_dmd
+      - ml_dmd_free
       - ml_linear_dynamics
 
   data_path:
