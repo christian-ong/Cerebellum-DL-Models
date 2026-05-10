@@ -667,17 +667,58 @@ def get_data_bounds_and_grid_points(trajectories, grid_res=100, state_dim=2):
     return state_bounds, grid_points
 
 
-def get_real_representation(V, eigvals):
+def get_real_representation(V, eigvals, threshold_imag=1e-5, threshold_jordan=1):
     """
     Converts complex Koopman modes and eigenvalues into their 
     real-valued block-diagonal form.
     """
+    
+    if eigvals.ndim == 2:
+    
+        V_real = np.zeros_like(V, dtype=np.float64)
+        Lambda_real = np.zeros_like(eigvals, dtype=np.float64)
+
+        i = 0
+        while i < len(eigvals):
+            if abs(np.imag(eigvals[i,i])) < threshold_imag: # real eigenvalue
+                V_real[:, i] = np.real(V[:, i])
+                Lambda_real[i, i] = np.real(eigvals[i, i])
+                
+                # Check for Jordan block
+                if (i + 1 <= len(eigvals) and (
+                    abs(eigvals[i+1,i]) > threshold_jordan or
+                    abs(eigvals[i,i+1]) > threshold_jordan
+                )): 
+                    Lambda_real[i, i+1] = 1 # Jordan block off-diagonal
+            
+                i += 1
+
+            else: # complex conjugate pair
+                if i + 1 < len(eigvals):
+                    V_real[:, i] = np.real(V[:, i]) # Re(v)
+                    V_real[:, i+1] = np.imag(V[:, i]) # Im(v)
+                    
+                    a = np.real(eigvals[i,i])
+                    b = np.imag(eigvals[i,i])
+                    
+                    Lambda_real[i, i] = a
+                    Lambda_real[i, i+1] = b
+                    Lambda_real[i+1, i] = -b
+                    Lambda_real[i+1, i+1] = a
+                    i += 2
+                else:
+                    V_real[:, i] = np.real(V[:, i])
+                    Lambda_real[i, i] = np.real(eigvals[i, i])
+                    i += 1
+
+        return V_real, Lambda_real
+
     V_real = np.zeros_like(V, dtype=np.float64)
     Lambda_real = np.zeros((len(eigvals), len(eigvals)), dtype=np.float64)
     
     i = 0
     while i < len(eigvals):
-        if abs(np.imag(eigvals[i])) < 1e-5:
+        if abs(np.imag(eigvals[i])) < threshold_imag:
             V_real[:, i] = np.real(V[:, i])
             Lambda_real[i, i] = np.real(eigvals[i])
             i += 1

@@ -23,12 +23,12 @@ parser = argparse.ArgumentParser(
     )
 parser.add_argument("--expansion_degree", type=int, default=3, help="Degree of expansion for the model")
 parser.add_argument("--system_name", type=str, default="closed_trig_large", help="Name of the system to use")
+parser.add_argument("--custom_name", type=str, default="default", help="Custom name for the model (used in saving)")
 parser.add_argument("--truncate", type=str, default="before", choices=["before", "after"], help="Truncate system before or after computing modes")
 args = parser.parse_args()
 expansion_degree = args.expansion_degree
 system_name = args.system_name
-
-custom_name = f"deg{expansion_degree}"
+custom_name = args.custom_name
 
 # =========================================
 # Custom weights
@@ -46,7 +46,7 @@ if args.truncate == "after":
     custom_phi = V_theory[:, :expansion_degree]
 
 # To real representation
-V_theory, Lambda_jordan = get_real_representation(V_theory, np.diag(Lambda_jordan))
+V_theory, Lambda_jordan = get_real_representation(V_theory, Lambda_jordan, threshold_jordan=1e-1)
 custom_lambda = torch.tensor(Lambda_jordan, dtype=torch.float64)
 custom_phi = torch.tensor(V_theory, dtype=torch.float64)
 
