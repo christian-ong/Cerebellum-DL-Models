@@ -1,4 +1,5 @@
 import argparse
+from html import parser
 import os
 import numpy as np
 
@@ -31,6 +32,41 @@ python -m scripts.eval_behavior \
   --use_cache \
   --run_true_grid_heatmap
 '''
+def parse_metric_horizon_spec(text: str):
+    """
+    Parse metric horizon argument.
+
+    Examples
+    --------
+    "50"      -> [1, 2, ..., 50]
+    "1,10,50" -> [1, 10, 50]
+    """
+    text = text.strip()
+    if "," in text:
+        return parse_int_list(text)
+
+    max_h = int(text)
+    if max_h < 1:
+        raise ValueError("metric_horizons must be >= 1")
+    return list(range(1, max_h + 1))
+
+def parse_rollout_horizon_spec(text: str):
+    """
+    Parse rollout horizon argument.
+
+    Examples
+    --------
+    "50"      -> [1, 2, ..., 50]
+    "5,10,50" -> [5, 10, 50]
+    """
+    text = text.strip()
+    if "," in text:
+        return parse_int_list(text)
+
+    max_h = int(text)
+    if max_h < 1:
+        raise ValueError("rollout_metric_horizons must be >= 1")
+    return list(range(1, max_h + 1))
 
 def main():
     parser = argparse.ArgumentParser(description="Behavior / local analysis diagnostics for trained models.")
@@ -42,9 +78,9 @@ def main():
 
     parser.add_argument("--split", type=str, default="test", choices=["test", "val"])
     parser.add_argument("--traj_index", type=int, default=0)
-
-    parser.add_argument("--metric_horizons", type=str, default="1,10,50", help="Comma-separated horizons for terminal h-step metrics.")
-    parser.add_argument("--rollout_metric_horizons", type=str, default="10,50", help="Comma-separated horizons for full-rollout metrics.")
+    
+    parser.add_argument("--metric_horizons", type=str, default="100", help="Either a comma-separated list like '1,10,50' or a single max horizon like '50', which expands to 1..50.")    
+    parser.add_argument("--rollout_metric_horizons", type=str, default="100", help="Either a comma-separated list like '5,10,50' or a single max horizon like '50', which expands to 1..50.")    
     parser.add_argument("--phase_map_horizons", type=str, default="1,10,50", help="Comma-separated horizons for optional phase-space error maps.")
     parser.add_argument("--sampled_heatmap_horizon", type=int, default=10, help="Horizon used for the sampled-start heatmap.")
     parser.add_argument("--true_grid_horizons", type=str, default="1", help="Comma-separated horizons for dense true-grid heatmaps when enabled.")
@@ -58,6 +94,8 @@ def main():
     parser.add_argument("--skip_phase_maps", action="store_true", help="Skip phase-space error maps.")
     parser.add_argument("--run_sampled_start_heatmap", action="store_true", help="Also generate sampled-start heatmap.")
     parser.add_argument("--no_overlay_true_trajectory_on_grid", action="store_true", help="Disable overlay of the true trajectory on dense true-grid heatmaps.")
+    parser.add_argument("--grid_overlay_n_trajs", type=int, default=1, help="Number of trajectories to overlay on true-grid heatmaps.")
+    parser.add_argument("--force_linear_true_grid_error_scale", action="store_true", help="Force linear color scaling for the combined true-grid heatmap figure. Default is automatic log/linear selection.")    
     parser.add_argument("--reuse_if_exists", action="store_true", help="If diagnostics outputs already exist, skip recomputation and exit.")
     parser.add_argument("--mode_subset_sizes", type=str, default="", help="Comma-separated subset sizes for additional mode-restricted heatmaps, e.g. '1,2,5'.")
     parser.add_argument("--mode_subset_strategy", type=str, default="amplitude", choices=["amplitude", "manual"], help="How to choose modes for additional subset heatmaps.")
@@ -66,8 +104,8 @@ def main():
 
     args = parser.parse_args()
 
-    metric_horizons = parse_int_list(args.metric_horizons)
-    rollout_metric_horizons = parse_int_list(args.rollout_metric_horizons)
+    metric_horizons = parse_metric_horizon_spec(args.metric_horizons)
+    rollout_metric_horizons = parse_rollout_horizon_spec(args.rollout_metric_horizons)
     phase_map_horizons = parse_int_list(args.phase_map_horizons)
     true_grid_horizons = parse_int_list(args.true_grid_horizons)
     mode_subset_sizes = parse_int_list(args.mode_subset_sizes) if args.mode_subset_sizes.strip() else []
@@ -101,8 +139,7 @@ def main():
     expected_heatmap_paths = []
     if args.run_true_grid_heatmap:
         expected_heatmap_paths = [
-            os.path.join(ctx.figdir, f"true_grid_error_heatmap_h{h}.png")
-            for h in true_grid_horizons
+            os.path.join(ctx.figdir, "true_grid_error_heatmap_grid.png")
         ]
 
     all_expected_exist = os.path.exists(diagnostics_summary_path) and all(
@@ -205,9 +242,11 @@ def main():
         run_phase_maps=not args.skip_phase_maps,
         run_sampled_start_heatmap=args.run_sampled_start_heatmap,
         overlay_true_trajectory_on_grid=not args.no_overlay_true_trajectory_on_grid,
+        grid_overlay_n_trajs=args.grid_overlay_n_trajs,
         mode_subset_sizes=mode_subset_sizes,
         mode_subset_strategy=args.mode_subset_strategy,
         mode_subset_indices=mode_subset_indices,
+        force_linear_true_grid_error_scale=args.force_linear_true_grid_error_scale,
     )
 
     save_metadata_json(
@@ -223,6 +262,7 @@ def main():
             "run_phase_maps": not args.skip_phase_maps,
             "run_sampled_start_heatmap": args.run_sampled_start_heatmap,
             "overlay_true_trajectory_on_grid": not args.no_overlay_true_trajectory_on_grid,
+            "grid_overlay_n_trajs": args.grid_overlay_n_trajs,
             "mode_subset_sizes": mode_subset_sizes,
             "mode_subset_strategy": args.mode_subset_strategy,
             "mode_subset_indices": mode_subset_indices,

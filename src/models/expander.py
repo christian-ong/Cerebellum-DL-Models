@@ -327,6 +327,89 @@ class ManualExpansion(nn.Module):
         """
         return x_expanded[:, self.state_indices]
 
+
+class DelayExpansion(nn.Module):
+    """Simple time-delay embedding expansion.
+
+    Input is expected as a stack of delay coordinates with the current
+    state first:
+
+        [x(t), x(t-1), ..., x(t-delay_depth+1)]
+
+    The decoder recovers the current state from the first delay block.
+    """
+
+    def __init__(self, state_dim: int, delay_depth: int = 1, bias: bool = True):
+        super().__init__()
+
+        if state_dim <= 0:
+            raise ValueError("state_dim must be positive.")
+        if delay_depth <= 0:
+            raise ValueError("delay_depth must be positive.")
+
+        self.state_dim = state_dim
+        self.delay_depth = delay_depth
+        self.bias = bias
+        self.expanded_dim = state_dim * delay_depth + (1 if bias else 0)
+
+        # The current state variables are the first delay block.
+        bias_offset = 1 if bias else 0
+        self.state_indices = list(range(bias_offset, bias_offset + state_dim))
+
+        self.expand_names = []
+        if bias:
+            self.expand_names.append("1")
+
+        for lag in range(delay_depth):
+            suffix = "" if lag == 0 else f"(-{lag})"
+            for i in range(state_dim):
+                self.expand_names.append(f"x{i+1}{suffix}")
+
+    def _to_2d_tensor(self, x):
+        if not torch.is_tensor(x):
+            x = torch.as_tensor(x)
+
+        if x.ndim == 1:
+            x = x.unsqueeze(0)
+
+        if x.ndim == 3:
+            if x.shape[1] == self.state_dim and x.shape[2] == self.delay_depth:
+                x = x.reshape(x.shape[0], -1)
+            elif x.shape[2] == self.state_dim and x.shape[1] == self.delay_depth:
+                x = x.permute(0, 2, 1).reshape(x.shape[0], -1)
+            else:
+                raise ValueError(
+                    f"Expected x with shape (N, {self.state_dim}, {self.delay_depth}) "
+                    f"or (N, {self.state_dim * self.delay_depth}), got {tuple(x.shape)}"
+                )
+
+        # ADD THIS: Auto-pad history if given a single state step during evaluation
+        if x.ndim == 2 and x.shape[1] == self.state_dim and self.delay_depth > 1:
+            x = x.repeat(1, self.delay_depth)
+
+        if x.ndim != 2 or x.shape[1] != self.state_dim * self.delay_depth:
+            raise ValueError(
+                f"Expected x of shape (N, {self.state_dim * self.delay_depth}), got {tuple(x.shape)}"
+            )
+
+        return x
+
+    def expand(self, x):
+        x = self._to_2d_tensor(x)
+        if self.bias:
+            bias_col = torch.ones(x.shape[0], 1, dtype=x.dtype, device=x.device)
+            return torch.cat([bias_col, x], dim=1)
+        return x
+
+    def de_expand(self, x_expanded):
+        offset = 1 if self.bias else 0
+        return x_expanded[:, offset : offset + self.state_dim]
+
+    def extra_repr(self):
+        return (
+            f"state_dim={self.state_dim}, delay_depth={self.delay_depth}, bias={self.bias}"
+        )
+
 import math
 from typing import Optional
 
@@ -620,7 +703,11 @@ def build_expander(
     rbf_center_selection: str = "farthest",
     rbf_bandwidth_mode: str = "knn",
     rbf_knn_k: int = 5,
+    delay_depth: int = 1,
 ):
+    if expansion_type == "delay":
+        return DelayExpansion(state_dim=state_dim, delay_depth=delay_depth, bias=bias)
+
     if expansion_type == "rbf":
         return RBFExpansion(
             state_dim=state_dim,

@@ -26,6 +26,7 @@ class Regression_DMD(nn.Module):
         sine_cosine_expansion=False,
         expansion_type="general",
         system=None,
+        delay_depth=1,
         normalize_state=False,
         normalize_lifted=True,
         rollout_mode="DMD",
@@ -41,6 +42,7 @@ class Regression_DMD(nn.Module):
 
         self.expansion_type = expansion_type
         self.state_dim = state_dim
+        self.delay_depth = delay_depth
         self.normalize_state = normalize_state
         self.normalize_lifted = normalize_lifted
         self.rollout_mode = rollout_mode
@@ -62,6 +64,7 @@ class Regression_DMD(nn.Module):
             rbf_center_selection=rbf_center_selection,
             rbf_bandwidth_mode=rbf_bandwidth_mode,
             rbf_knn_k=rbf_knn_k,
+            delay_depth=delay_depth,
         )
 
         # Convenience aliases so the rest of the code stays readable
@@ -128,14 +131,32 @@ class Regression_DMD(nn.Module):
         Important:
         - no mean-centering
         - if trig features are present, do NOT scale state before expansion
+        - When using delay embedding, scale is built from current state, then repeated across delays
         """
+        # When using delay embedding, x is stacked [x(t), x(t-1), ...].
+        # Build scale from the current state portion x(t), then repeat for all delays.
+        if self.delay_depth > 1:
+            x_current = x[:, :self.state_dim]
+            target_size = x.shape[1]  # Final scale size must match x's full width
+        else:
+            x_current = x
+            target_size = x_current.shape[1]
+
         if not self.normalize_state:
-            return torch.ones(x.shape[1], dtype=x.dtype, device=x.device)
+            return torch.ones(target_size, dtype=x.dtype, device=x.device)
 
         if any(self._feature_is_trig(name) for name in self.expand_names):
-            return torch.ones(x.shape[1], dtype=x.dtype, device=x.device)
+            return torch.ones(target_size, dtype=x.dtype, device=x.device)
 
-        return self._safe_rms_scale(x, dim=0)
+        scale_state = self._safe_rms_scale(x_current, dim=0)
+        
+        # If delay_depth > 1, repeat scale across all delay blocks
+        if self.delay_depth > 1:
+            scale = scale_state.repeat(self.delay_depth)
+        else:
+            scale = scale_state
+        
+        return scale
 
     def _build_lifted_scale(self, psi):
         """
@@ -157,10 +178,20 @@ class Regression_DMD(nn.Module):
         return scale
 
     def _normalize_x(self, x):
-        return x / self.x_scale
+        if self.x_scale is None:
+            return x
+
+        n_features = x.shape[-1]
+        scale = self.x_scale[:n_features] if self.x_scale.shape[0] > n_features else self.x_scale
+        return x / scale
 
     def _denormalize_x(self, x):
-        return x * self.x_scale
+        if self.x_scale is None:
+            return x
+
+        n_features = x.shape[-1]
+        scale = self.x_scale[:n_features] if self.x_scale.shape[0] > n_features else self.x_scale
+        return x * scale
 
     def _build_fixed_decoder(self):
         """
@@ -177,21 +208,20 @@ class Regression_DMD(nn.Module):
     def _solve_modal_coeffs_exact(self, z0):
         """
         Solve z0 ≈ Phi_lift @ b0 for the exact DMD modes.
-        This is the right amplitude solve when using
-        Phi_lift = Y B W as the modal basis.
+        Vectorized to support z0 of shape (N, p) -> returns (N, r).
         """
-        z0 = z0.to(torch.complex128)
-        Phi = self.Phi_lift_fitted.to(torch.complex128)
+        z0_T = z0.T.to(torch.complex128) # (p, N)
+        Phi = self.Phi_lift_fitted.to(torch.complex128) # (p, r)
 
         # Square full-rank case
         if Phi.shape[0] == Phi.shape[1]:
             try:
-                return torch.linalg.solve(Phi, z0)
+                return torch.linalg.solve(Phi, z0_T).T # (N, r)
             except RuntimeError:
                 pass
 
         # General fallback
-        return torch.linalg.lstsq(Phi, z0.unsqueeze(1)).solution.squeeze(1)
+        return torch.linalg.lstsq(Phi, z0_T).solution.T # (N, r)
     
     def _prepare_mode_subset(self, mode_indices):
         if mode_indices is None:
@@ -215,24 +245,27 @@ class Regression_DMD(nn.Module):
         if x_next.ndim == 1:
             x_next = x_next.unsqueeze(0)
 
-        # -------------------------------------------------
         # 1) state normalization
-        # -------------------------------------------------
         self.x_mean = torch.zeros(x.shape[1], dtype=torch.float64, device=x.device)
         self.x_scale = self._build_state_scale(x)
 
         x_n = self._normalize_x(x)
-        x_next_n = self._normalize_x(x_next)
+        
+        # Build symmetric next state for delay embeddings
+        if self.delay_depth > 1:
+            x_next_n_head = self._normalize_x(x_next)
+            # Shift history: [new_step, x_t, x_{t-1}, ...]
+            x_next_n = torch.cat([x_next_n_head, x_n[:, :-self.state_dim]], dim=1)
+        else:
+            x_next_n = self._normalize_x(x_next)
 
-        if self.expansion_type == "rbf": # radial basis functions
+        if self.expansion_type == "rbf":
             self.expander.fit(x_n)
             self.expand_names = self.expander.expand_names
             self.state_indices = self.expander.state_indices
             self.expanded_dim = self.expander.expanded_dim
 
-        # -------------------------------------------------
-        # 2) lifted snapshots
-        # -------------------------------------------------
+        # 2) lifted snapshots (Generic for ALL expansion types now!)
         psi_x = self.expand(x_n)       # (N, p)
         psi_y = self.expand(x_next_n)  # (N, p)
         
@@ -240,17 +273,14 @@ class Regression_DMD(nn.Module):
             raise ValueError("psi_x contains non-finite values after expansion.")
         if not torch.isfinite(psi_y).all():
             raise ValueError("psi_y contains non-finite values after expansion.")
-        # -------------------------------------------------
+            
         # 3) lifted normalization
-        # -------------------------------------------------
         self.psi_scale = self._build_lifted_scale(psi_x)
 
         Z_x = psi_x / self.psi_scale   # (N, p)
         Z_y = psi_y / self.psi_scale   # (N, p)
 
-        # -------------------------------------------------
-        # 4) reduced exact-DMD / EDMD fit
-        # -------------------------------------------------
+        # 4) reduced exact-DMD / EDMD fit (always square now)
         Xc = Z_x.T   # (p, N)
         Yc = Z_y.T   # (p, N)
 
@@ -270,35 +300,32 @@ class Regression_DMD(nn.Module):
         K_tilde = (U_r.T @ Yc) @ B               # (r, r)
         K_full = (Yc @ B) @ U_r.T                # (p, p)
 
-        # -------------------------------------------------
-        # 5) fixed decoder
-        # -------------------------------------------------
-        self.C_fitted = self._build_fixed_decoder()
-
-        # -------------------------------------------------
-        # 6) spectral objects for reduced exact-DMD rollout
-        # -------------------------------------------------
+        # Spectral objects
         Lambda, W_reduced = torch.linalg.eig(K_tilde.to(torch.complex128))
         Phi_lift = (
             Yc.to(torch.complex128)
             @ B.to(torch.complex128)
             @ W_reduced
         )
-        Phi_state = self.C_fitted.to(torch.complex128) @ Phi_lift
 
-        # -------------------------------------------------
-        # 7) store everything
-        # -------------------------------------------------
+        # 5) fixed decoder
+        self.C_fitted = self._build_fixed_decoder()
+
+        # 6) store everything
         self.K_fitted = K_full
         self.K_tilde_fitted = K_tilde
         self.U_r_fitted = U_r
-        self.W_reduced_fitted = W_reduced
         self.Lambda_fitted = Lambda
+        self.W_reduced_fitted = W_reduced
         self.Phi_lift_fitted = Phi_lift
+        
+        if Phi_lift.ndim > 1:
+            Phi_state = self.C_fitted.to(torch.complex128) @ Phi_lift
+        else:
+            Phi_state = self.C_fitted.to(torch.complex128)
+        
         self.Phi_state_fitted = Phi_state
-        self.Phi_pinv_fitted = torch.linalg.pinv(Phi_lift)
-
-        # alias
+        self.Phi_pinv_fitted = torch.linalg.pinv(Phi_lift) if Phi_lift.ndim > 1 else torch.linalg.pinv(Phi_lift.unsqueeze(1))
         self.Phi_fitted = Phi_lift
 
         return self.K_fitted, self.C_fitted
@@ -312,38 +339,51 @@ class Regression_DMD(nn.Module):
         z = self.expand(x_n) / self.psi_scale
         z_next = z @ self.K_fitted.T
         x_next_n = z_next @ self.C_fitted.T
-        return self._denormalize_x(x_next_n)
+        
+        # C_fitted outputs ONLY the head (state_dim). We must shift it for delay!
+        x_next_head = self._denormalize_x(x_next_n)
+        if self.delay_depth > 1:
+            return torch.cat([x_next_head, x[:, :-self.state_dim]], dim=1)
+        return x_next_head
 
     def _rollout_linear_dynamics(self, x0, steps):
         x0 = self._to_tensor(x0)
-        if x0.ndim == 1:
+        is_1d = x0.ndim == 1
+        if is_1d:
             x0 = x0.unsqueeze(0)
 
-        traj = [x0[0].clone()]
-        x = x0.clone()
+        if x0.shape[1] == self.state_dim and self.delay_depth > 1:
+            x = x0.repeat(1, self.delay_depth)
+        else:
+            x = x0.clone()
+
+        traj = [x[:, :self.state_dim].clone()] # ONLY STORE THE HEAD
 
         for _ in range(steps):
             x = self._predict_one_step(x)
-            traj.append(x[0].clone())
+            traj.append(x[:, :self.state_dim].clone())
 
-        return torch.stack(traj, dim=0)
+        out = torch.stack(traj, dim=0)
+        if is_1d:
+            out = out.squeeze(1)
+        return out
 
-    def _rollout_DMD(self, x0, steps, mode_indices=None):  # lambda^k step
-        if (
-            self.Lambda_fitted is None
-            or self.Phi_lift_fitted is None
-            or self.C_fitted is None
-        ):
+    def _rollout_DMD(self, x0, steps, mode_indices=None):
+        if (self.Lambda_fitted is None or self.Phi_lift_fitted is None or self.C_fitted is None):
             raise ValueError("Missing DMD spectral objects. Call fit() first.")
 
         x0 = self._to_tensor(x0)
-        if x0.ndim == 1:
+        is_1d = x0.ndim == 1
+        if is_1d:
             x0 = x0.unsqueeze(0)
 
-        x0_n = self._normalize_x(x0)
-        z0 = (self.expand(x0_n) / self.psi_scale)[0].to(torch.complex128)
+        if x0.shape[1] == self.state_dim and self.delay_depth > 1:
+            x0 = x0.repeat(1, self.delay_depth)
 
-        traj = [x0[0].clone()]
+        x0_n = self._normalize_x(x0)
+        z0 = (self.expand(x0_n) / self.psi_scale).to(torch.complex128) # (N, p)
+
+        traj = [x0[:, :self.state_dim].clone()]
 
         Phi_lift = self.Phi_lift_fitted.to(torch.complex128)
         Lambda = self.Lambda_fitted.to(torch.complex128)
@@ -353,32 +393,39 @@ class Regression_DMD(nn.Module):
         if idx is not None:
             Phi_lift = Phi_lift[:, idx]
             Lambda = Lambda[idx]
-            b0 = torch.linalg.pinv(Phi_lift) @ z0
+            b0 = (torch.linalg.pinv(Phi_lift) @ z0.T).T # (N, r)
         else:
-            b0 = self._solve_modal_coeffs_exact(z0)
+            b0 = self._solve_modal_coeffs_exact(z0) # (N, r)
 
         for k in range(1, steps + 1):
-            z_k = Phi_lift @ ((Lambda ** k) * b0)
-            x_k_n = C @ z_k
-            x_k = self._denormalize_x(x_k_n.real.to(torch.float64))
-            traj.append(x_k)
+            b_k = (Lambda ** k).unsqueeze(0) * b0 # (N, r)
+            z_k = (Phi_lift @ b_k.T).T # (N, p)
+            
+            x_k_n = (C @ z_k.T).T.real.to(torch.float64) # (N, state_dim)
+            x_k = self._denormalize_x(x_k_n)
+            
+            traj.append(x_k.clone())
 
-        return torch.stack(traj, dim=0)
+        out = torch.stack(traj, dim=0)
+        if is_1d:
+            out = out.squeeze(1)
+        return out
 
-    def _rollout_projected_DMD(self, x0, steps, mode_indices=None):  # phi lambda phi^-1 step
-        if (
-            self.Phi_lift_fitted is None
-            or self.Phi_pinv_fitted is None
-            or self.Lambda_fitted is None
-            or self.C_fitted is None
-        ):
+    def _rollout_projected_DMD(self, x0, steps, mode_indices=None):
+        if (self.Phi_lift_fitted is None or self.Phi_pinv_fitted is None or self.Lambda_fitted is None or self.C_fitted is None):
             raise ValueError("Missing DMD spectral objects. Call fit() first.")
 
         x0 = self._to_tensor(x0)
-        if x0.ndim == 1:
+        is_1d = x0.ndim == 1
+        if is_1d:
             x0 = x0.unsqueeze(0)
 
-        traj = [x0[0].clone()]
+        if x0.shape[1] == self.state_dim and self.delay_depth > 1:
+            x = x0.repeat(1, self.delay_depth)
+        else:
+            x = x0.clone()
+
+        traj = [x[:, :self.state_dim].clone()]
 
         Phi = self.Phi_lift_fitted.to(torch.complex128)
         Lambda = self.Lambda_fitted.to(torch.complex128)
@@ -392,22 +439,28 @@ class Regression_DMD(nn.Module):
         else:
             Phi_pinv = self.Phi_pinv_fitted.to(torch.complex128)
 
-        x = x0.clone()
-
         for _ in range(steps):
             x_n = self._normalize_x(x)
-            z = (self.expand(x_n) / self.psi_scale)[0].to(torch.complex128)
+            z = (self.expand(x_n) / self.psi_scale).to(torch.complex128) # (N, p)
 
-            b = Phi_pinv @ z
-            z_next = Phi @ (Lambda * b)
+            b = (Phi_pinv @ z.T).T # (N, r)
+            z_next = (Phi @ (Lambda.unsqueeze(1) * b.T)).T # (N, p)
 
-            x_next_n = C @ z_next
-            x_next = self._denormalize_x(x_next_n.real.to(torch.float64)).unsqueeze(0)
+            x_next_n = (C @ z_next.T).T.real.to(torch.float64) # (N, state_dim)
+            x_next_head = self._denormalize_x(x_next_n)
 
-            traj.append(x_next[0].clone())
-            x = x_next
+            traj.append(x_next_head.clone())
+            
+            # Shift history
+            if self.delay_depth > 1:
+                x = torch.cat([x_next_head, x[:, :-self.state_dim]], dim=1)
+            else:
+                x = x_next_head
 
-        return torch.stack(traj, dim=0)
+        out = torch.stack(traj, dim=0)
+        if is_1d:
+            out = out.squeeze(1)
+        return out
 
     def rollout(self, x0, steps, mode=None, mode_indices=None):
         mode = self._canonical_mode(mode)

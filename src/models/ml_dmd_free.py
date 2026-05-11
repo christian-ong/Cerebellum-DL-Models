@@ -12,6 +12,7 @@ class ML_DMD_FREE(nn.Module):
         sine_cosine_expansion=False,
         expansion_type="general",
         system=None,
+        delay_depth=1,
         rbf_n_centers=50,
         rbf_center_selection="farthest",
         rbf_bandwidth_mode="knn",
@@ -41,6 +42,7 @@ class ML_DMD_FREE(nn.Module):
             rbf_center_selection=rbf_center_selection,
             rbf_bandwidth_mode=rbf_bandwidth_mode,
             rbf_knn_k=rbf_knn_k,
+            delay_depth=delay_depth,
         )
 
         # Public aliases used elsewhere in the model / training code
@@ -161,7 +163,14 @@ class ML_DMD_FREE(nn.Module):
 
     def compute_loss(self, x, x_next_true, future_x=None):
         z_raw = self.expander.expand(x)
-        z_next_true_raw = self.expander.expand(x_next_true)
+
+        # Symmetrically construct labels
+        if getattr(self.expander, "delay_depth", 1) > 1:
+            x_next_true_stacked = torch.cat([x_next_true, x[:, :-self.state_dim]], dim=1)
+        else:
+            x_next_true_stacked = x_next_true
+            
+        z_next_true_raw = self.expander.expand(x_next_true_stacked)
 
         z_norm = self._normalize(z_raw)
         z_next_true_norm = self._normalize(z_next_true_raw, update_stats=False)
@@ -178,9 +187,19 @@ class ML_DMD_FREE(nn.Module):
         if future_x is not None and future_x.ndim == 3:
             horizon = min(self.rollout_horizon, future_x.shape[1])
             if horizon >= 2:
-                # PRE-EXPAND (Saves massive time!)
-                z_targets = self.expander.expand(future_x.reshape(-1, self.state_dim))
-                z_targets = z_targets.reshape(x.shape[0], future_x.shape[1], -1)
+                # PRE-EXPAND FUTURE TARGETS WITH DELAYS
+                if getattr(self.expander, "delay_depth", 1) > 1:
+                    delayed_targets = [x_next_true_stacked]
+                    curr_delay = x_next_true_stacked
+                    for k in range(1, horizon):
+                        curr_delay = torch.cat([future_x[:, k, :], curr_delay[:, :-self.state_dim]], dim=1)
+                        delayed_targets.append(curr_delay)
+                    stacked_targets = torch.stack(delayed_targets, dim=1)
+                    z_targets = self.expander.expand(stacked_targets.reshape(-1, stacked_targets.shape[-1]))
+                else:
+                    z_targets = self.expander.expand(future_x.reshape(-1, self.state_dim))
+                
+                z_targets = z_targets.reshape(x.shape[0], horizon, -1)
                 z_targets_norm = self._normalize(z_targets.reshape(-1, self.latent_dim), update_stats=False)
                 z_targets_norm = z_targets_norm.reshape_as(z_targets)
 
@@ -228,20 +247,31 @@ class ML_DMD_FREE(nn.Module):
                 device=next(self.parameters()).device,
             )
 
-        if x0.ndim == 1:
-            x = x0.unsqueeze(0)
+        is_1d = x0.ndim == 1
+        if is_1d:
+            x0 = x0.unsqueeze(0)
+
+        # Auto-pad history if given a single state step during evaluation
+        if x0.shape[1] == self.state_dim and getattr(self.expander, "delay_depth", 1) > 1:
+            x = x0.repeat(1, self.expander.delay_depth)
         else:
             x = x0
 
-        traj = [x.squeeze(0)]
+        # ONLY STORE HEAD (preserve batch dimension properly)
+        traj = [x[:, :self.state_dim].clone()] 
         
         # 1. Expand the state to latent space exactly ONCE
         z = self.expander.expand(x)
         z_norm = self._normalize(z, update_stats=False)
-        b = self._get_modal_coords(z_norm) # SOLVE ONCE
+        b = self._get_modal_coords(z_norm)
+        
         for _ in range(steps):
-            b = self._step_modal(b)   # MATMUL LOOP
+            b = self._step_modal(b)
             z = self._modal_to_latent(b)
-            z_phys = self._unnormalize(z) # MUST unnormalize before de-expanding
-            traj.append(self.expander.de_expand(z_phys).squeeze(0))
-        return torch.stack(traj)
+            z_phys = self._unnormalize(z)
+            traj.append(self.expander.de_expand(z_phys).clone())
+            
+        out = torch.stack(traj, dim=0)
+        if is_1d:
+            out = out.squeeze(1)
+        return out

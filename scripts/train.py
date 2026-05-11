@@ -287,12 +287,13 @@ def main():
     parser.add_argument("--rank", type=int, default=None)
     parser.add_argument("--ridge", type=float, default=0.0)
     parser.add_argument("--bias", type=str.lower, choices=["true", "false"], default="true", help="Include bias term in polynomial expansion")
-    parser.add_argument("--expansion_type", type=str, default="general", choices=["general", "specific","rbf"], help="Whether to use general polynomial expansion (all combinations up to degree) or specific expansion or radial basis functions")
+    parser.add_argument("--expansion_type", type=str, default="general", choices=["general", "specific", "rbf", "delay"], help="Whether to use general polynomial expansion, specific expansion, radial basis functions, or a time-delay embedding.")
     parser.add_argument("--expansion_degree", type=int, default=1)
     parser.add_argument("--sine_cosine_expansion", type=str.lower,choices=["true", "false"], default="false",help="Include sin(x_i) and cos(x_i) terms in the manual expansion basis")
     parser.add_argument("--normalize_state", type=str.lower, choices=["true", "false"], default="false")
     parser.add_argument("--normalize_lifted", type=str.lower, choices=["true", "false"], default="true")
     parser.add_argument("--regression_rollout_mode",type=str,default="DMD",choices=["linear_dynamics", "DMD","projected_DMD"],help="Default rollout mode for regression_dmd checkpoints.")
+    parser.add_argument("--delay_depth", type=int, default=1, help="Number of stacked delay coordinates to use when expansion_type='delay'.")
     parser.add_argument("--rbf_n_centers", type=int, default=50, help="Number of RBF centers when expansion_type='rbf'.")
     parser.add_argument("--rbf_center_selection", type=str, default="farthest", choices=["random", "farthest"], help="How to choose RBF centers from training states.")
     parser.add_argument("--rbf_bandwidth_mode", type=str, default="knn", choices=["global", "knn"], help="How to choose RBF widths (sigmas).")
@@ -380,17 +381,25 @@ def main():
     else:
         log_phi_every = 1 if is_ml_model else 0
         
+    if args.delay_depth > 1 and args.expansion_type != "delay":
+        raise ValueError(
+            "delay_depth > 1 requires --expansion_type delay. "
+            "Use --expansion_type delay to enable time-delay embedding."
+        )
+
     train_ds = OneStepTrajectoryDataset(
         args.data_path,
         split="train",
         subset=args.subset,
         rollout_horizon=rollout_horizon,
+        delay_depth=args.delay_depth,
     )
     val_ds = OneStepTrajectoryDataset(
         args.data_path,
         split="val",
         subset=args.subset,
         rollout_horizon=rollout_horizon,
+        delay_depth=args.delay_depth,
     )
     
     pin_memory = device == "cuda"
@@ -455,6 +464,7 @@ def main():
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             expansion_type=args.expansion_type,
             system=system_name if args.expansion_type == "specific" else None,
+            delay_depth=args.delay_depth,
             normalize_state=args.normalize_state == "true",
             normalize_lifted=args.normalize_lifted == "true",
             rollout_mode=args.regression_rollout_mode,
@@ -510,6 +520,7 @@ def main():
             rank=-1 if args.rank is None else args.rank,
             normalize_state=args.normalize_state == "true",
             normalize_lifted=args.normalize_lifted == "true",
+            delay_depth=args.delay_depth,
 
             rbf_n_centers=args.rbf_n_centers,
             rbf_center_selection=args.rbf_center_selection,
@@ -611,6 +622,7 @@ def main():
             bias=args.bias == "true",
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             system=system_name if args.expansion_type == "specific" else None,
+            delay_depth=args.delay_depth, # <--- ADD THIS LINE
             rbf_n_centers=args.rbf_n_centers,
             rbf_center_selection=args.rbf_center_selection,
             rbf_bandwidth_mode=args.rbf_bandwidth_mode,
@@ -625,6 +637,7 @@ def main():
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             expansion_type=args.expansion_type,
             system=system_name if args.expansion_type == "specific" else None,
+            delay_depth=args.delay_depth, # <--- ADD THIS LINE
             rbf_n_centers=args.rbf_n_centers,
             rbf_center_selection=args.rbf_center_selection,
             rbf_bandwidth_mode=args.rbf_bandwidth_mode,
@@ -639,6 +652,7 @@ def main():
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             expansion_type=args.expansion_type,
             system=system_name if args.expansion_type == "specific" else None,
+            delay_depth=args.delay_depth, # <--- ADD THIS LINE
             rbf_n_centers=args.rbf_n_centers,
             rbf_center_selection=args.rbf_center_selection,
             rbf_bandwidth_mode=args.rbf_bandwidth_mode,

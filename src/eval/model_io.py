@@ -142,6 +142,7 @@ def load_model(
             sine_cosine_expansion=_to_bool(model_data["sine_cosine_expansion"], default=False),
             expansion_type=str(model_data["expansion_type"]),
             system=_to_optional_str(model_data["system_basis"]),
+            delay_depth=int(np.asarray(model_data["delay_depth"]).item()) if "delay_depth" in model_data else 1,
             normalize_state=_to_bool(model_data["normalize_state"], default=False),
             normalize_lifted=_to_bool(model_data["normalize_lifted"], default=True),
             rollout_mode=rollout_mode,
@@ -206,6 +207,7 @@ def load_model(
             bias=_to_bool(train_args.get("bias", "true"), default=True),
             sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", "false"), default=False),
             system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
+            delay_depth=int(train_args.get("delay_depth", 1)),
             rbf_n_centers=int(train_args.get("rbf_n_centers", 50)),
             rbf_center_selection=str(train_args.get("rbf_center_selection", "farthest")),
             rbf_bandwidth_mode=str(train_args.get("rbf_bandwidth_mode", "knn")),
@@ -233,6 +235,7 @@ def load_model(
             sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", "false"), default=False),
             expansion_type=train_args["expansion_type"],
             system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
+            delay_depth=int(train_args.get("delay_depth", 1)),
             rbf_n_centers=int(train_args.get("rbf_n_centers", 50)),
             rbf_center_selection=str(train_args.get("rbf_center_selection", "farthest")),
             rbf_bandwidth_mode=str(train_args.get("rbf_bandwidth_mode", "knn")),
@@ -261,6 +264,7 @@ def load_model(
             sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", "false"), default=False),
             expansion_type=train_args["expansion_type"],
             system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
+            delay_depth=int(train_args.get("delay_depth", 1)),
         ).to(device)
 
         model.load_state_dict(ckpt["model_state_dict"])
@@ -321,7 +325,8 @@ def supports_mode_subset_rollout(model_name: str, model, extras: Dict[str, Any])
     if model_name == "regression_dmd":
         rollout_mode = extras.get("rollout_mode", "DMD")
         return rollout_mode in {"DMD", "projected_DMD"}
-    if model_name == "ml_dmd_free":
+    # Updated to match your actual model choice strings
+    if model_name in {"ml_dmd", "ml_dmd_free", "ml_dmd_band"}:
         return True
     return False
 
@@ -348,21 +353,27 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
         return model.rollout(x0, steps=steps)
 
     with torch.inference_mode():
-        # --- NEW: Native Mode Subsetting for ML-DMD ---
-        if model_name == "ml_dmd_free" and mode_indices is not None:
-            x0_t = torch.as_tensor(x0, dtype=torch.float32, device=next(model.parameters()).device)
-            if x0_t.ndim == 1:
+        # --- Native Mode Subsetting for ML-DMD Models ---
+        # Fixed logic to use your new _normalize and _get_modal_coords pipeline
+        if model_name in {"ml_dmd", "ml_dmd_free", "ml_dmd_band"} and mode_indices is not None:
+            x0_t = torch.as_tensor(x0, dtype=next(model.parameters()).dtype, device=next(model.parameters()).device)
+            
+            is_1d = x0_t.ndim == 1
+            if is_1d:
                 x0_t = x0_t.unsqueeze(0)
                 
-            # 1. Expand and scale the input
-            x_scaled = model.scale_state(x0_t)
-            z = model.expand(x_scaled)
-            z_norm = z / model.z_scale
+            # Handle delay auto-padding for consistency
+            if x0_t.shape[1] == model.state_dim and getattr(model.expander, "delay_depth", 1) > 1:
+                x = x0_t.repeat(1, model.expander.delay_depth)
+            else:
+                x = x0_t
+
+            # 1. Expand and scale using the NEW standardization methods
+            z = model.expander.expand(x)
+            z_norm = model._normalize(z, update_stats=False)
             
             # 2. Project into modal coordinates (b)
-            Phi = model.Phi
-            Phi_inv = model.Phi_inv if hasattr(model, "Phi_inv") else torch.linalg.pinv(Phi)
-            b = (Phi_inv @ z_norm.T).T 
+            b = model._get_modal_coords(z_norm)
             
             # 3. Mask unwanted modes
             mask = torch.zeros_like(b)
@@ -370,22 +381,21 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
             b = b * mask
             
             # 4. Rollout entirely in the latent space
-            Lambda = model.get_Lambda()
-            trajectory = [x0_t.squeeze(0).cpu().numpy()]
+            trajectory = [x[:, :model.state_dim].squeeze(0).cpu().numpy()]
             
             for _ in range(steps):
-                b = b @ Lambda.T
+                b = model._step_modal(b)
                 b = b * mask  # Keep masked modes exactly at 0
                 
-                # 5. Reconstruct back to physical space
-                z_norm_next = b @ Phi.T
-                z_next = z_norm_next * model.z_scale
-                x_next_scaled = model.de_expand(z_next)
-                x_next = model.unscale_state(x_next_scaled)
+                # 5. Reconstruct back to physical space using updated pipeline
+                z_norm_next = model._modal_to_latent(b)
+                z_next_phys = model._unnormalize(z_norm_next)
+                x_next_head = model.expander.de_expand(z_next_phys)
                 
-                trajectory.append(x_next.squeeze(0).cpu().numpy())
+                trajectory.append(x_next_head.squeeze(0).cpu().numpy())
                 
             return np.array(trajectory)
             
         else:
+            # Standard rollout (already updated in your class files)
             return model.rollout(x0=x0, steps=steps).detach().cpu().numpy()

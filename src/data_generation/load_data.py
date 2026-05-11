@@ -56,13 +56,15 @@ class OneStepTrajectoryDataset(Dataset):
     Supports:
       - split = "train" | "val" | "test"
       - X shape (T, d) or (T, n_traj, d)
+      - optional time-delay embedding when delay_depth > 1
     """
 
     def __init__(self, 
                  npz_path: str, 
                  split: str = "train",
-                                 subset: float = 1.0,
-                                 rollout_horizon: int = 0):
+                 subset: float = 1.0,
+                 rollout_horizon: int = 0,
+                 delay_depth: int = 1):
         full_path = resolve_split_npz_path(npz_path, split)
         
         data = np.load(full_path)
@@ -98,10 +100,14 @@ class OneStepTrajectoryDataset(Dataset):
 
         if rollout_horizon < 0:
             raise ValueError("rollout_horizon must be non-negative")
+        if delay_depth < 1:
+            raise ValueError("delay_depth must be positive")
+
+        self.delay_depth = delay_depth
 
         # Build one-step pairs, optionally accompanied by a short future window.
-        # The additional future window lets the trainer impose rollout consistency
-        # without changing the stored dataset format.
+        # When delay_depth > 1, the input x is a stacked history:
+        #   [x(t), x(t-1), ..., x(t-delay_depth+1)].
         x_list = []
         y_list = []
         rollout_list = []
@@ -110,8 +116,17 @@ class OneStepTrajectoryDataset(Dataset):
         for traj in range(X.shape[1]):
             traj_series = X[:, traj, :]
 
-            for t in range(max_start):
-                x_list.append(traj_series[t])
+            for t in range(delay_depth - 1, max_start):
+                if delay_depth == 1:
+                    x_list.append(traj_series[t])
+                else:
+                    x_list.append(
+                        np.concatenate(
+                            [traj_series[t - k] for k in range(delay_depth)],
+                            axis=-1,
+                        )
+                    )
+
                 y_list.append(traj_series[t + 1])
 
                 if rollout_horizon > 0:
