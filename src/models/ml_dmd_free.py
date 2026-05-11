@@ -239,8 +239,6 @@ class ML_DMD_FREE(nn.Module):
         z = self.expander.expand(x)
         z_norm = self._normalize(z, update_stats=False)
         b = self._get_modal_coords(z_norm) # SOLVE ONCE
-        
-        traj = [x.squeeze(0)]
         for _ in range(steps):
             b = self._step_modal(b)   # MATMUL LOOP
             z = self._modal_to_latent(b)
