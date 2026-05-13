@@ -242,7 +242,7 @@ plot_freq_magnitude(
 # Parameters
 n_modes = 10
 n_trajectories = 3
-n_steps = 1000
+n_steps = 200
 
 plot_trajectories = trajectories[:n_steps, :n_trajectories, :] # (steps, id, state_dim)
 plot_Phi = sorted_data["model"]["Phi"][:, :n_modes] # (latent_dim, n_modes)

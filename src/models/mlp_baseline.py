@@ -16,46 +16,47 @@ class MLP_BlackBox(nn.Module):
         self.state_dim = state_dim
         self.rollout_horizon = 20
 
-        # ------------------------------------------------
+        # --- NEW: Add a buffer for MaxAbs scaling ---
+        self.register_buffer("state_scale", torch.ones(state_dim, dtype=torch.float32))
+
         # 1. Build the Neural Network (Hidden Layers)
-        # ------------------------------------------------
         layers = []
-        
-        # Input layer
         layers.append(nn.Linear(state_dim, hidden_dim))
         layers.append(nn.SiLU())
         
-        # Intermediate hidden layers
         for _ in range(num_layers - 2):
             layers.append(nn.Linear(hidden_dim, hidden_dim))
             layers.append(nn.SiLU())
             
         self.net = nn.Sequential(*layers)
         
-        # ------------------------------------------------
         # 2. Build the Output Head
-        # ------------------------------------------------
-        # This layer maps the hidden features back to the 2D physical state
         self.head = nn.Linear(hidden_dim, state_dim)
         
-        # INITIALIZATION TRICK: 
-        # We initialize the final layer to exactly zero. 
-        # This means at Epoch 0, the network predicts "0 change" (x_{t+1} = x_t).
-        # This gives the network a highly stable starting point.
+        # Initialize final layer to exactly zero
         nn.init.zeros_(self.head.weight)
         nn.init.zeros_(self.head.bias)
 
-    # ------------------------------------------------
-    # Forward Pass (One-Step Prediction)
-    # ------------------------------------------------
+    # --- NEW: Add the scaler fitting method ---
+    def fit_state_scaler(self, x: torch.Tensor):
+        """Calculates MaxAbs scale from training data."""
+        max_abs = torch.max(torch.abs(x), dim=0)[0]
+        max_abs[max_abs == 0] = 1.0 # Prevent division by zero
+        self.state_scale.copy_(max_abs)
+
     def forward(self, x):
-        """ Predicts the next state: x_{t+1} """
+        """
+        Input: Physical state x_t
+        Output: Physical state x_{t+1}
+        """
+        # 1. Scale input down to roughly [-1.0, 1.0]
+        x_norm = x / self.state_scale
         
-        # 1. Pass the current state through the network to get the "change" (delta)
-        delta = self.head(self.net(x))
+        # 2. Network predicts the NORMALIZED change in state
+        delta_norm = self.head(self.net(x_norm))
         
-        # 2. Add the change to the current state (Residual / Euler integration)
-        x_next = x + delta
+        # 3. Multiply the predicted change back up to physical scale, and add it
+        x_next = x + (delta_norm * self.state_scale)
         
         return x_next
 
@@ -64,43 +65,55 @@ class MLP_BlackBox(nn.Module):
     # ------------------------------------------------
     def compute_loss(self, x, x_next_true, future_x=None):
         
-        # --- 1. One-Step Prediction Loss ---
+        # --- 1. One-Step Prediction ---
         x_next_pred = self.forward(x)
+        
+        # Physical loss (for logging and absolute accuracy)
         loss_state = nn.MSELoss()(x_next_pred, x_next_true)
+        
+        # NEW: Normalized loss (for balanced, stable gradients!)
+        x_next_pred_norm = x_next_pred / self.state_scale
+        x_next_true_norm = x_next_true / self.state_scale
+        loss_state_norm = nn.MSELoss()(x_next_pred_norm, x_next_true_norm)
 
         # --- 2. Multi-Step Rollout Loss ---
         loss_rollout = torch.tensor(0.0, device=x.device)
+        loss_rollout_norm = torch.tensor(0.0, device=x.device) # Track normalized rollout too
         
-        # If we provided future trajectory data, calculate how well the model 
-        # predicts multiple steps into the future using its own predictions.
         if future_x is not None and future_x.ndim == 3:
-            
-            # Decide how far into the future to look (cap it at rollout_horizon)
             horizon = min(self.rollout_horizon, future_x.shape[1])
-            
             if horizon >= 2:
                 curr_pred = x_next_pred 
                 
-                # Loop through the future steps
                 for k in range(1, horizon):
-                    
-                    # Feed the model's LAST prediction back into itself
                     curr_pred = self.forward(curr_pred)
-                    
-                    # Compare the new prediction to the true future state
                     x_true_k = future_x[:, k, :]
+                    
+                    # Physical rollout
                     loss_rollout += torch.mean((curr_pred - x_true_k)**2)
+                    
+                    # Normalized rollout
+                    curr_pred_norm = curr_pred / self.state_scale
+                    x_true_k_norm = x_true_k / self.state_scale
+                    loss_rollout_norm += torch.mean((curr_pred_norm - x_true_k_norm)**2)
                 
-                # Average the loss over the number of steps
                 loss_rollout = loss_rollout / float(horizon - 1)
+                loss_rollout_norm = loss_rollout_norm / float(horizon - 1)
 
         # --- 3. Total Loss ---
-        # Note: We lowered the state loss to 0.5 to match your Koopman models!
-        loss_total = 0.5 * loss_state + 0.1 * loss_rollout
+        # Add the normalized losses as the primary driver to stabilize the network!
+        loss_total = (
+              0.5 * loss_state 
+            + 0.1 * loss_rollout 
+            + 1.0 * loss_state_norm 
+            + 1.0 * loss_rollout_norm
+        )
         
         loss_dict = {
             "state": loss_state.item(),
             "rollout": loss_rollout.item(),
+            "state_norm": loss_state_norm.item(),
+            "rollout_norm": loss_rollout_norm.item(),
         }
         
         return (loss_total, loss_dict)

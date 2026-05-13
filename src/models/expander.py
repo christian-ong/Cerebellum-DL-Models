@@ -253,6 +253,19 @@ class ManualExpansion(nn.Module):
 
         self.state_indices = [self.expand_names.index(name) for name in target_names]
 
+        # --- ADD THIS: Buffer to store the physical state scaling ---
+        self.register_buffer("state_scale", torch.ones(self.state_dim, dtype=torch.float32))
+
+    def fit_state_scaler(self, x: torch.Tensor):
+        """Calculates MaxAbs scale from training data. We ignore specific bases 
+        because they rely on exact physical units (like radians for sin(x))."""
+        if self.expansion_type == "specific":
+            return
+            
+        max_abs = torch.max(torch.abs(x), dim=0)[0]
+        max_abs[max_abs == 0] = 1.0 # Prevent division by zero
+        self.state_scale.copy_(max_abs)
+
     def _compile_basis(self, expr):
         """
         Turn strings like 'x^2*y' or 'sin(x)' into callable functions.
@@ -294,25 +307,24 @@ class ManualExpansion(nn.Module):
                 expanded_features.append(fn(var_dict))
 
         else:
+            # --- ADD THIS: Scale down the state before raising to high powers ---
+            x_scaled = x / self.state_scale
+
             for basis in self.expanded_basis:
                 if isinstance(basis[0], int):
-                    term = torch.ones(x.shape[0], device=x.device, dtype=x.dtype)
+                    term = torch.ones(x_scaled.shape[0], device=x_scaled.device, dtype=x_scaled.dtype)
 
                     for dim, power in enumerate(basis):
                         if power > 0:
-                            # Bound polynomial base to avoid float overflow at high degree.
-                            base = torch.clamp(
-                                x[:, dim],
-                                min=-self.max_poly_base_abs,
-                                max=self.max_poly_base_abs,
-                            )
+                            # --- REMOVE THE CLAMP! Just use the scaled base ---
+                            base = x_scaled[:, dim] 
                             term = term * (base ** power)
 
                     expanded_features.append(term)
 
                 else:
                     func, dim, k = basis
-
+                    # Keep raw `x` for trig functions so we don't mess up the frequencies
                     if func == "sin":
                         expanded_features.append(torch.sin(k * x[:, dim]))
                     elif func == "cos":
@@ -322,10 +334,14 @@ class ManualExpansion(nn.Module):
 
     def de_expand(self, x_expanded):
         """
-        Recover original state variables using their actual indices
-        in the expanded basis.
+        Recover original state variables and restore physical scaling.
         """
-        return x_expanded[:, self.state_indices]
+        extracted = x_expanded[:, self.state_indices]
+        
+        if self.expansion_type == "specific":
+            return extracted
+            
+        return extracted * self.state_scale
 
 
 class DelayExpansion(nn.Module):

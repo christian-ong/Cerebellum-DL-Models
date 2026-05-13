@@ -99,10 +99,10 @@ class ML_DMD_BAND(nn.Module):
 
     def _normalize(self, z, update_stats=True):
         del update_stats
-        return (z - self.lift_mean) / self.lift_scale
+        return z / self.lift_scale
 
     def _unnormalize(self, z_norm):
-        return z_norm * self.lift_scale + self.lift_mean
+        return z_norm * self.lift_scale
 
     # ------------------------------------------------
     # Matrix Accessors
@@ -160,46 +160,46 @@ class ML_DMD_BAND(nn.Module):
     # Training loss
     # ------------------------------------------------
     def compute_loss(self, x, x_next_true, future_x=None):
+        """
+        Refactored loss function for ML_DMD_BAND.
+        Prioritizes state accuracy while using soft, continuous regularization 
+        to encourage clean Koopman modes without shattering gradients.
+        """
+        # ------------------------------------------------------------------
+        # 1. Data Preparation and Lifting
+        # ------------------------------------------------------------------
         z_raw = self.expander.expand(x)
-        
-        # Symmetrically construct labels
-        if getattr(self.expander, "delay_depth", 1) > 1:
-            x_next_true_stacked = torch.cat([x_next_true, x[:, :-self.state_dim]], dim=1)
-        else:
-            x_next_true_stacked = x_next_true
-            
-        z_next_true_raw = self.expander.expand(x_next_true_stacked)
+        z_next_true_raw = self.expander.expand(x_next_true)
 
+        # Use fixed scaling (calibrated from dataset stats)
         z_norm = self._normalize(z_raw)
         z_next_true_norm = self._normalize(z_next_true_raw, update_stats=False)
 
-        # Use the helpers!
+        # ------------------------------------------------------------------
+        # 2. Prediction Step
+        # ------------------------------------------------------------------
         b_curr = self._get_modal_coords(z_norm)
         b_next = self._step_modal(b_curr)
         z_next_pred_norm = self._modal_to_latent(b_next)
 
+        # ------------------------------------------------------------------
+        # 3. Primary Accuracy Losses (The anchor of the model)
+        # ------------------------------------------------------------------
         loss_lift = torch.mean((z_next_pred_norm - z_next_true_norm)**2)
         z_next_phys = self._unnormalize(z_next_pred_norm)
+        
+        # Physical state loss remains our absolute highest priority
         loss_state = torch.mean((self.expander.de_expand(z_next_phys) - x_next_true)**2)
 
-        # 3. Rollout
+        # ------------------------------------------------------------------
+        # 4. Multi-step Rollout Loss
+        # ------------------------------------------------------------------
         loss_rollout = torch.tensor(0.0, device=x.device)
         if future_x is not None and future_x.ndim == 3:
             horizon = min(self.rollout_horizon, future_x.shape[1])
             if horizon >= 2:
-                # PRE-EXPAND FUTURE TARGETS WITH DELAYS
-                if getattr(self.expander, "delay_depth", 1) > 1:
-                    delayed_targets = [x_next_true_stacked]
-                    curr_delay = x_next_true_stacked
-                    for k in range(1, horizon):
-                        curr_delay = torch.cat([future_x[:, k, :], curr_delay[:, :-self.state_dim]], dim=1)
-                        delayed_targets.append(curr_delay)
-                    stacked_targets = torch.stack(delayed_targets, dim=1)
-                    z_targets = self.expander.expand(stacked_targets.reshape(-1, stacked_targets.shape[-1]))
-                else:
-                    z_targets = self.expander.expand(future_x.reshape(-1, self.state_dim))
-                    
-                z_targets = z_targets.reshape(x.shape[0], horizon, -1)
+                z_targets = self.expander.expand(future_x.reshape(-1, self.state_dim))
+                z_targets = z_targets.reshape(x.shape[0], future_x.shape[1], -1)
                 z_targets_norm = self._normalize(z_targets.reshape(-1, self.latent_dim), update_stats=False)
                 z_targets_norm = z_targets_norm.reshape_as(z_targets)
 
@@ -208,61 +208,55 @@ class ML_DMD_BAND(nn.Module):
                     b_rollout = self._step_modal(b_rollout)
                     z_pred_k = self._modal_to_latent(b_rollout)
                     z_pred_k_phys = self._unnormalize(z_pred_k)
-                    loss_rollout += torch.mean((z_pred_k - z_targets_norm[:, k, :])**2)
-                    loss_rollout += torch.mean((self.expander.de_expand(z_pred_k_phys) - future_x[:, k, :])**2)
-                loss_rollout = loss_rollout / float(horizon - 1)
+                    
+                    # Compute errors with a slight decay to prioritize near-term physics
+                    discount = 0.9 ** k
+                    loss_rollout += discount * torch.mean((z_pred_k - z_targets_norm[:, k, :])**2)
+                    loss_rollout += discount * torch.mean((self.expander.de_expand(z_pred_k_phys) - future_x[:, k, :])**2)
                 
-        # 3. Structural Constraints (Phi)
+                loss_rollout = loss_rollout / float(horizon - 1)
+
+        # ------------------------------------------------------------------
+        # 5. Phi Constraints (Eigenvectors)
+        # ------------------------------------------------------------------
         phi_phys = self.get_Phi()
         col_norms = torch.linalg.norm(phi_phys, dim=0)
-        loss_unit_length = torch.mean((col_norms - 1.0) ** 2) # Use L2 for stable normalization
-        loss_phi_sparse = torch.mean(torch.abs(phi_phys))
-
-        # 4. Lambda Regularization (The "Softened" Physics Router)
-        b = self.eig_super
-        c = self.eig_sub
-        d = self.eig_diag
-        diff_diag = d[:-1] - d[1:]
-
-        # Branch 1: Rotation Block
-        dist_rot = torch.abs(b + c) + torch.abs(diff_diag)      
         
-        # Branch 2: Independent Modes
-        dist_indep = torch.abs(b) + torch.abs(c)
+        # Keeping Phi columns near unit length prevents scaling issues with Phi_inv
+        loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
 
-        dist_all = torch.min(torch.stack([dist_rot, dist_indep], dim=0), dim=0).values
-        loss_manifold = torch.mean(dist_all)
+        # ------------------------------------------------------------------
+        # 6. Lambda Constraints (Dynamics)
+        # ------------------------------------------------------------------
+        eigs = self.get_eigenvalues()
+        
+        # Soft stability: Only penalize eigenvalues that go beyond 1.0
+        # (Allows strict rotation / conservation of energy)
+        loss_stability = torch.mean(torch.nn.functional.relu(torch.abs(eigs) - 1.0))
 
-        loss_same_sign = torch.mean(torch.relu(b * c))
-        # Keep Overlap and Sparsity as L1 to force blocks to separate
-        loss_overlap = torch.mean(torch.abs(b[:-1] * b[1:]) + torch.abs(c[:-1] * c[1:]))
+        b = self.eig_super  # Upper diagonal
+        c = self.eig_sub    # Lower diagonal
+        d = self.eig_diag   # Main diagonal
+
+        # REWRITTEN STRUCTURAL LOSS:
+        # Instead of a harsh min() manifold, we apply a gentle L1 pressure to the off-diagonals.
+        # We also add a penalty pushing (b + c) towards 0, which smoothly encourages 
+        # skew-symmetry (rotations) or zero (independent modes) without hard constraints.
         loss_lam_sparse = torch.mean(torch.abs(b)) + torch.mean(torch.abs(c))
+        loss_skew_sym = torch.mean(torch.abs(b + c)) 
 
-        # 5. Annealing (Lower cap and slower ramp)
-        start_weight = 0.0     
-        end_weight = 0.1
-        warmup_epochs = 40.0   
-        ramp_epochs = 200.0  
-
-        if self.current_epoch < warmup_epochs:
-            structural_weight = 0.0
-        elif self.current_epoch < ramp_epochs:
-            progress = (self.current_epoch - warmup_epochs) / (ramp_epochs - warmup_epochs)
-            structural_weight = start_weight + (end_weight - start_weight) * progress
-        else:
-            structural_weight = end_weight
-
-        # 6. Total Loss
+        # ------------------------------------------------------------------
+        # 8. Total Loss Assembly
+        # ------------------------------------------------------------------
         loss_total = (
-            loss_lift
-            + 0.5 * loss_state
-            + 1.0 * loss_rollout                 
-            + 1e-3 * loss_unit_length
-            + structural_weight * loss_manifold      
-            + structural_weight * loss_same_sign 
-            + structural_weight * loss_overlap      
-            + 1e-4 * loss_lam_sparse
-            + 1e-4 * loss_phi_sparse
+            2.0 * loss_state                   # Anchor: Must predict the physical state
+            + 2.0 * loss_rollout               # Anchor: Must be stable over time
+            + 0.1 * loss_lift                  # Latent guidance
+            + 1e-3 * loss_unit_length          # Keep matrices numerically stable
+            + 1e-2 * loss_stability            # Prevent explosive dynamics
+            + 1e-3 * loss_lam_sparse          # Encourage simpler dynamics
+            + 1e-3 * loss_skew_sym             # Encourage clean rotations / independent modes
+            
         )
         
         loss_dict = {
@@ -270,11 +264,9 @@ class ML_DMD_BAND(nn.Module):
             "lift": loss_lift.item(),
             "rollout": loss_rollout.item(),
             "unit": loss_unit_length.item(),
-            "manifold": loss_manifold.item(),
-            "overlap": loss_overlap.item(),
-            "lam_sp": loss_lam_sparse.item(),
-            "phi_sp": loss_phi_sparse.item(),
-            "struct_weight": structural_weight,
+            "stability": loss_stability.item(),
+            "lam_sparse": loss_lam_sparse.item(),
+            "skew_sym": loss_skew_sym.item(),
         }
         return (loss_total, loss_dict)
 
@@ -286,31 +278,20 @@ class ML_DMD_BAND(nn.Module):
                 device=next(self.parameters()).device,
             )
 
-        is_1d = x0.ndim == 1
-        if is_1d:
-            x0 = x0.unsqueeze(0)
-
-        # Auto-pad history if given a single state step during evaluation
-        if x0.shape[1] == self.state_dim and getattr(self.expander, "delay_depth", 1) > 1:
-            x = x0.repeat(1, self.expander.delay_depth)
+        if x0.ndim == 1:
+            x = x0.unsqueeze(0)
         else:
             x = x0
 
-        # ONLY STORE HEAD (preserve batch dimension properly)
-        traj = [x[:, :self.state_dim].clone()] 
+        traj = [x.squeeze(0)]
         
         # 1. Expand the state to latent space exactly ONCE
         z = self.expander.expand(x)
         z_norm = self._normalize(z, update_stats=False)
         b = self._get_modal_coords(z_norm)
-        
         for _ in range(steps):
-            b = self._step_modal(b)
+            b = self._step_modal(b)   # MATMUL LOOP
             z = self._modal_to_latent(b)
-            z_phys = self._unnormalize(z)
-            traj.append(self.expander.de_expand(z_phys).clone())
-            
-        out = torch.stack(traj, dim=0)
-        if is_1d:
-            out = out.squeeze(1)
-        return out
+            z_phys = self._unnormalize(z) # MUST unnormalize before de-expanding
+            traj.append(self.expander.de_expand(z_phys).squeeze(0))
+        return torch.stack(traj)

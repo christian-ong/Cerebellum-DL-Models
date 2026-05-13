@@ -13,6 +13,7 @@ def train_onestep(
     weight_decay=1e-6,
     log_phi_every=0,
     phi_print_max_dim=12,
+    eval_callback=None,
 ):
 
     model = model.to(device)
@@ -61,6 +62,24 @@ def train_onestep(
 
         model.set_lifted_normalization_stats(mean, scale)
 
+    # 1. Fit the MaxAbs state scaler (supports both Koopman Expanders and standard MLPs)
+    has_expander_scaler = hasattr(model, "expander") and hasattr(model.expander, "fit_state_scaler")
+    has_model_scaler = hasattr(model, "fit_state_scaler")
+
+    if has_expander_scaler or has_model_scaler:
+        all_x = []
+        for batch in train_loader:
+            x = batch[0] if isinstance(batch, (list, tuple)) else batch
+            all_x.append(x)
+            
+        full_X_train = torch.cat(all_x, dim=0).to(device)
+        
+        if has_expander_scaler:
+            model.expander.fit_state_scaler(full_X_train)
+        elif has_model_scaler:
+            model.fit_state_scaler(full_X_train)
+
+    # 2. THEN, calculate the lifted stats using the newly safe, bounded polynomials
     initialize_lifted_normalization(model, train_loader)
 
     optimizer = torch.optim.Adam(
@@ -83,6 +102,7 @@ def train_onestep(
         factor=0.5,
         patience=5,
         min_lr=1e-6,
+        threshold=1e-3
     )
 
     loss_fn = torch.nn.MSELoss()
@@ -330,6 +350,9 @@ def train_onestep(
             if comp_str:
                 msg += f" | {comp_str}"
             print(msg)
+
+        if eval_callback is not None:
+            eval_callback(epoch, train_loss, val_loss)
 
         maybe_log_matrices(epoch)
 
