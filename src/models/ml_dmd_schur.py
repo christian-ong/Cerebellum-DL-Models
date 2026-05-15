@@ -3,7 +3,8 @@ import torch.nn as nn
 
 from src.models.expander import build_expander
 
-class ML_DMD_FREE(nn.Module):
+
+class ML_DMD_SCHUR(nn.Module):
     def __init__(
         self,
         state_dim=2,
@@ -12,13 +13,11 @@ class ML_DMD_FREE(nn.Module):
         sine_cosine_expansion=False,
         expansion_type="general",
         system=None,
-        delay_depth=1,
         rbf_n_centers=50,
         rbf_center_selection="farthest",
         rbf_bandwidth_mode="knn",
         rbf_knn_k=5,
     ):
-
         super().__init__()
 
         self.state_dim = state_dim
@@ -42,7 +41,6 @@ class ML_DMD_FREE(nn.Module):
             rbf_center_selection=rbf_center_selection,
             rbf_bandwidth_mode=rbf_bandwidth_mode,
             rbf_knn_k=rbf_knn_k,
-            delay_depth=delay_depth,
         )
 
         # Public aliases used elsewhere in the model / training code
@@ -51,6 +49,13 @@ class ML_DMD_FREE(nn.Module):
         self.expanded_dim = self.expander.expanded_dim
 
         self.latent_dim = self.expanded_dim
+
+        # ------------------------------------------------
+        # Structural penalty hyperparameters
+        # ------------------------------------------------
+        # Smooth activation for rotation-block penalties (act in [0,1])
+        self.rotation_act_tol = 1e-3
+        self.rotation_act_scale = 1e-3
 
         # ------------------------------------------------
         # Fixed lifted-feature scaling (dataset-level stats, not batch stats)
@@ -62,8 +67,6 @@ class ML_DMD_FREE(nn.Module):
         # ------------------------------------------------
         # Eigenvector matrix Φ
         # ------------------------------------------------
-        # Columns correspond to Koopman modes.
-        # Initialized close to identity for stability.
         self.Phi = nn.Parameter(
             torch.eye(self.latent_dim)
             + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
@@ -72,59 +75,56 @@ class ML_DMD_FREE(nn.Module):
         # ------------------------------------------------
         # Eigenvalue matrix Λ
         # ------------------------------------------------
-        # We allow Λ to be a full matrix instead of diagonal.
-        # This allows the model to represent complex eigenvalue
-        # pairs using real-valued 2×2 blocks.
-        self.Lambda = nn.Parameter(
-            torch.eye(self.latent_dim)
-            + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
-        )
+        lam_init = torch.zeros(self.latent_dim, self.latent_dim)
+        lam_init += torch.eye(self.latent_dim)
+        if self.latent_dim > 1:
+            lam_init += 0.01 * torch.diag(torch.randn(self.latent_dim - 1), diagonal=1)
+            lam_init += 0.01 * torch.diag(torch.randn(self.latent_dim - 1), diagonal=-1)
+        self.lam_param = nn.Parameter(lam_init)
 
-        # ------------------------------------------------
-        # Feature scaling buffer
+        # Buffers and Constraints
         # ------------------------------------------------
         self.max_abs_z_norm = 1e6
-        self.rollout_horizon = 20
+        self.rollout_horizon = 10
+        self.current_epoch = 0
 
     def _normalize(self, z):
-        return z / self.lift_scale
+        return z / self.lift_scale # Removed mean subtraction
 
     def _unnormalize(self, z_norm):
         return z_norm * self.lift_scale
 
     # ------------------------------------------------
-    # Set lifted scaling
+    # Matrix Accessors
     # ------------------------------------------------
 
     def get_Phi(self):
-        """Return Phi in physical coordinates."""
+        """Returns Physical Phi for visualization and analysis."""
         return self.Phi
 
     def get_Phi_inv(self):
-        """Return pseudo-inverse of Phi."""
-        return torch.linalg.pinv(self.Phi, rcond=1e-6) 
+        """Returns Physical Phi_inv."""
+        return torch.linalg.pinv(self.Phi, rcond=1e-6)
 
     def get_Lambda(self):
-        """Return the learned Lambda matrix."""
-        return self.Lambda
+        # Schur-style quasi-upper-triangular form: keep the upper triangle and
+        # the first sub-diagonal so 2x2 blocks can appear on the diagonal.
+        return torch.triu(self.lam_param) + torch.diag(torch.diag(self.lam_param, -1), -1)
 
     def get_K(self):
-        """Return the lifted Koopman operator: K = Phi Lambda Phi^{-1}"""
-        Phi_inv = self.get_Phi_inv()
-        return self.Phi @ self.Lambda @ Phi_inv
+        """Returns Physical K."""
+        return self.Phi @ self.get_Lambda() @ self.get_Phi_inv()
 
     def get_eigenvalues(self):
-        """Eigenvalues of the lifted Koopman operator."""
-        K = self.get_K()
-        return torch.linalg.eigvals(K)
+        return torch.linalg.eigvals(self.get_Lambda())
 
-    # Standardize these three helpers in ML_DMD_FREE
     def _get_modal_coords(self, z):
         I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device)
         return torch.linalg.solve(self.Phi + I_eps, z.mT).mT
 
     def _step_modal(self, b):
-        return b @ self.Lambda.mT
+        # FIX: Call the method get_Lambda()
+        return b @ self.get_Lambda().mT
 
     def _modal_to_latent(self, b):
         z = b @ self.Phi.mT
@@ -133,42 +133,54 @@ class ML_DMD_FREE(nn.Module):
     # ------------------------------------------------
     # Forward pass
     # ------------------------------------------------
-
     def forward(self, x):
-        """
-        One-step prediction
-
-            x_t → x_{t+1}
-
-        using the Koopman eigendecomposition.
-        """
         z = self.expander.expand(x)
         z_norm = self._normalize(z)
         b = self._get_modal_coords(z_norm)
         b_next = self._step_modal(b)
-        z_next = self._modal_to_latent(b_next)
+        # Use your helper to get clamping for free!
+        z_next = self._modal_to_latent(b_next) 
         z_next_physical = self._unnormalize(z_next)
         return self.expander.de_expand(z_next_physical)
 
     # ------------------------------------------------
     # Training loss
     # ------------------------------------------------
-
     def compute_loss(self, x, x_next_true, future_x=None):
+        """
+        Computes the training loss for the ML_DMD_SCHUR model.
+        Optimized to prioritize state accuracy and allow for exact Schur-form
+        coupling and growing modes (essential for polynomial dynamics).
+        """
+        # ------------------------------------------------------------------
+        # 1. Data Preparation and Lifting
+        # ------------------------------------------------------------------
         z_raw = self.expander.expand(x)
         z_next_true_raw = self.expander.expand(x_next_true)
 
+        # Scale features for stability (without subtracting the mean)
         z_norm = self._normalize(z_raw)
         z_next_true_norm = self._normalize(z_next_true_raw)
 
-        # Use helper for consistency
+        # ------------------------------------------------------------------
+        # 2. Prediction Step
+        # ------------------------------------------------------------------
         b_curr = self._get_modal_coords(z_norm)
         b_next = self._step_modal(b_curr)
-        z_next_pred = self._modal_to_latent(b_next)
+        z_next_pred_norm = self._modal_to_latent(b_next)
 
-        loss_lift = torch.mean((z_next_pred - z_next_true_norm)**2)
-        loss_state = nn.MSELoss()(self.expander.de_expand(self._unnormalize(z_next_pred)), x_next_true)
+        # ------------------------------------------------------------------
+        # 3. Primary Accuracy Losses
+        # ------------------------------------------------------------------
+        loss_lift = torch.mean((z_next_pred_norm - z_next_true_norm)**2)
+        z_next_phys = self._unnormalize(z_next_pred_norm)
+        
+        # Physical state loss remains the absolute highest priority
+        loss_state = torch.mean((self.expander.de_expand(z_next_phys) - x_next_true)**2)
 
+        # ------------------------------------------------------------------
+        # 4. Multi-step Rollout Loss
+        # ------------------------------------------------------------------
         loss_rollout = torch.tensor(0.0, device=x.device)
         if future_x is not None and future_x.ndim == 3:
             horizon = min(self.rollout_horizon, future_x.shape[1])
@@ -178,41 +190,46 @@ class ML_DMD_FREE(nn.Module):
                 z_targets_norm = self._normalize(z_targets.reshape(-1, self.latent_dim))
                 z_targets_norm = z_targets_norm.reshape_as(z_targets)
 
-                b_rollout = b_next 
+                b_rollout = b_next
                 for k in range(1, horizon):
                     b_rollout = self._step_modal(b_rollout)
                     z_pred_k = self._modal_to_latent(b_rollout)
                     z_pred_k_phys = self._unnormalize(z_pred_k)
+                    
+                    # Accumulate rollout errors
                     loss_rollout += torch.mean((z_pred_k - z_targets_norm[:, k, :])**2)
                     loss_rollout += torch.mean((self.expander.de_expand(z_pred_k_phys) - future_x[:, k, :])**2)
+                
+                loss_rollout = loss_rollout / float(horizon - 1)
 
-                loss_rollout /= (horizon - 1)
+        # ------------------------------------------------------------------
+        # 5. Structural Constraints (Smart Regularization)
+        # ------------------------------------------------------------------
+        lam_phys = self.get_Lambda()
 
-        # Structural constraints (keep existing code)
+        # Keep Phi well-conditioned so the modal solve stays numerically stable.
         phi_phys = self.get_Phi()
         col_norms = torch.linalg.norm(phi_phys, dim=0)
         loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
 
-        # Total loss
-        loss = (
-              1.0 * loss_state 
+        # ------------------------------------------------------------------
+        # 6. Total Loss Assembly
+        # ------------------------------------------------------------------
+        loss_total = (
+            1.0 * loss_state
             + 1.0 * loss_rollout
-            + 0.1 * loss_lift 
+            + 0.1 * loss_lift
             + 1e-3 * loss_unit_length
         )
-
+        
         loss_dict = {
-            "lift": loss_lift.item(),
             "state": loss_state.item(),
+            "lift": loss_lift.item(),
             "rollout": loss_rollout.item(),
             "unit": loss_unit_length.item(),
         }
 
-        return (loss, loss_dict)
-    
-    # ------------------------------------------------
-    # Rollout simulation
-    # ------------------------------------------------
+        return (loss_total, loss_dict)
 
     def rollout(self, x0, steps):
         if not torch.is_tensor(x0):
@@ -232,7 +249,7 @@ class ML_DMD_FREE(nn.Module):
         # 1. Expand the state to latent space exactly ONCE
         z = self.expander.expand(x)
         z_norm = self._normalize(z)
-        b = self._get_modal_coords(z_norm) # SOLVE ONCE
+        b = self._get_modal_coords(z_norm)
         for _ in range(steps):
             b = self._step_modal(b)   # MATMUL LOOP
             z = self._modal_to_latent(b)

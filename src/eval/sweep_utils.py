@@ -145,41 +145,17 @@ def compute_rollout_metrics(
     rmse_list = []
 
     with torch.no_grad():
-        # 1. EXPAND ONCE
-        z = model.expander.expand(X[0])
-        z = torch.clamp(z, min=-model.max_abs_z_norm, max=model.max_abs_z_norm)
+        rollout_pred = model.rollout(X[0], max_h)
 
-        # 2. IDENTIFY EFFICIENT PATH
-        # Check if it's a DMD model (has Phi/Lambda) to use Modal Space
-        is_dmd = hasattr(model, 'get_Phi') and hasattr(model, 'get_Lambda')
-        
-        if is_dmd:
-            Phi = model.get_Phi()
-            I_eps = 1e-6 * torch.eye(model.latent_dim, device=device)
-            current_state = torch.linalg.solve(Phi + I_eps, z.mT).mT
-            operator = model.get_Lambda().mT
-        else:
-            current_state = z
-            operator = model.get_K() # FIX 2: get_K() returns K.weight.mT, which is mathematically correct for z @ operator
+        if not torch.isfinite(rollout_pred).all():
+            results["rollout_failed"] = 1.0
+            for hh in eval_horizons:
+                results[f"rollout_rmse_h{hh}"] = np.nan
+                results[f"discounted_mean_rmse_h{hh}_g{gamma:.2f}"] = np.nan
+            return results
 
-        # 3. ROLLOUT LOOP (Pure Matmuls)
         for h in range(1, max_h + 1):
-            current_state = current_state @ operator
-            
-            if is_dmd:
-                z_step = current_state @ model.get_Phi().mT # FIX 3: Use get_Phi() here too
-                x_pred = model.expander.de_expand(z_step)
-            else:
-                x_pred = model.expander.de_expand(current_state)
-
-            if not torch.isfinite(x_pred).all():
-                results["rollout_failed"] = 1.0
-                for hh in eval_horizons:
-                    results[f"rollout_rmse_h{hh}"] = np.nan
-                    results[f"discounted_mean_rmse_h{hh}_g{gamma:.2f}"] = np.nan
-                return results
-
-            diff = x_pred - X[h]
+            diff = rollout_pred[h] - X[h]
             rmse_list.append(torch.sqrt(torch.mean(diff ** 2)))
 
     # 4. PROCESS HORIZONS

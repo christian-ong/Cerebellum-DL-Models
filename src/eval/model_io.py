@@ -11,6 +11,8 @@ from src.models.regression_dmd import Regression_DMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.ml_dmd_free import ML_DMD_FREE
 from src.models.ml_dmd_band import ML_DMD_BAND
+from src.models.ml_dmd_schur import ML_DMD_SCHUR
+from src.models.ml_dmd_l1 import ML_DMD_L1
 from src.models.mlp_baseline import MLP_BlackBox
 from src.models.sindy_baseline import SINDyBaseline
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
@@ -264,7 +266,6 @@ def load_model(
             sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", "false"), default=False),
             expansion_type=train_args["expansion_type"],
             system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
-            delay_depth=int(train_args.get("delay_depth", 1)),
         ).to(device)
 
         model.load_state_dict(ckpt["model_state_dict"])
@@ -272,6 +273,43 @@ def load_model(
         extras["ckpt"] = ckpt
         return model, extras
 
+    if model_name == "ml_dmd_schur":
+        ckpt = torch.load(model_path, map_location=device)
+        train_args = ckpt["train_args"]
+
+        model = ML_DMD_SCHUR(
+            state_dim=ckpt["state_dim"],
+            expansion_degree=train_args["expansion_degree"],
+            bias=_to_bool(train_args.get("bias", "true"), default=True),
+            sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", "false"), default=False),
+            expansion_type=train_args["expansion_type"],
+            system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
+        ).to(device)
+
+        model.load_state_dict(ckpt["model_state_dict"])
+        model.eval()
+        extras["ckpt"] = ckpt
+        return model, extras
+    
+    if model_name == "ml_dmd_l1":
+        ckpt = torch.load(model_path, map_location=device)
+        train_args = ckpt["train_args"]
+
+        model = ML_DMD_L1(
+            state_dim=ckpt["state_dim"],
+            expansion_degree=train_args["expansion_degree"],
+            bias=_to_bool(train_args.get("bias", "true"), default=True),
+            sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", "false"), default=False),
+            expansion_type=train_args["expansion_type"],
+            system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
+            l1_weight=float(train_args.get("l1_weight", 1e-3)),
+        ).to(device)
+
+        model.load_state_dict(ckpt["model_state_dict"])
+        model.eval()
+        extras["ckpt"] = ckpt
+        return model, extras
+        
     if model_name == "mlp_baseline":
         ckpt = torch.load(model_path, map_location=device)
         train_args = ckpt.get("train_args", {}) if isinstance(ckpt, dict) else {}

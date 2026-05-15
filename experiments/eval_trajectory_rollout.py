@@ -31,7 +31,7 @@ parser.add_argument("--custom_name", type=str, default="default", help="Custom g
 parser.add_argument("--data_path", type=str, required=True, help="Path to the dataset directory or split file")
 
 # Trajectory rollout settings
-parser.add_argument("--num_steps", type=int, default=500, help="Number of steps to rollout the model for")
+parser.add_argument("--num_steps", type=int, default=200, help="Number of steps to rollout the model for")
 parser.add_argument("--traj_id", type=int, default=0, help="ID of the trajectory to rollout (index in the test set)")
 
 args = parser.parse_args()
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     x0 = X[0, args.traj_id, :]  # Shape: (state_dim,)
     
     # Roll out the model for a certain number of steps
-    trajectory = model.rollout(x0, args.num_steps).detach().numpy()
+    trajectory = model.rollout(x0, args.num_steps).detach().cpu().numpy()
     
     print("Model Rollout:")
 
