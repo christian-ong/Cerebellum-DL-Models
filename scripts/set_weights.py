@@ -9,12 +9,15 @@ import numpy as np
 import torch
 from torch import device
 from torch.utils.data import DataLoader
+from scipy.linalg import schur
 from src.data_generation.load_data import OneStepTrajectoryDataset
 from src.models.ml_dmd_free import ML_DMD_FREE
 from src.eval.visualize_modes import get_system_matrices, get_sorted_jordan_form, get_real_representation
 
 """
 python -m scripts.set_weights --system_name closed_trig_large --expansion_degree 3
+
+python -m scripts.set_weights --system_name closed_large --expansion_degree 10 --custom_name jordan --decomp_method jordan
 """
 
 # =========================================
@@ -24,31 +27,27 @@ parser = argparse.ArgumentParser(
 parser.add_argument("--expansion_degree", type=int, default=3, help="Degree of expansion for the model")
 parser.add_argument("--system_name", type=str, default="closed_trig_large", help="Name of the system to use")
 parser.add_argument("--custom_name", type=str, default="default", help="Custom name for the model (used in saving)")
-parser.add_argument("--truncate", type=str, default="before", choices=["before", "after"], help="Truncate system before or after computing modes")
+parser.add_argument("--decomp_method", type=str, default="schur", choices=["numpy","jordan", "schur"], help="Method to use for decomposition (Jordan or Schur)")
+
+parser.add_argument("--jordan_value", type=float, default=1.0, help="Value to use for Jordan block off-diagonal entries (set to 0 to disable)")
+
 args = parser.parse_args()
 expansion_degree = args.expansion_degree
 system_name = args.system_name
 custom_name = args.custom_name
-
+decomp_method = args.decomp_method
+jordan_value = args.jordan_value if decomp_method == "jordan" else 0
 # =========================================
 # Custom weights
-A_c, A_d, _, _, system_expansion_names = get_system_matrices(
+A_c, A_d, Lambda, Phi, system_expansion_names = get_system_matrices(
     system=system_name,
+    decomp_type=decomp_method,
 )
 
-if args.truncate == "before":
-    A_d = A_d[:expansion_degree, :expansion_degree]
-    Lambda_jordan, V_theory = get_sorted_jordan_form(A_d)
-
-if args.truncate == "after":
-    Lambda_jordan, V_theory = get_sorted_jordan_form(A_d)
-    custom_lambda = Lambda_jordan[:expansion_degree, :expansion_degree]
-    custom_phi = V_theory[:, :expansion_degree]
-
 # To real representation
-V_theory, Lambda_jordan = get_real_representation(V_theory, Lambda_jordan, threshold_jordan=1e-1)
-custom_lambda = torch.tensor(Lambda_jordan, dtype=torch.float64)
-custom_phi = torch.tensor(V_theory, dtype=torch.float64)
+Phi, Lambda = get_real_representation(Phi, Lambda, jordan_value=jordan_value, threshold_jordan=1e-1)
+custom_lambda = torch.tensor(Lambda, dtype=torch.float64)
+custom_phi = torch.tensor(Phi, dtype=torch.float64)
 
 
 model_name = "hardcoded_dmd"
@@ -75,7 +74,6 @@ with torch.no_grad():
     # We use .copy_() to update the tensor data in-place
     model.Phi.copy_(custom_phi)
     model.Lambda.copy_(custom_lambda)
-    print("here2:", model.Phi, model.Lambda)
 
 # Save the model so you can use it in your evaluation scripts
 save_path = f"data/models/{model_name}/{system_name}/{custom_name}/model.pt"

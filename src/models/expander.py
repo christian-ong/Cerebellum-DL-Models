@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from itertools import product
 
+LINEAR_BASIS = ["x", "y"]
 
 VANDERPOL_BASIS = [
     "x",
@@ -122,6 +123,11 @@ CLOSED_TRIG_LARGE_BASIS = [
 ]
 
 SPECIFIC_BASES = {
+    "saddle_point": LINEAR_BASIS,
+    "degenerate_node": LINEAR_BASIS,
+    "harmonic_oscillator": LINEAR_BASIS,
+    "inward_spiral": LINEAR_BASIS,
+
     "vanderpol": VANDERPOL_BASIS,
     "lotka_volterra": LOTKA_BASIS,
     "pendulum": PENDULUM_BASIS,
