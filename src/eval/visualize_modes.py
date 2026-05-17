@@ -271,6 +271,9 @@ def get_system_matrices(system="saddle_point", decomp_type="schur"):
         "inward_spiral": np.array([
             [-0.5, -2], 
             [2, -0.5]]),
+        "inward_spiral_cw": np.array([
+            [-0.5, 2], 
+            [-2, -0.5]]),
         "harmonic_oscillator": np.array([
             [0, 1.3], 
             [-1.3, 0]]),
@@ -341,6 +344,7 @@ def get_system_matrices(system="saddle_point", decomp_type="schur"):
         "saddle_point": ["x", "y"],
         "degenerate_node": ["x", "y"],
         "inward_spiral": ["x", "y"],
+        "inward_spiral_cw": ["x", "y"],
         "harmonic_oscillator": ["x", "y"],
 
         "vanderpol": ["x", "y", "x^2 y"],
@@ -765,7 +769,7 @@ def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None):
     # Evolve with Lambda
     for t in range(1, n_steps):
         z = mode_evolution[t-1, :, :]
-        z_next = z @ Lambda
+        z_next = z @ Lambda.T
         mode_evolution[t, :, :] = z_next
 
     ### 4. Plotting ###
@@ -779,16 +783,16 @@ def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None):
         
             # Label columns
             if i == 0:
-                axes[traj_idx,i].set_ylabel(f"Initial Condition {traj_idx + 1}")
+                axes[traj_idx,i].set_ylabel(f"Trajectory {traj_idx + 1}")
 
             # Label rows
             if traj_idx == 0:
                 axes[traj_idx,i].set_title(f"Mode {i + 1}", fontsize=10)
 
             # Plot first trajectory for clarity (index 0)
-            axes[traj_idx,i].plot(time, real_proj[:, traj_idx, i].real, 'k-', label='Real (Proj)', alpha=0.6)
-            axes[traj_idx,i].plot(time, model_proj[:, traj_idx, i].real, 'r--', label='Model Rollout')
-            axes[traj_idx,i].plot(time, mode_evolution[:, traj_idx, i].real, 'b:', label='$\Lambda$ Evolution')
+            axes[traj_idx,i].plot(time, real_proj[:, traj_idx, i], 'k-', label='Real (Proj)', alpha=0.6)
+            axes[traj_idx,i].plot(time, model_proj[:, traj_idx, i], 'r--', label='Model Rollout')
+            axes[traj_idx,i].plot(time, mode_evolution[:, traj_idx, i], 'b:', label='$\Lambda$ Evolution')
 
             # Legend info
             if i == 0 and traj_idx == 0:
@@ -799,10 +803,10 @@ def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None):
             if traj_idx == n_trajs - 1:
                 axes[traj_idx, i].set_xlabel("Time Steps")
         
-    fig.suptitle("Koopman Mode Evolution (Real Part)", fontsize=22)
+    fig.suptitle("Koopman Mode Evolution (Real Part)", fontsize=22, y=1.02)
     plt.tight_layout()
     plt.subplots_adjust(top=0.92) # move plots down to avoid overlap
-    fig.legend(handles, labels, loc='upper left', ncol=3, fontsize=14, frameon=True)
+    fig.legend(handles, labels, loc='upper left', ncol=3, fontsize=14, frameon=True, bbox_to_anchor=(0.01, 0.99))
     
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')
@@ -826,7 +830,6 @@ def plot_eigenfunctions(
 
     # Compute complex pairs for annotation
     complex_pairs = [sorted([int(i+1), int(j+1)]) for i, j in complex_pair_idx] # 1-based index and internal sort
-    complex_pairs = sorted(complex_pairs, key=lambda x: x[0]) # sort by first index
 
     grid_n = int(np.sqrt(len(grid_points)))
     extent = [grid_points[:,0].min(), grid_points[:,0].max(), grid_points[:,1].min(), grid_points[:,1].max()]

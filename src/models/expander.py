@@ -127,6 +127,7 @@ SPECIFIC_BASES = {
     "degenerate_node": LINEAR_BASIS,
     "harmonic_oscillator": LINEAR_BASIS,
     "inward_spiral": LINEAR_BASIS,
+    "inward_spiral_cw": LINEAR_BASIS,
 
     "vanderpol": VANDERPOL_BASIS,
     "lotka_volterra": LOTKA_BASIS,

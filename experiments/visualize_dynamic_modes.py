@@ -21,7 +21,7 @@ python -m experiments.visualize_dynamic_modes --model_name hardcoded_dmd --custo
 python -m experiments.visualize_dynamic_modes --model_name hardcoded_dmd --custom_name schur --decomp_method schur --data_path data/trajectories/nonlinear/closed_large/long
 
 
-python -m experiments.visualize_dynamic_modes --model_name hardcoded_dmd --custom_name deg3 --data_path data/trajectories/nonlinear/closed_trig_large/long
+python -m experiments.visualize_dynamic_modes --model_name hardcoded_dmd --custom_name default --decomp_method numpy --data_path data/trajectories/linear/harmonic_oscillator/long
 """
 
 # --------------------------------------------------
@@ -94,21 +94,21 @@ Lambda_model_complex, Phi_model_complex = rotation_blocks_to_complex(
 K_model_complex = Phi_model_complex @ Lambda_model_complex @ np.linalg.pinv(Phi_model_complex)
 
 matrices_to_plot = [
-    # # Model matrices, real
-    # (K_model, "Model Operator K"),
-    # (Lambda_model, "Model Raw $\Lambda$"),
-    # (Phi_model, "Model Raw $\Phi_{true}$"),
+    # Model matrices, real
+    (K_model, "Model Operator K"),
+    (Lambda_model, "Model Raw $\Lambda$"),
+    (Phi_model, "Model Raw $\Phi_{true}$"),
 
-    # Model matrices, complex
-    (K_model_complex, "Model Complex Operator K"),
-    (Lambda_model_complex, "Model Raw $\Lambda$"),
-    (Phi_model_complex, "Model Raw $\Phi_{true}$"),
+    # # Model matrices, complex
+    # (K_model_complex, "Model Complex Operator K"),
+    # (Lambda_model_complex, "Model Raw $\Lambda$"),
+    # (Phi_model_complex, "Model Raw $\Phi_{true}$"),
 
-    # Analytic matrices
-    (K_d_analytic, "Analytic $K$"),
-    (Lambda_analytic, "Analytic $\Lambda$"), 
-    (Phi_analytic, "Analytic $\Phi_{true}$"),
-]
+#     # # Analytic matrices
+#     # (K_d_analytic, "Analytic $K$"),
+#     # (Lambda_analytic, "Analytic $\Lambda$"), 
+#     # (Phi_analytic, "Analytic $\Phi_{true}$"),
+# ]
 
 plot_transition_matrices(
     matrices_to_plot, 
@@ -224,7 +224,8 @@ if debug_printing:
 # Parameters
 n_modes = 10
 n_trajectories = 3
-n_steps = 200
+n_steps = trajectories.shape[0] # use all steps available
+print(trajectories.shape)
 
 plot_trajectories = trajectories[:n_steps, :n_trajectories, :] # (steps, id, state_dim)
 plot_Phi = sorted_data["model"]["real"]["Phi"][:, :n_modes] # (latent_dim, n_modes)
@@ -234,7 +235,17 @@ plot_koopman_mode_rollout(
     Phi=plot_Phi,
     Lambda=plot_Lambda,
     real_traj=plot_trajectories,
-    save_path=os.path.join(save_dir, "mode_trajectories.png")
+    save_path=os.path.join(save_dir, "mode_trajectories_real.png")
+)
+
+plot_Phi = sorted_data["model"]["complex"]["Phi"][:, :n_modes] # (latent_dim, n_modes)
+plot_Lambda = sorted_data["model"]["complex"]["Lambda"][:n_modes, :n_modes]
+plot_koopman_mode_rollout(
+    model=model,
+    Phi=plot_Phi,
+    Lambda=plot_Lambda,
+    real_traj=plot_trajectories,
+    save_path=os.path.join(save_dir, "mode_trajectories_complex.png")
 )
 
 # --------------------------------------------------
