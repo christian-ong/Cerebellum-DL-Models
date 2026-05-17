@@ -108,7 +108,7 @@ matrices_to_plot = [
 #     # (K_d_analytic, "Analytic $K$"),
 #     # (Lambda_analytic, "Analytic $\Lambda$"), 
 #     # (Phi_analytic, "Analytic $\Phi_{true}$"),
-# ]
+]
 
 plot_transition_matrices(
     matrices_to_plot, 
