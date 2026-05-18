@@ -18,6 +18,8 @@ def train_onestep(
     model = model.to(device)
 
     def initialize_lifted_normalization(model, loader):
+        if getattr(model, "_lift_stats_initialized", False):
+            return
         if not hasattr(model, "set_lifted_normalization_stats"):
             return
         if not hasattr(model, "expander") or not hasattr(model, "expand_names"):
@@ -60,6 +62,7 @@ def train_onestep(
             scale[fixed_mask] = 1.0
 
         model.set_lifted_normalization_stats(mean, scale)
+        model._lift_stats_initialized = True
 
     initialize_lifted_normalization(model, train_loader)
 

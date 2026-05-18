@@ -2,7 +2,8 @@ import re
 import torch
 import torch.nn as nn
 from itertools import product
-
+import math
+from typing import Optional
 
 VANDERPOL_BASIS = [
     "x",
@@ -329,15 +330,21 @@ class ManualExpansion(nn.Module):
 
 
 class DelayExpansion(nn.Module):
-    """Simple time-delay embedding expansion.
+    """
+    Raw time-delay embedding.
 
-    Input is expected as a stack of delay coordinates with the current
-    state first:
-
+    Expected flattened order:
         [x(t), x(t-1), ..., x(t-delay_depth+1)]
 
-    The decoder recovers the current state from the first delay block.
+    For state_dim=2 and delay_depth=3, the expected vector is:
+        [x1(t), x2(t), x1(t-1), x2(t-1), x1(t-2), x2(t-2)]
+
+    Important:
+        This class does NOT fabricate missing history by repeating x(t).
+        If delay_depth > 1, evaluation must pass a real delay history.
     """
+
+    has_exact_state = True
 
     def __init__(self, state_dim: int, delay_depth: int = 1, bias: bool = True):
         super().__init__()
@@ -347,22 +354,23 @@ class DelayExpansion(nn.Module):
         if delay_depth <= 0:
             raise ValueError("delay_depth must be positive.")
 
-        self.state_dim = state_dim
-        self.delay_depth = delay_depth
-        self.bias = bias
-        self.expanded_dim = state_dim * delay_depth + (1 if bias else 0)
+        self.state_dim = int(state_dim)
+        self.delay_depth = int(delay_depth)
+        self.bias = bool(bias)
 
-        # The current state variables are the first delay block.
-        bias_offset = 1 if bias else 0
-        self.state_indices = list(range(bias_offset, bias_offset + state_dim))
+        self.history_dim = self.state_dim * self.delay_depth
+        self.expanded_dim = self.history_dim + (1 if self.bias else 0)
+
+        offset = 1 if self.bias else 0
+        self.state_indices = list(range(offset, offset + self.state_dim))
 
         self.expand_names = []
-        if bias:
+        if self.bias:
             self.expand_names.append("1")
 
-        for lag in range(delay_depth):
+        for lag in range(self.delay_depth):
             suffix = "" if lag == 0 else f"(-{lag})"
-            for i in range(state_dim):
+            for i in range(self.state_dim):
                 self.expand_names.append(f"x{i+1}{suffix}")
 
     def _to_2d_tensor(self, x):
@@ -373,32 +381,45 @@ class DelayExpansion(nn.Module):
             x = x.unsqueeze(0)
 
         if x.ndim == 3:
-            if x.shape[1] == self.state_dim and x.shape[2] == self.delay_depth:
-                x = x.reshape(x.shape[0], -1)
-            elif x.shape[2] == self.state_dim and x.shape[1] == self.delay_depth:
-                x = x.permute(0, 2, 1).reshape(x.shape[0], -1)
+            # Preferred: (N, delay_depth, state_dim)
+            if x.shape[1] == self.delay_depth and x.shape[2] == self.state_dim:
+                x = x.reshape(x.shape[0], self.history_dim)
+
+            # Alternative: (N, state_dim, delay_depth)
+            elif x.shape[1] == self.state_dim and x.shape[2] == self.delay_depth:
+                x = x.permute(0, 2, 1).reshape(x.shape[0], self.history_dim)
+
             else:
                 raise ValueError(
-                    f"Expected x with shape (N, {self.state_dim}, {self.delay_depth}) "
-                    f"or (N, {self.state_dim * self.delay_depth}), got {tuple(x.shape)}"
+                    f"Expected x with shape (N, {self.delay_depth}, {self.state_dim}) "
+                    f"or (N, {self.state_dim}, {self.delay_depth}), got {tuple(x.shape)}."
                 )
 
-        # ADD THIS: Auto-pad history if given a single state step during evaluation
-        if x.ndim == 2 and x.shape[1] == self.state_dim and self.delay_depth > 1:
-            x = x.repeat(1, self.delay_depth)
+        if x.ndim != 2:
+            raise ValueError(f"Expected 2D input after reshaping, got {tuple(x.shape)}.")
 
-        if x.ndim != 2 or x.shape[1] != self.state_dim * self.delay_depth:
+        if x.shape[1] == self.state_dim and self.delay_depth > 1:
             raise ValueError(
-                f"Expected x of shape (N, {self.state_dim * self.delay_depth}), got {tuple(x.shape)}"
+                "DelayExpansion received only the current state, but delay_depth > 1. "
+                "Pass a full delay history [x(t), x(t-1), ..., x(t-q+1)]. "
+                "Do not initialize delay models by repeating x(t)."
+            )
+
+        if x.shape[1] != self.history_dim:
+            raise ValueError(
+                f"Expected flattened delay state with width {self.history_dim}, "
+                f"got width {x.shape[1]}."
             )
 
         return x
 
     def expand(self, x):
         x = self._to_2d_tensor(x)
+
         if self.bias:
             bias_col = torch.ones(x.shape[0], 1, dtype=x.dtype, device=x.device)
             return torch.cat([bias_col, x], dim=1)
+
         return x
 
     def de_expand(self, x_expanded):
@@ -407,15 +428,201 @@ class DelayExpansion(nn.Module):
 
     def extra_repr(self):
         return (
-            f"state_dim={self.state_dim}, delay_depth={self.delay_depth}, bias={self.bias}"
+            f"state_dim={self.state_dim}, "
+            f"delay_depth={self.delay_depth}, "
+            f"bias={self.bias}"
         )
 
-import math
-from typing import Optional
+class HankelSVDDelayExpansion(nn.Module):
+    """
+    SVD-compressed time-delay embedding.
 
-import torch
-import torch.nn as nn
+    Input:
+        raw delay history [x(t), x(t-1), ..., x(t-delay_depth+1)]
 
+    Output:
+        low-dimensional delay coordinates z(t)
+
+    This is closer to the delay-SVD part of HAVOK than raw DelayExpansion.
+    """
+
+    has_exact_state = False
+
+    def __init__(
+        self,
+        state_dim: int,
+        delay_depth: int = 25,
+        rank: int = 10,
+        bias: bool = True,
+        center: bool = True,
+        eps: float = 1e-12,
+    ):
+        super().__init__()
+
+        if state_dim <= 0:
+            raise ValueError("state_dim must be positive.")
+        if delay_depth <= 0:
+            raise ValueError("delay_depth must be positive.")
+        if rank <= 0:
+            raise ValueError("rank must be positive.")
+
+        self.state_dim = int(state_dim)
+        self.delay_depth = int(delay_depth)
+        self.rank = int(rank)
+        self.center = bool(center)
+        self.eps = float(eps)
+
+        self.history_dim = self.state_dim * self.delay_depth
+        if self.rank > self.history_dim:
+            raise ValueError(
+                f"rank={self.rank} cannot exceed history_dim={self.history_dim}."
+            )
+
+        self.bias = bool(bias)
+
+        self.expanded_dim = self.rank + (1 if self.bias else 0)
+        self.state_indices = []
+
+        self.expand_names = []
+        if self.bias:
+            self.expand_names.append("1")
+
+        self.expand_names += [f"hsvd_{i+1}" for i in range(self.rank)]
+
+        self.is_fitted = False
+
+        self.register_buffer(
+            "mean",
+            torch.zeros(self.history_dim, dtype=torch.float64),
+        )
+        self.register_buffer(
+            "components",
+            torch.zeros(self.rank, self.history_dim, dtype=torch.float64),
+        )
+        self.register_buffer(
+            "singular_values",
+            torch.zeros(self.rank, dtype=torch.float64),
+        )
+
+    def _to_2d_history(self, x):
+        if not torch.is_tensor(x):
+            x = torch.as_tensor(x)
+
+        # x = x.to(dtype=torch.float64)
+
+        if x.ndim == 1:
+            x = x.unsqueeze(0)
+
+        if x.ndim == 3:
+            # Preferred: (N, delay_depth, state_dim)
+            if x.shape[1] == self.delay_depth and x.shape[2] == self.state_dim:
+                x = x.reshape(x.shape[0], self.history_dim)
+
+            # Alternative: (N, state_dim, delay_depth)
+            elif x.shape[1] == self.state_dim and x.shape[2] == self.delay_depth:
+                x = x.permute(0, 2, 1).reshape(x.shape[0], self.history_dim)
+
+            else:
+                raise ValueError(
+                    f"Expected x with shape (N, {self.delay_depth}, {self.state_dim}) "
+                    f"or (N, {self.state_dim}, {self.delay_depth}), got {tuple(x.shape)}."
+                )
+
+        if x.ndim != 2:
+            raise ValueError(f"Expected 2D input after reshaping, got {tuple(x.shape)}.")
+
+        if x.shape[1] == self.state_dim and self.delay_depth > 1:
+            raise ValueError(
+                "HankelSVDDelayExpansion received only the current state, "
+                "but delay_depth > 1. Pass a full delay history."
+            )
+
+        if x.shape[1] != self.history_dim:
+            raise ValueError(
+                f"Expected flattened delay history width {self.history_dim}, "
+                f"got width {x.shape[1]}."
+            )
+
+        return x
+
+    def fit(self, X_delay):
+        """
+        Fit SVD basis from training delay histories.
+        X_delay shape: (N, state_dim * delay_depth)
+        """
+        H = self._to_2d_history(X_delay).to(dtype=torch.float64)
+
+        if H.shape[0] < self.rank:
+            raise ValueError(
+                f"Need at least rank={self.rank} training samples, got {H.shape[0]}."
+            )
+
+        if self.center:
+            mean = H.mean(dim=0)
+            Hc = H - mean
+        else:
+            mean = torch.zeros(H.shape[1], dtype=H.dtype, device=H.device)
+            Hc = H
+
+        # Row-sample SVD:
+        # Hc = U S Vh
+        # components = leading rows of Vh
+        _, s, Vh = torch.linalg.svd(Hc, full_matrices=False)
+
+        if self.rank > Vh.shape[0]:
+            raise ValueError(
+                f"rank={self.rank} exceeds available SVD rank {Vh.shape[0]}."
+            )
+
+        self.mean.copy_(mean.detach().to(self.mean.dtype))
+        self.components.copy_(Vh[: self.rank].detach().to(self.components.dtype))
+        self.singular_values.copy_(s[: self.rank].detach().to(self.singular_values.dtype))
+
+        self.is_fitted = True
+        return self
+
+    def expand(self, x):
+        if not self.is_fitted:
+            raise RuntimeError("HankelSVDDelayExpansion must be fitted before expand().")
+
+        H = self._to_2d_history(x)
+        mean = self.mean.to(dtype=H.dtype, device=H.device)
+        components = self.components.to(dtype=H.dtype, device=H.device)
+
+        Hc = H - mean if self.center else H
+        scores = Hc @ components.T
+
+        if self.bias:
+            ones = torch.ones(scores.shape[0], 1, dtype=scores.dtype, device=scores.device)
+            return torch.cat([ones, scores], dim=1)
+
+        return scores
+
+    def de_expand(self, z):
+        if not self.is_fitted:
+            raise RuntimeError("HankelSVDDelayExpansion must be fitted before de_expand().")
+
+        if not torch.is_tensor(z):
+            z = torch.as_tensor(z)
+
+        # IMPORTANT:
+        # Do not force float64 here. For ML models, z is usually float32
+        # because model parameters are float32. The decoded state must keep
+        # the same dtype as z to avoid Float/Double autograd errors.
+        if self.bias:
+            z = z[:, 1:]
+
+        mean = self.mean.to(dtype=z.dtype, device=z.device)
+        components = self.components.to(dtype=z.dtype, device=z.device)
+
+        H_hat = z @ components + mean
+        return H_hat[:, : self.state_dim]
+
+    def extra_repr(self):
+        return (
+            f"state_dim={self.state_dim}, delay_depth={self.delay_depth}, "
+            f"rank={self.rank}, center={self.center}"
+        )
 
 class RBFExpansion(nn.Module):
     """
@@ -616,6 +823,9 @@ class RBFExpansion(nn.Module):
         X_train : array-like or tensor, shape (N, d)
             Training states used to define the RBF dictionary.
         """
+        if getattr(self, "freeze_centers", False) and self.is_fitted:
+            return self
+        
         X = self._to_2d_tensor(X_train)
 
         if self.center_selection == "random":
@@ -704,10 +914,21 @@ def build_expander(
     rbf_bandwidth_mode: str = "knn",
     rbf_knn_k: int = 5,
     delay_depth: int = 1,
+    hankel_rank: Optional[int] = None,
 ):
     if expansion_type == "delay":
         return DelayExpansion(state_dim=state_dim, delay_depth=delay_depth, bias=bias)
-
+    
+    if expansion_type == "hankel_svd":
+        rank = hankel_rank if hankel_rank is not None else expansion_degree
+        return HankelSVDDelayExpansion(
+            state_dim=state_dim,
+            delay_depth=delay_depth,
+            rank=rank,
+            bias=bias,
+            center=True,
+        )
+    
     if expansion_type == "rbf":
         return RBFExpansion(
             state_dim=state_dim,

@@ -37,6 +37,7 @@ class Regression_DMD(nn.Module):
         rbf_center_selection="farthest",
         rbf_bandwidth_mode="knn",
         rbf_knn_k=5,
+        hankel_rank=None,
     ):
         super().__init__()
 
@@ -49,6 +50,7 @@ class Regression_DMD(nn.Module):
         self.ridge = ridge
         self.rank = rank
         self.eps = eps
+        self.hankel_rank = hankel_rank
 
         # -------------------------------------------------
         # Expansion module
@@ -65,6 +67,7 @@ class Regression_DMD(nn.Module):
             rbf_bandwidth_mode=rbf_bandwidth_mode,
             rbf_knn_k=rbf_knn_k,
             delay_depth=delay_depth,
+            hankel_rank=hankel_rank,
         )
 
         # Convenience aliases so the rest of the code stays readable
@@ -117,7 +120,29 @@ class Regression_DMD(nn.Module):
         if isinstance(x, np.ndarray):
             return torch.tensor(x, dtype=torch.float64)
         return x.to(dtype=torch.float64)
+    
+    def _validate_delay_rollout_input(self, x, *, caller: str):
+        """
+        For delay models, rollout must start from a real delay history.
+        We deliberately do not allow x(t) to be repeated across the delay window.
+        """
+        if self.delay_depth <= 1:
+            return
 
+        expected = self.state_dim * self.delay_depth
+
+        if x.shape[1] == self.state_dim:
+            raise ValueError(
+                f"{caller} received only the current state x(t), but this model has "
+                f"delay_depth={self.delay_depth}. Pass a full delay history with width "
+                f"{expected}: [x(t), x(t-1), ..., x(t-delay_depth+1)]."
+            )
+
+        if x.shape[1] != expected:
+            raise ValueError(
+                f"{caller} expected delay-state width {expected}, got {x.shape[1]}."
+            )
+    
     def _feature_is_trig(self, name: str) -> bool:
         return ("sin(" in name) or ("cos(" in name)
 
@@ -204,7 +229,18 @@ class Regression_DMD(nn.Module):
         for i, idx in enumerate(self.state_indices):
             C[i, idx] = self.psi_scale[idx]
         return C
+    
+    def _build_learned_decoder(self, Z_x, x_n):
+        """
+        Least-squares decoder from normalized lifted coordinates to normalized current state.
 
+        Needed for expansions such as HankelSVDDelayExpansion where the original state
+        is not directly one of the lifted coordinates.
+        """
+        target = x_n[:, : self.state_dim]              # (N, state_dim)
+        sol = torch.linalg.lstsq(Z_x, target).solution # (p, state_dim)
+        return sol.T.contiguous()                      # (state_dim, p)
+    
     def _solve_modal_coeffs_exact(self, z0):
         """
         Solve z0 ≈ Phi_lift @ b0 for the exact DMD modes.
@@ -259,7 +295,7 @@ class Regression_DMD(nn.Module):
         else:
             x_next_n = self._normalize_x(x_next)
 
-        if self.expansion_type == "rbf":
+        if self.expansion_type in {"rbf", "hankel_svd"}:
             self.expander.fit(x_n)
             self.expand_names = self.expander.expand_names
             self.state_indices = self.expander.state_indices
@@ -308,8 +344,11 @@ class Regression_DMD(nn.Module):
             @ W_reduced
         )
 
-        # 5) fixed decoder
-        self.C_fitted = self._build_fixed_decoder()
+        # 5) decoder
+        if getattr(self.expander, "has_exact_state", True):
+            self.C_fitted = self._build_fixed_decoder()
+        else:
+            self.C_fitted = self._build_learned_decoder(Z_x, x_n)
 
         # 6) store everything
         self.K_fitted = K_full
@@ -352,10 +391,8 @@ class Regression_DMD(nn.Module):
         if is_1d:
             x0 = x0.unsqueeze(0)
 
-        if x0.shape[1] == self.state_dim and self.delay_depth > 1:
-            x = x0.repeat(1, self.delay_depth)
-        else:
-            x = x0.clone()
+        self._validate_delay_rollout_input(x0, caller="_rollout_linear_dynamics")
+        x = x0.clone()
 
         traj = [x[:, :self.state_dim].clone()] # ONLY STORE THE HEAD
 
@@ -367,7 +404,51 @@ class Regression_DMD(nn.Module):
         if is_1d:
             out = out.squeeze(1)
         return out
+    
+    def _rollout_hankel_svd_linear_dynamics(self, x0, steps):
+        """
+        Rollout for SVD-compressed delay coordinates.
 
+        Important:
+        We do NOT decode back to raw delay history and re-encode each step.
+        We evolve directly in the fitted Hankel-SVD coordinate space:
+            z_{k+1} = K z_k
+        and decode only the current physical state for output.
+        """
+        x0 = self._to_tensor(x0)
+        is_1d = x0.ndim == 1
+
+        if is_1d:
+            x0 = x0.unsqueeze(0)
+
+        self._validate_delay_rollout_input(x0, caller="_rollout_hankel_svd_linear_dynamics")
+
+        x0_n = self._normalize_x(x0)
+        z = self.expand(x0_n) / self.psi_scale
+
+        traj = [x0[:, :self.state_dim].clone()]
+
+        has_bias_coord = len(self.expand_names) > 0 and self.expand_names[0] == "1"
+
+        for _ in range(steps):
+            z = z @ self.K_fitted.T
+
+            # If the Hankel expansion includes a constant coordinate, keep it exactly constant.
+            if has_bias_coord:
+                z[:, 0] = 1.0
+
+            x_next_n = z @ self.C_fitted.T
+            x_next = self._denormalize_x(x_next_n)
+
+            traj.append(x_next[:, :self.state_dim].clone())
+
+        out = torch.stack(traj, dim=0)
+
+        if is_1d:
+            out = out.squeeze(1)
+
+        return out
+    
     def _rollout_DMD(self, x0, steps, mode_indices=None):
         if (self.Lambda_fitted is None or self.Phi_lift_fitted is None or self.C_fitted is None):
             raise ValueError("Missing DMD spectral objects. Call fit() first.")
@@ -377,8 +458,7 @@ class Regression_DMD(nn.Module):
         if is_1d:
             x0 = x0.unsqueeze(0)
 
-        if x0.shape[1] == self.state_dim and self.delay_depth > 1:
-            x0 = x0.repeat(1, self.delay_depth)
+        self._validate_delay_rollout_input(x0, caller="_rollout_DMD")
 
         x0_n = self._normalize_x(x0)
         z0 = (self.expand(x0_n) / self.psi_scale).to(torch.complex128) # (N, p)
@@ -420,11 +500,8 @@ class Regression_DMD(nn.Module):
         if is_1d:
             x0 = x0.unsqueeze(0)
 
-        if x0.shape[1] == self.state_dim and self.delay_depth > 1:
-            x = x0.repeat(1, self.delay_depth)
-        else:
-            x = x0.clone()
-
+        self._validate_delay_rollout_input(x0, caller="_rollout_projected_DMD")
+        x = x0.clone()
         traj = [x[:, :self.state_dim].clone()]
 
         Phi = self.Phi_lift_fitted.to(torch.complex128)
@@ -469,6 +546,8 @@ class Regression_DMD(nn.Module):
             raise ValueError("mode_indices are only supported for DMD and projected_DMD rollouts.")
 
         if mode == "linear_dynamics":
+            if self.expansion_type == "hankel_svd":
+                return self._rollout_hankel_svd_linear_dynamics(x0, steps)
             return self._rollout_linear_dynamics(x0, steps)
         if mode == "DMD":
             return self._rollout_DMD(x0, steps, mode_indices=mode_indices)

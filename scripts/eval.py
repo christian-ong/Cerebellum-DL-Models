@@ -35,31 +35,26 @@ from src.eval.eval_runner import (
 )
 from src.eval.rollout_eval import compute_single_rollout
 from src.eval.plot_rollout import plot_time_series, plot_phase_space
-
+from src.eval.diagnostics import plot_rollout_error_spectrum
 
 def print_core_summary(one_step_metrics, horizon_metrics, rollout_metrics, composite_score):
     print("\n--- Test metric summary ---")
     print(f"One-step MSE              : {float(one_step_metrics['one_step_mse']):.6e}")
     print(f"One-step RMSE             : {float(one_step_metrics['one_step_rmse']):.6e}")
-    print(f"One-step NRMSE            : {float(one_step_metrics['one_step_nrmse']):.6e}")
 
     print(f"Mean horizon RMSE         : {float(np.mean(horizon_metrics['horizon_rmse'])):.6e}")
-    print(f"Mean horizon NRMSE        : {float(np.mean(horizon_metrics['horizon_nrmse'])):.6e}")
-    for h, rmse, nrmse in zip(
+    for h, rmse in zip(
         horizon_metrics["horizons"],
         horizon_metrics["horizon_rmse"],
-        horizon_metrics["horizon_nrmse"],
     ):
-        print(f"  Horizon h={int(h):>3d}        : RMSE={float(rmse):.6e}, NRMSE={float(nrmse):.6e}")
+        print(f"  Horizon h={int(h):>3d}        : RMSE={float(rmse):.6e}")
 
     print(f"Mean rollout RMSE         : {float(np.mean(rollout_metrics['rollout_rmse'])):.6e}")
-    print(f"Mean rollout NRMSE        : {float(np.mean(rollout_metrics['rollout_nrmse'])):.6e}")
-    for h, rmse, nrmse in zip(
+    for h, rmse in zip(
         rollout_metrics["rollout_horizons"],
         rollout_metrics["rollout_rmse"],
-        rollout_metrics["rollout_nrmse"],
     ):
-        print(f"  Rollout h={int(h):>3d}        : RMSE={float(rmse):.6e}, NRMSE={float(nrmse):.6e}")
+        print(f"  Rollout h={int(h):>3d}        : RMSE={float(rmse):.6e}")
 
     print(f"Composite test score      : {composite_score:.6e}")
 
@@ -112,9 +107,10 @@ def main():
 
     parser.add_argument("--metric_cap",type=int,default=64,help="Cap on sampled start points per trajectory for metrics. Use 0 for all.")
     parser.add_argument("--use_cache",action="store_true",help="Reuse rollout cache across metric computations in memory.",)
-    parser.add_argument("-save_rollout_cache",action="store_true",help="Optionally save rollout cache to disk for debugging or reuse.")
+    parser.add_argument("--save_rollout_cache",action="store_true",help="Optionally save rollout cache to disk for debugging or reuse.")
     parser.add_argument("--save_rollout_arrays",action="store_true",help="Save example rollout arrays as NPZ in addition to the plots.")
-
+    parser.add_argument("--run_error_spectrum", action="store_true", help="Plot PSD of the single-rollout error signal.")
+    parser.add_argument("--spectrum_state_dim", type=int, default=0, help="State dimension to use for the rollout error spectrum plot.")
     args = parser.parse_args()
 
     horizons = parse_int_list(args.horizons)
@@ -189,6 +185,18 @@ def main():
 
     plot_time_series(X_true, X_hat, ctx.figdir, args.traj_index)
     plot_phase_space(X_true, X_hat, ctx.system, ctx.figdir, args.model, args.traj_index)
+
+    if args.run_error_spectrum:
+        split_data = np.load(ctx.split_data_path, allow_pickle=True)
+        dt = float(np.asarray(split_data["dt"]).item())
+
+        plot_rollout_error_spectrum(
+            true_rollout=X_true,
+            pred_rollout=X_hat,
+            dt=dt,
+            figdir=ctx.figdir,
+            title_prefix=f"{ctx.system} | ",
+        )
 
     if args.save_rollout_arrays:
         rollout_npz_path = os.path.join(ctx.figdir, f"rollout_example_idx{args.traj_index}.npz")
