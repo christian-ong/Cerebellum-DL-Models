@@ -95,14 +95,14 @@ K_model_complex = Phi_model_complex @ Lambda_model_complex @ np.linalg.pinv(Phi_
 
 matrices_to_plot = [
     # # Model matrices, real
-    # (K_model, "Model Operator K"),
-    # (Lambda_model, "Model Raw $\Lambda$"),
-    # (Phi_model, "Model Raw $\Phi_{true}$"),
+    # (K_model, "Model Operator K, real"),
+    # (Lambda_model, "Model Raw $\Lambda$, real"),
+    # (Phi_model, "Model Raw $\Phi_{true}$, real"),
 
     # Model matrices, complex
-    (K_model_complex, "Model Complex Operator K"),
-    (Lambda_model_complex, "Model Raw $\Lambda$"),
-    (Phi_model_complex, "Model Raw $\Phi_{true}$"),
+    (K_model_complex, "Model Operator K, complex"),
+    (Lambda_model_complex, "Model Raw $\Lambda$, complex"),
+    (Phi_model_complex, "Model Raw $\Phi_{true}$, complex"),
 
     # Analytic matrices
     (K_d_analytic, "Analytic $K$"),
@@ -225,7 +225,6 @@ if debug_printing:
 n_modes = 10
 n_trajectories = 3
 n_steps = trajectories.shape[0] # use all steps available
-print(trajectories.shape)
 
 plot_trajectories = trajectories[:n_steps, :n_trajectories, :] # (steps, id, state_dim)
 plot_Phi = sorted_data["model"]["real"]["Phi"][:, :n_modes] # (latent_dim, n_modes)

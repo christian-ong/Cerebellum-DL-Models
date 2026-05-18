@@ -42,6 +42,7 @@ jordan_value = args.jordan_value if decomp_method == "jordan" else 0
 A_c, A_d, Lambda, Phi, system_expansion_names = get_system_matrices(
     system=system_name,
     decomp_type=decomp_method,
+    truncate_dim=expansion_degree
 )
 
 # To real representation
@@ -56,7 +57,7 @@ bias = True if "1" in system_expansion_names else False
 sine_cosine_expansion=True if "sin" in system_expansion_names else False
 
 # =========================================
-state_dim = 2 if "lorenz" not in system_name else 3
+state_dim = 3 if "lorenz" in system_name else 2
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = ML_DMD_FREE(
