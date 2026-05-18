@@ -94,20 +94,20 @@ Lambda_model_complex, Phi_model_complex = rotation_blocks_to_complex(
 K_model_complex = Phi_model_complex @ Lambda_model_complex @ np.linalg.pinv(Phi_model_complex)
 
 matrices_to_plot = [
-    # Model matrices, real
-    (K_model, "Model Operator K"),
-    (Lambda_model, "Model Raw $\Lambda$"),
-    (Phi_model, "Model Raw $\Phi_{true}$"),
+    # # Model matrices, real
+    # (K_model, "Model Operator K"),
+    # (Lambda_model, "Model Raw $\Lambda$"),
+    # (Phi_model, "Model Raw $\Phi_{true}$"),
 
-    # # Model matrices, complex
-    # (K_model_complex, "Model Complex Operator K"),
-    # (Lambda_model_complex, "Model Raw $\Lambda$"),
-    # (Phi_model_complex, "Model Raw $\Phi_{true}$"),
+    # Model matrices, complex
+    (K_model_complex, "Model Complex Operator K"),
+    (Lambda_model_complex, "Model Raw $\Lambda$"),
+    (Phi_model_complex, "Model Raw $\Phi_{true}$"),
 
-#     # # Analytic matrices
-#     # (K_d_analytic, "Analytic $K$"),
-#     # (Lambda_analytic, "Analytic $\Lambda$"), 
-#     # (Phi_analytic, "Analytic $\Phi_{true}$"),
+    # Analytic matrices
+    (K_d_analytic, "Analytic $K$"),
+    (Lambda_analytic, "Analytic $\Lambda$"), 
+    (Phi_analytic, "Analytic $\Phi_{true}$"),
 ]
 
 plot_transition_matrices(

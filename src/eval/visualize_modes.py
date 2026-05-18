@@ -531,7 +531,7 @@ def rotation_blocks_to_complex(Lambda, Phi, complex_pair_idx):
     for idx in complex_pair_idx:
         i, j = idx
 
-        # Get 2x2 block <a,b; c,d> - but <a,c;b,d> since Lambda is transposed
+        # Get 2x2 block <a,b; c,d>
         a = Lambda[i, i]
         c = Lambda[i, j] 
         b = Lambda[j, i] 
@@ -658,66 +658,35 @@ def get_real_representation(V, eigvals, jordan_value=1.0, threshold_imag=1e-5, t
     real-valued block-diagonal form.
     """
     
-    if eigvals.ndim == 2:
-    
-        # Initialize real-valued V and Lambda
-        V_real = np.copy(np.real(V).astype(np.float64))
-        Lambda_real = np.copy(np.real(eigvals).astype(np.float64))
+    # Initialize real-valued V and Lambda
+    V_real = np.copy(np.real(V).astype(np.float64))
+    Lambda_real = np.copy(np.real(eigvals).astype(np.float64))
 
-        i = 0
-        while i < len(eigvals):
-            if abs(np.imag(eigvals[i,i])) < threshold_imag: # real eigenvalue
-                V_real[:, i] = np.real(V[:, i])
-                Lambda_real[i, i] = np.real(eigvals[i, i])
-                
-                if jordan_value != 0:
-                    # Check for Jordan block
-                    if (i + 2 <= len(eigvals) and (
-                        abs(eigvals[i+1,i]) > threshold_jordan or
-                        abs(eigvals[i,i+1]) > threshold_jordan
-                    )): 
-                        Lambda_real[i, i+1] = jordan_value # Jordan block off-diagonal
-            
-                i += 1
-
-            else: # complex conjugate pair
-                if i + 1 < len(eigvals):
-                    V_real[:, i] = np.real(V[:, i]) # Re(v)
-                    V_real[:, i+1] = np.imag(V[:, i]) # Im(v)
-                    
-                    a = np.real(eigvals[i,i])
-                    b = np.imag(eigvals[i,i])
-                    
-                    # <a, -b; b, a> since Lambda is transposed
-                    Lambda_real[i, i] = a
-                    Lambda_real[i, i+1] = -b
-                    Lambda_real[i+1, i] = b
-                    Lambda_real[i+1, i+1] = a
-                    i += 2
-                else:
-                    V_real[:, i] = np.real(V[:, i])
-                    Lambda_real[i, i] = np.real(eigvals[i, i])
-                    i += 1
-
-        return V_real, Lambda_real
-
-    V_real = np.zeros_like(V, dtype=np.float64)
-    Lambda_real = np.zeros((len(eigvals), len(eigvals)), dtype=np.float64)
-    
     i = 0
     while i < len(eigvals):
-        if abs(np.imag(eigvals[i])) < threshold_imag:
+        if abs(np.imag(eigvals[i,i])) < threshold_imag: # real eigenvalue
             V_real[:, i] = np.real(V[:, i])
-            Lambda_real[i, i] = np.real(eigvals[i])
+            Lambda_real[i, i] = np.real(eigvals[i, i])
+            
+            if jordan_value != 0:
+                # Check for Jordan block
+                if (i + 2 <= len(eigvals) and (
+                    abs(eigvals[i+1,i]) > threshold_jordan or
+                    abs(eigvals[i,i+1]) > threshold_jordan
+                )): 
+                    Lambda_real[i, i+1] = jordan_value # Jordan block off-diagonal
+        
             i += 1
-        else:
+
+        else: # complex conjugate pair
             if i + 1 < len(eigvals):
-                V_real[:, i] = np.real(V[:, i])
-                V_real[:, i+1] = np.imag(V[:, i]) 
+                V_real[:, i] = np.real(V[:, i]) # Re(v)
+                V_real[:, i+1] = np.imag(V[:, i]) # Im(v)
                 
-                a = np.real(eigvals[i])
-                b = np.imag(eigvals[i])
+                a = np.real(eigvals[i,i])
+                b = np.imag(eigvals[i,i])
                 
+                # <a, -b; b, a> since Lambda is transposed
                 Lambda_real[i, i] = a
                 Lambda_real[i, i+1] = b
                 Lambda_real[i+1, i] = -b
@@ -725,9 +694,9 @@ def get_real_representation(V, eigvals, jordan_value=1.0, threshold_imag=1e-5, t
                 i += 2
             else:
                 V_real[:, i] = np.real(V[:, i])
-                Lambda_real[i, i] = np.real(eigvals[i])
+                Lambda_real[i, i] = np.real(eigvals[i, i])
                 i += 1
-                
+
     return V_real, Lambda_real
 
 
