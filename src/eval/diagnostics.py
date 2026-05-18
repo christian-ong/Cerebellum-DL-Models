@@ -2,11 +2,18 @@ import os
 from typing import Dict, List, Tuple
 import torch
 from src.eval.model_io import predict_rollout_from_x0, supports_mode_subset_rollout
+from src.eval.delay_utils import (
+    get_model_delay_depth,
+    delay_start_index,
+    make_rollout_initial_condition,
+    make_backward_delay_x0_from_current_states,
+)
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection 
 from typing import Optional
+from matplotlib.lines import Line2D
 
 from src.data_generation.data_simulation import (
     simulate,
@@ -251,38 +258,82 @@ def compute_initial_condition_heatmap_data(
     rollout_cache: Dict[int, Dict[str, np.ndarray]] = None,
     mode_indices: Optional[np.ndarray] = None,
 ) -> Dict[str, np.ndarray]:
+    """
+    Build sampled-start heatmap data.
+
+    Important for delay models:
+    - The model rollout needs a full delay history.
+    - The heatmap plot only needs the current physical state x(t0).
+    Therefore:
+        rollout initial condition = full delay history
+        plotted start location    = X_traj[t0]
+    """
     starts = []
     errors = []
 
+    delay_depth = get_model_delay_depth(model_name, model)
+    first_valid_t0 = delay_start_index(delay_depth)
+
     for traj_id in split_idx:
         X_traj = X[:, traj_id, :]
+        T = X_traj.shape[0]
 
         if rollout_cache is not None and traj_id in rollout_cache:
-            cache_starts = rollout_cache[traj_id]["starts"]
+            cache_starts = np.asarray(rollout_cache[traj_id]["starts"], dtype=int)
             cache_rollouts = rollout_cache[traj_id]["rollouts"]
 
+            if len(cache_starts) == 0:
+                continue
+
             if mode == "traj_initials":
-                selected = [(t0, rollout) for t0, rollout in zip(cache_starts, cache_rollouts) if t0 == 0]
+                # For non-delay models this is normally t0=0.
+                # For delay models this is the first cached valid start,
+                # usually delay_depth - 1.
+                selected_indices = [0]
+
             elif mode == "all_valid_starts":
-                selected = list(zip(cache_starts, cache_rollouts))
+                selected_indices = range(len(cache_starts))
+
             else:
                 raise ValueError(f"Unknown heatmap mode: {mode}")
 
-            for t0, rollout in selected:
-                if horizon > rollout.shape[0] - 1 or t0 + horizon >= X_traj.shape[0]:
+            for idx in selected_indices:
+                t0 = int(cache_starts[idx])
+                rollout = cache_rollouts[idx]
+
+                if horizon > rollout.shape[0] - 1:
                     continue
+                if t0 + horizon >= T:
+                    continue
+
+                # Plot physical current state, not delay-history vector.
                 starts.append(X_traj[t0].copy())
-                errors.append(np.mean((rollout[horizon] - X_traj[t0 + horizon]) ** 2))
+
+                err = rollout[horizon] - X_traj[t0 + horizon]
+                errors.append(np.mean(err ** 2))
+
         else:
             if mode == "traj_initials":
-                start_indices = [0]
+                start_indices = [first_valid_t0]
+
             elif mode == "all_valid_starts":
-                start_indices = range(X_traj.shape[0] - horizon)
+                start_stop = T - horizon
+                start_indices = range(first_valid_t0, start_stop)
+
             else:
                 raise ValueError(f"Unknown heatmap mode: {mode}")
 
             for t0 in start_indices:
-                x0 = X_traj[t0]
+                if t0 + horizon >= T:
+                    continue
+
+                x0 = make_rollout_initial_condition(
+                    X_traj=X_traj,
+                    t0=int(t0),
+                    model_name=model_name,
+                    model=model,
+                )
+
                 rollout = predict_rollout_from_x0(
                     x0=x0,
                     steps=horizon,
@@ -291,8 +342,18 @@ def compute_initial_condition_heatmap_data(
                     extras=extras,
                     mode_indices=mode_indices,
                 )
+
+                # Plot physical current state, not delay-history vector.
                 starts.append(X_traj[t0].copy())
-                errors.append(np.mean((rollout[horizon] - X_traj[t0 + horizon]) ** 2))
+
+                err = rollout[horizon] - X_traj[t0 + horizon]
+                errors.append(np.mean(err ** 2))
+
+    if len(starts) == 0:
+        raise ValueError(
+            "No sampled-start heatmap points were computed. "
+            f"Check horizon={horizon}, delay_depth={delay_depth}, and heatmap mode='{mode}'."
+        )
 
     return {
         "starts": np.asarray(starts),
@@ -509,6 +570,120 @@ def plot_rollout_error_summary(
     plt.savefig(os.path.join(figdir, "rollout_error_distribution.png"), dpi=200)
     plt.close()
 
+def _compute_one_sided_psd(signal: np.ndarray, dt: float):
+    """
+    Simple one-sided PSD using the FFT.
+
+    Parameters
+    ----------
+    signal : array, shape (T,)
+        Real-valued time signal.
+    dt : float
+        Sampling interval in seconds.
+
+    Returns
+    -------
+    freqs : array
+        One-sided frequency axis in Hz.
+    psd : array
+        One-sided power spectral density.
+    """
+    x = np.asarray(signal, dtype=float).reshape(-1)
+    if x.size < 2:
+        raise ValueError("Signal must have length >= 2 for PSD computation.")
+
+    x = x - np.mean(x)
+    n = x.size
+
+    freqs = np.fft.rfftfreq(n, d=dt)
+    Xf = np.fft.rfft(x)
+
+    # Standard one-sided PSD normalization
+    psd = (1.0 / (n * (1.0 / dt))) * (np.abs(Xf) ** 2)
+    if n > 2:
+        psd[1:-1] *= 2.0
+
+    return freqs, psd
+
+
+def plot_rollout_error_spectrum(
+    *,
+    true_rollout: np.ndarray,
+    pred_rollout: np.ndarray,
+    dt: float,
+    figdir: str,
+    filename: str = None,
+    title_prefix: str = "",
+) -> None:
+    """
+    Plot frequency spectra for the first two state components.
+
+    For each state component, plot:
+        - PSD(True)
+        - PSD(Pred)
+        - PSD(Error)
+
+    Layout:
+        - top panel: state x1 (index 0)
+        - bottom panel: state x2 (index 1)
+
+    If the system is 1D, only one panel is produced.
+    """
+    true_rollout = np.asarray(true_rollout)
+    pred_rollout = np.asarray(pred_rollout)
+
+    if true_rollout.shape != pred_rollout.shape:
+        raise ValueError(
+            f"true_rollout and pred_rollout must have the same shape, got "
+            f"{true_rollout.shape} and {pred_rollout.shape}"
+        )
+
+    if true_rollout.ndim != 2:
+        raise ValueError(f"Expected rollout arrays of shape (T, d), got {true_rollout.shape}")
+
+    T, d = true_rollout.shape
+    if d < 1:
+        raise ValueError("Rollout must contain at least one state dimension.")
+
+    n_panels = min(2, d)
+
+    if filename is None:
+        filename = "rollout_frequency_spectra.png"
+
+    fig, axes = plt.subplots(n_panels, 1, figsize=(8, 3.8 * n_panels), sharex=True)
+
+    if n_panels == 1:
+        axes = [axes]
+
+    for state_dim in range(n_panels):
+        ax = axes[state_dim]
+
+        y_true = true_rollout[:, state_dim]
+        y_pred = pred_rollout[:, state_dim]
+        y_err = y_pred - y_true
+
+        freqs_true, psd_true = _compute_one_sided_psd(y_true, dt)
+        freqs_pred, psd_pred = _compute_one_sided_psd(y_pred, dt)
+        freqs_err, psd_err = _compute_one_sided_psd(y_err, dt)
+
+        mask_true = (freqs_true > 0) & np.isfinite(psd_true) & (psd_true > 0)
+        mask_pred = (freqs_pred > 0) & np.isfinite(psd_pred) & (psd_pred > 0)
+        mask_err = (freqs_err > 0) & np.isfinite(psd_err) & (psd_err > 0)
+
+        ax.loglog(freqs_true[mask_true], psd_true[mask_true], label="PSD(True)", linewidth=2.0)
+        ax.loglog(freqs_pred[mask_pred], psd_pred[mask_pred], label="PSD(Pred)", linestyle="--", linewidth=2.0)
+        ax.loglog(freqs_err[mask_err], psd_err[mask_err], label="PSD(Error)", linewidth=1.8, alpha=0.9)
+
+        ax.set_ylabel("PSD")
+        ax.set_title(f"{title_prefix}state x{state_dim + 1}: frequency spectrum")
+        ax.grid(True, which="both", alpha=0.3)
+        ax.legend()
+
+    axes[-1].set_xlabel("Frequency [Hz]")
+
+    fig.tight_layout()
+    fig.savefig(os.path.join(figdir, filename), dpi=200)
+    plt.close(fig)
 
 def plot_initial_condition_heatmap(
     heatmap_data: Dict[str, np.ndarray],
@@ -781,24 +956,34 @@ def compute_true_grid_heatmap_data(
     true_terminal = X_true_grid[horizon]   # (Ngrid, d)
 
     # Model rollout (Batched / Vectorized)
+    # For delay models, construct a physically consistent delay history
+    # by integrating the true dynamics backwards from each grid point.
+    delay_depth = get_model_delay_depth(model_name, model)
+
+    model_grid_x0 = make_backward_delay_x0_from_current_states(
+        current_states=grid_points,
+        f_true=f_true,
+        dt=dt,
+        delay_depth=delay_depth,
+    )
+
     try:
-        # Attempt to pass the entire grid_points array (N, state_dim) at once
         rollout_batch = predict_rollout_from_x0(
-            x0=grid_points, 
+            x0=model_grid_x0,
             steps=horizon,
             model_name=model_name,
             model=model,
             extras=extras,
             mode_indices=mode_indices,
         )
-        # rollout_batch shape is expected to be (steps+1, N, state_dim)
+
         pred_terminal = rollout_batch[horizon]
-        
+
     except Exception as e:
-        # Fallback to the slow loop if the model doesn't support batching yet
         print(f"[diagnostics] Batched rollout failed ({e}), falling back to slow loop...")
         pred_terminal = np.empty_like(true_terminal)
-        for k, x0 in enumerate(grid_points):
+
+        for k, x0 in enumerate(model_grid_x0):
             rollout = predict_rollout_from_x0(
                 x0=x0,
                 steps=horizon,
@@ -808,7 +993,6 @@ def compute_true_grid_heatmap_data(
                 mode_indices=mode_indices,
             )
             pred_terminal[k] = rollout[horizon]
-
     diff = pred_terminal - true_terminal
 
     # Mark invalid or extreme predictions before squaring
@@ -1114,6 +1298,7 @@ def plot_true_grid_heatmap_grid(
     trajectory_overlays: Optional[List[np.ndarray]] = None,
     filename: str = "true_grid_error_heatmap_grid.png",
     force_linear_error_scale: bool = False,
+    data_path: Optional[str] = None,
 ) -> None:
     """
     Plot one combined subplot figure:
@@ -1129,14 +1314,20 @@ def plot_true_grid_heatmap_grid(
         force_linear=force_linear_error_scale,
     )
 
+    # --- FIXED: Dynamic Figure Sizing ---
+    fig_width = max(5.5, 4.8 * n_cols)
+    fig_height = max(5.0, 4.2 * n_rows)
+    
     fig, axes = plt.subplots(
         n_rows,
         n_cols,
-        figsize=(4.4 * n_cols, 4.0 * n_rows),
+        figsize=(fig_width, fig_height),
         squeeze=False,
     )
 
-    fig.subplots_adjust(left=0.08, right=0.86, bottom=0.08, top=0.90, wspace=0.18, hspace=0.22)
+    # Dynamic top margin so titles don't overlap on 1x1 plots
+    top_margin = 0.82 if n_rows == 1 else 0.88
+    fig.subplots_adjust(left=0.10, right=0.82, bottom=0.12, top=top_margin, wspace=0.22, hspace=0.28)
 
     mesh_for_cbar = None
     traj_line_for_cbar = None
@@ -1149,7 +1340,6 @@ def plot_true_grid_heatmap_grid(
     if trajectory_overlay is not None:
         traj_color_info = _build_reference_trajectory_color_info(trajectory_overlay, dims)
 
-    # Pink / magenta-only overlay colormap to avoid blending with viridis
     traj_cmap = mcolors.LinearSegmentedColormap.from_list(
         "traj_overlay_pink",
         ["#f8d4ff", "#f39cf6", "#ec5be8", "#d81b9c", "#a0006d"],
@@ -1157,14 +1347,31 @@ def plot_true_grid_heatmap_grid(
     )
 
     for row, h in enumerate(horizons):
+        dx_grid, dy_grid = None, None
+        if data_path is not None:
+            try:
+                f_true = build_true_dynamics_from_dataset(data_path)
+                g_data = grid_results[h][str(heatmap_specs[0]["name"])]
+                XX_row, YY_row = g_data["XX"], g_data["YY"]
+                i_idx, j_idx = g_data["dims"]
+                
+                grid_pts = np.tile(g_data["fixed_state"][None, :], (XX_row.size, 1))
+                grid_pts[:, i_idx] = XX_row.ravel()
+                grid_pts[:, j_idx] = YY_row.ravel()
+                
+                vf = f_true(0.0, grid_pts)
+                dx_grid = vf[:, i_idx].reshape(XX_row.shape)
+                dy_grid = vf[:, j_idx].reshape(XX_row.shape)
+            except Exception as e:
+                pass
+
         for col, spec in enumerate(heatmap_specs):
             ax = axes[row, col]
             spec_name = str(spec["name"])
             spec_title = str(spec["title"])
 
             grid_data = grid_results[h][spec_name]
-            XX = grid_data["XX"]
-            YY = grid_data["YY"]
+            XX, YY = grid_data["XX"], grid_data["YY"]
             errors = np.asarray(grid_data["errors"], dtype=float)
             i, j = grid_data["dims"]
 
@@ -1173,54 +1380,32 @@ def plot_true_grid_heatmap_grid(
             else:
                 plot_errors = np.where(np.isfinite(errors), np.clip(errors, vmin, vmax), np.nan)
 
-            mesh = ax.pcolormesh(
-                XX,
-                YY,
-                plot_errors,
-                shading="auto",
-                cmap="viridis",
-                norm=norm,
-            )
+            mesh = ax.pcolormesh(XX, YY, plot_errors, shading="auto", cmap="viridis", norm=norm)
             if mesh_for_cbar is None:
                 mesh_for_cbar = mesh
 
-            # Faint additional trajectories
             if trajectory_overlays is not None:
                 for traj in trajectory_overlays:
-                    ax.plot(
-                        traj[:, i],
-                        traj[:, j],
-                        linestyle="-",
-                        linewidth=0.7,
-                        alpha=0.14,
-                        color="white",
-                        zorder=2,
-                    )
+                    ax.plot(traj[:, i], traj[:, j], linestyle="-", linewidth=0.7, alpha=0.14, color="white", zorder=2)
 
-            # Main colored trajectory overlay
             if traj_color_info is not None:
-                ax.plot(
-                    traj_color_info["points"][:, 0],
-                    traj_color_info["points"][:, 1],
-                    color="white",
-                    linewidth=2.0,
-                    alpha=0.10,
-                    zorder=3,
-                )
-
-                lc = LineCollection(
-                    traj_color_info["segments"],
-                    cmap=traj_cmap,
-                    norm=traj_color_info["norm"],
-                    linewidth=1.6,
-                    alpha=0.95,
-                    zorder=4,
-                )
+                ax.plot(traj_color_info["points"][:, 0], traj_color_info["points"][:, 1], color="white", linewidth=2.0, alpha=0.10, zorder=3)
+                lc = LineCollection(traj_color_info["segments"], cmap=traj_cmap, norm=traj_color_info["norm"], linewidth=1.6, alpha=0.95, zorder=4)
                 lc.set_array(traj_color_info["values"])
                 ax.add_collection(lc)
-
                 if traj_line_for_cbar is None:
                     traj_line_for_cbar = lc
+
+            if dx_grid is not None and dy_grid is not None:
+                ax.contour(XX, YY, dx_grid, levels=[0], colors='red', linewidths=1.5, linestyles='--', alpha=0.85, zorder=5)
+                ax.contour(XX, YY, dy_grid, levels=[0], colors='orange', linewidths=1.5, linestyles='--', alpha=0.85, zorder=5)
+                
+                if row == 0 and col == 0:
+                    legend_elements = [
+                        Line2D([0], [0], color='red', lw=1.5, linestyle='--', label=r'$\dot{x}_1 = 0$'),
+                        Line2D([0], [0], color='orange', lw=1.5, linestyle='--', label=r'$\dot{x}_2 = 0$')
+                    ]
+                    ax.legend(handles=legend_elements, loc='upper right', framealpha=0.9, fontsize='small')
 
             ax.set_xlim(grid_data["xlim"])
             ax.set_ylim(grid_data["ylim"])
@@ -1229,7 +1414,7 @@ def plot_true_grid_heatmap_grid(
                 ax.set_title(spec_title)
 
             if col == 0:
-                ax.set_ylabel(f"h={h}\n\nx{i + 1}")
+                ax.set_ylabel(f"horizon={h}\n\nx{i + 1}")
             else:
                 ax.set_ylabel("")
 
@@ -1238,27 +1423,46 @@ def plot_true_grid_heatmap_grid(
             else:
                 ax.set_xlabel("")
 
-    fig.suptitle(f"{_pretty_system_name(system)} — true-grid error heatmaps", fontsize=16)
+    # Dynamically place the main title so it never crushes the subplots
+    fig.suptitle(f"{_pretty_system_name(system)} — true-grid error heatmaps", fontsize=16, y=top_margin + 0.06)
 
-    # Error heatmap colorbar: always three ticks
-    cax_err = fig.add_axes([0.89, 0.54, 0.02, 0.30])
+    # --- FIXED: Colorbar Placement ---
+    # Shifted to x=0.84 so they sit cleanly in the right margin regardless of grid size
+    cax_err = fig.add_axes([0.84, 0.55, 0.02, 0.26])
     cbar_err = fig.colorbar(mesh_for_cbar, cax=cax_err)
     cbar_err.set_label("Terminal h-step MSE")
     _format_three_tick_colorbar(cbar_err, vmin, vmax, use_log)
 
-    # Trajectory displacement colorbar
     if traj_line_for_cbar is not None and traj_color_info is not None:
-        cax_traj = fig.add_axes([0.89, 0.14, 0.02, 0.26])
+        cax_traj = fig.add_axes([0.84, 0.15, 0.02, 0.26])
         cbar_traj = fig.colorbar(traj_line_for_cbar, cax=cax_traj)
         cbar_traj.set_label("Reference trajectory\nper-step displacement")
-        _format_linear_three_tick_colorbar(
-            cbar_traj,
-            traj_color_info["vmin"],
-            traj_color_info["vmax"],
-        )
+        _format_linear_three_tick_colorbar(cbar_traj, traj_color_info["vmin"], traj_color_info["vmax"])
 
     fig.savefig(os.path.join(figdir, filename), dpi=240)
     plt.close(fig)
+
+    # fig.suptitle(f"{_pretty_system_name(system)} — true-grid error heatmaps", fontsize=16)
+
+    # # Error heatmap colorbar: always three ticks
+    # cax_err = fig.add_axes([0.89, 0.54, 0.02, 0.30])
+    # cbar_err = fig.colorbar(mesh_for_cbar, cax=cax_err)
+    # cbar_err.set_label("Terminal h-step MSE")
+    # _format_three_tick_colorbar(cbar_err, vmin, vmax, use_log)
+
+    # # Trajectory displacement colorbar
+    # if traj_line_for_cbar is not None and traj_color_info is not None:
+    #     cax_traj = fig.add_axes([0.89, 0.14, 0.02, 0.26])
+    #     cbar_traj = fig.colorbar(traj_line_for_cbar, cax=cax_traj)
+    #     cbar_traj.set_label("Reference trajectory\nper-step displacement")
+    #     _format_linear_three_tick_colorbar(
+    #         cbar_traj,
+    #         traj_color_info["vmin"],
+    #         traj_color_info["vmax"],
+    #     )
+
+    # fig.savefig(os.path.join(figdir, filename), dpi=240)
+    # plt.close(fig)
 
 def run_diagnostics(
     *,
@@ -1379,5 +1583,6 @@ def run_diagnostics(
             trajectory_overlay=X_traj if overlay_true_trajectory_on_grid else None,
             trajectory_overlays=overlay_trajs,
             force_linear_error_scale=force_linear_true_grid_error_scale,
+            data_path=data_path,
         )
  

@@ -14,6 +14,7 @@ class ML_LinearDynamics(nn.Module):
         expansion_type="general",
         system=None,
         delay_depth=1,
+        hankel_rank=None,
         rbf_n_centers=50,
         rbf_center_selection="farthest",
         rbf_bandwidth_mode="knn",
@@ -23,7 +24,8 @@ class ML_LinearDynamics(nn.Module):
 
         self.state_dim = state_dim
         self.expansion_type = expansion_type
-
+        self.delay_depth = int(delay_depth)
+        self.hankel_rank = hankel_rank
         # ------------------------------------------------
         # Initialize basis expansion
         # ------------------------------------------------
@@ -43,6 +45,7 @@ class ML_LinearDynamics(nn.Module):
             rbf_bandwidth_mode=rbf_bandwidth_mode,
             rbf_knn_k=rbf_knn_k,
             delay_depth=delay_depth,
+            hankel_rank=hankel_rank,
         )
 
         # Public aliases used elsewhere in the model / training code
@@ -175,10 +178,28 @@ class ML_LinearDynamics(nn.Module):
                 device=next(self.parameters()).device,
             )
 
-        if x0.ndim == 1:
-            x = x0.unsqueeze(0)
-        else:
-            x = x0
+        is_1d = x0.ndim == 1
+        if is_1d:
+            x0 = x0.unsqueeze(0)
+
+        delay_depth = int(getattr(self.expander, "delay_depth", 1))
+        expected_width = self.state_dim * delay_depth
+
+        if delay_depth > 1:
+            if x0.shape[1] == self.state_dim:
+                raise ValueError(
+                    f"{self.__class__.__name__}.rollout received only the current state, "
+                    f"but delay_depth={delay_depth}. Pass a full delay history with width "
+                    f"{expected_width}: [x(t), x(t-1), ..., x(t-q+1)]."
+                )
+
+            if x0.shape[1] != expected_width:
+                raise ValueError(
+                    f"{self.__class__.__name__}.rollout expected delay-state width "
+                    f"{expected_width}, got {x0.shape[1]}."
+                )
+
+        x = x0
 
         traj = [x.squeeze(0)]
         

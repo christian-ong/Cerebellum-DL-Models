@@ -208,6 +208,78 @@ def dataloader_to_numpy(loader):
         ys.append(y.numpy())
     return np.vstack(xs), np.vstack(ys)
 
+def prepare_ml_expander_and_lift_stats(
+    *,
+    model,
+    train_ds,
+    device,
+    max_fit_samples: int = 20000,
+):
+    """
+    Prepare data-dependent expanders and fixed lifted-feature normalization
+    for ML Koopman models.
+
+    This supports:
+      - raw delay expansion: no fitting, but lifted stats are useful
+      - hankel_svd: fit SVD basis on training delay histories
+      - rbf: fit centers/sigmas if the expander supports fit()
+    """
+    expander = getattr(model, "expander", None)
+    if expander is None:
+        return
+
+    if not hasattr(train_ds, "x"):
+        return
+
+    X_fit = train_ds.x
+
+    if not torch.is_tensor(X_fit):
+        X_fit = torch.as_tensor(X_fit)
+
+    if max_fit_samples is not None and max_fit_samples > 0 and X_fit.shape[0] > max_fit_samples:
+        idx = torch.linspace(
+            0,
+            X_fit.shape[0] - 1,
+            steps=max_fit_samples,
+            dtype=torch.long,
+        )
+        X_fit = X_fit[idx]
+
+    X_fit = X_fit.to(device)
+
+    with torch.no_grad():
+        if hasattr(expander, "fit") and not getattr(expander, "is_fitted", False):
+            print(
+                f"Fitting data-dependent expander on {X_fit.shape[0]} samples "
+                f"for expansion_type={getattr(model, 'expansion_type', 'unknown')}..."
+            )
+            expander.fit(X_fit)
+
+        # Refresh public aliases after fitting.
+        if hasattr(expander, "expand_names"):
+            model.expand_names = expander.expand_names
+        if hasattr(expander, "state_indices"):
+            model.state_indices = expander.state_indices
+        if hasattr(expander, "expanded_dim"):
+            model.expanded_dim = expander.expanded_dim
+            model.latent_dim = expander.expanded_dim
+
+        if hasattr(model, "set_lifted_normalization_stats"):
+            Z = expander.expand(X_fit)
+            mean = Z.mean(dim=0)
+            centered = Z - mean
+            scale = torch.sqrt(torch.mean(centered * centered, dim=0))
+            scale = torch.clamp(scale, min=getattr(model, "lift_norm_eps", 1e-6))
+
+            # Do not destroy the constant feature.
+            for j, name in enumerate(getattr(expander, "expand_names", [])):
+                if name == "1":
+                    mean[j] = 0.0
+                    scale[j] = 1.0
+
+            model.set_lifted_normalization_stats(mean, scale)
+            print("Set fixed lifted-feature normalization stats.")
+            model._lift_stats_initialized = True
 
 def load_best_hyperparams(config_path, system_name, model_name, expansion_type, expansion_degree):
     config_file = Path(config_path)
@@ -292,18 +364,23 @@ def main():
     parser.add_argument("--rank", type=int, default=None)
     parser.add_argument("--ridge", type=float, default=0.0)
     parser.add_argument("--bias", type=str.lower, choices=["true", "false"], default="true", help="Include bias term in polynomial expansion")
-    parser.add_argument("--expansion_type", type=str, default="general", choices=["general", "specific", "rbf", "delay"], help="Whether to use general polynomial expansion, specific expansion, radial basis functions, or a time-delay embedding.")
+    parser.add_argument("--expansion_type", type=str, default="general", choices=["general", "specific", "rbf", "delay","hankel_svd"], help="Whether to use general polynomial expansion, specific expansion, radial basis functions, or a time-delay embedding.")
     parser.add_argument("--expansion_degree", type=int, default=1)
     parser.add_argument("--sine_cosine_expansion", type=str.lower,choices=["true", "false"], default="false",help="Include sin(x_i) and cos(x_i) terms in the manual expansion basis")
     parser.add_argument("--normalize_state", type=str.lower, choices=["true", "false"], default="false")
     parser.add_argument("--normalize_lifted", type=str.lower, choices=["true", "false"], default="true")
     parser.add_argument("--l1_weight", type=float, default=1e-6, help="L1 regularization weight for regression DMD")
     parser.add_argument("--regression_rollout_mode",type=str,default="DMD",choices=["linear_dynamics", "DMD","projected_DMD"],help="Default rollout mode for regression_dmd checkpoints.")
+    
     parser.add_argument("--delay_depth", type=int, default=1, help="Number of stacked delay coordinates to use when expansion_type='delay'.")
+    parser.add_argument("--hankel_rank",type=int,default=None,help="Number of SVD delay coordinates when expansion_type='hankel_svd'.")
+    parser.add_argument("--expander_fit_samples",type=int,default=0,help="Max training samples used to fit data-dependent ML expanders/statistics. Use 0 for all available training samples. Smaller values are useful for quick tests.")
+    
     parser.add_argument("--rbf_n_centers", type=int, default=50, help="Number of RBF centers when expansion_type='rbf'.")
     parser.add_argument("--rbf_center_selection", type=str, default="farthest", choices=["random", "farthest"], help="How to choose RBF centers from training states.")
     parser.add_argument("--rbf_bandwidth_mode", type=str, default="knn", choices=["global", "knn"], help="How to choose RBF widths (sigmas).")
     parser.add_argument("--rbf_knn_k", type=int, default=5, help="k for k-nearest-center bandwidth when expansion_type='rbf'.")
+    parser.add_argument("--load_rbf_from", type=str, default=None, help="Path to a model.npz to load fixed RBF centers from.")
     # --------------------------------------------------
     # SINDy
     # --------------------------------------------------
@@ -387,10 +464,9 @@ def main():
     else:
         log_phi_every = 1 if is_ml_model else 0
         
-    if args.delay_depth > 1 and args.expansion_type != "delay":
+    if args.delay_depth > 1 and args.expansion_type not in {"delay", "hankel_svd"}:
         raise ValueError(
-            "delay_depth > 1 requires --expansion_type delay. "
-            "Use --expansion_type delay to enable time-delay embedding."
+            "delay_depth > 1 requires --expansion_type delay or --expansion_type hankel_svd."
         )
 
     train_ds = OneStepTrajectoryDataset(
@@ -471,6 +547,7 @@ def main():
             expansion_type=args.expansion_type,
             system=system_name if args.expansion_type == "specific" else None,
             delay_depth=args.delay_depth,
+            hankel_rank=args.hankel_rank,
             normalize_state=args.normalize_state == "true",
             normalize_lifted=args.normalize_lifted == "true",
             rollout_mode=args.regression_rollout_mode,
@@ -481,13 +558,24 @@ def main():
             rbf_bandwidth_mode=args.rbf_bandwidth_mode,
             rbf_knn_k=args.rbf_knn_k,
         ).to(device)
+
+        if args.load_rbf_from:
+            print(f"Loading fixed RBF centers and sigmas from: {args.load_rbf_from}")
+            loaded_data = np.load(args.load_rbf_from)
+            c_tensor = torch.as_tensor(loaded_data["rbf_centers"], dtype=torch.float32, device=device)
+            s_tensor = torch.as_tensor(loaded_data["rbf_sigmas"], dtype=torch.float32, device=device)
+            
+            model.expander.centers.copy_(c_tensor)
+            model.expander.sigmas.copy_(s_tensor)
+            model.expander.is_fitted = True
+            model.expander.freeze_centers = True
+            
         print(f"Expansion type: {args.expansion_type}")
         print(f"Expansion degree: {args.expansion_degree}")
         print(f"Expanded dim: {model.expanded_dim}")
         # print("Expansion library:")
         # for i, name in enumerate(model.expand_names):
         #     print(f"  [{i:02d}] {name}")
-
         K, C = model.fit(X, Y)
         phi_cond = np.linalg.cond(model.Phi_lift_fitted.detach().cpu().numpy())
         print(f"cond(Phi_lift): {phi_cond:.3e}")
@@ -527,7 +615,7 @@ def main():
             normalize_state=args.normalize_state == "true",
             normalize_lifted=args.normalize_lifted == "true",
             delay_depth=args.delay_depth,
-
+            hankel_rank=-1 if args.hankel_rank is None else args.hankel_rank,
             rbf_n_centers=args.rbf_n_centers,
             rbf_center_selection=args.rbf_center_selection,
             rbf_bandwidth_mode=args.rbf_bandwidth_mode,
@@ -552,6 +640,11 @@ def main():
             save_kwargs["rbf_centers"] = model.expander.centers.detach().cpu().numpy()
             save_kwargs["rbf_sigmas"] = model.expander.sigmas.detach().cpu().numpy()
 
+        if args.expansion_type == "hankel_svd":
+            save_kwargs["hankel_mean"] = model.expander.mean.detach().cpu().numpy()
+            save_kwargs["hankel_components"] = model.expander.components.detach().cpu().numpy()
+            save_kwargs["hankel_singular_values"] = model.expander.singular_values.detach().cpu().numpy()
+            
         if model.Lambda_fitted is not None:
             save_kwargs["Lambda"] = model.Lambda_fitted.detach().cpu().numpy()
             save_kwargs["Phi"] = model.Phi_fitted.detach().cpu().numpy()
@@ -633,6 +726,7 @@ def main():
             rbf_center_selection=args.rbf_center_selection,
             rbf_bandwidth_mode=args.rbf_bandwidth_mode,
             rbf_knn_k=args.rbf_knn_k,
+            hankel_rank=args.hankel_rank,
         ).to(device)
     
     elif args.model == "ml_dmd_free":
@@ -648,6 +742,7 @@ def main():
             rbf_center_selection=args.rbf_center_selection,
             rbf_bandwidth_mode=args.rbf_bandwidth_mode,
             rbf_knn_k=args.rbf_knn_k,
+            hankel_rank=args.hankel_rank,
         ).to(device)
 
     elif args.model == "ml_dmd_band":
@@ -662,6 +757,7 @@ def main():
             rbf_center_selection=args.rbf_center_selection,
             rbf_bandwidth_mode=args.rbf_bandwidth_mode,
             rbf_knn_k=args.rbf_knn_k,
+            hankel_rank=args.hankel_rank,
         ).to(device)
 
     elif args.model == "ml_dmd_schur":
@@ -710,6 +806,13 @@ def main():
     if hasattr(model, "expansion_type"):
         print(f"Expand names: {model.expand_names}")
     
+    if args.model in {"ml_lineardynamics", "ml_dmd_free", "ml_dmd_band"}:
+        prepare_ml_expander_and_lift_stats(
+            model=model,
+            train_ds=train_ds,
+            device=device,
+            max_fit_samples=args.expander_fit_samples,
+        )
     # Train
     model, (train_losses, epoch_val_losses, loss_components_val), best_checkpoint = train_onestep(
         model=model,

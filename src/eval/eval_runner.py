@@ -236,9 +236,9 @@ def compute_core_metrics_bundle(
     )
 
     composite = compute_composite_validation_score(
-        one_step_nrmse=float(one_step_metrics["one_step_nrmse"]),
-        horizon_nrmse=np.asarray(horizon_metrics["horizon_nrmse"]),
-        rollout_nrmse=np.asarray(rollout_metrics["rollout_nrmse"]),
+        one_step_rmse=float(one_step_metrics["one_step_rmse"]),
+        horizon_rmse=np.asarray(horizon_metrics["horizon_rmse"]),
+        rollout_rmse=np.asarray(rollout_metrics["rollout_rmse"]),
     )
 
     summary = {}

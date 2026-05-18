@@ -17,6 +17,20 @@ from src.models.mlp_baseline import MLP_BlackBox
 from src.models.sindy_baseline import SINDyBaseline
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
 
+def _finalize_loaded_expander(model, train_args):
+    exp_type = str(train_args.get("expansion_type", "general"))
+
+    if exp_type in {"rbf", "hankel_svd"} and hasattr(model, "expander"):
+        model.expander.is_fitted = True
+
+    if hasattr(model, "expander"):
+        if hasattr(model.expander, "expand_names"):
+            model.expand_names = model.expander.expand_names
+        if hasattr(model.expander, "state_indices"):
+            model.state_indices = model.expander.state_indices
+        if hasattr(model.expander, "expanded_dim"):
+            model.expanded_dim = model.expander.expanded_dim
+            model.latent_dim = model.expander.expanded_dim
 
 def infer_system_name_from_data_path(data_path: str) -> str:
     base = os.path.basename(data_path)
@@ -136,6 +150,8 @@ def load_model(
 
         rank_val = int(np.asarray(model_data["rank"]).item()) if "rank" in model_data else -1
         rank = None if rank_val < 0 else rank_val
+        hankel_rank_val = int(np.asarray(model_data["hankel_rank"]).item()) if "hankel_rank" in model_data else -1
+        hankel_rank = None if hankel_rank_val < 0 else hankel_rank_val
 
         model = Regression_DMD(
             state_dim=state_dim,
@@ -145,6 +161,7 @@ def load_model(
             expansion_type=str(model_data["expansion_type"]),
             system=_to_optional_str(model_data["system_basis"]),
             delay_depth=int(np.asarray(model_data["delay_depth"]).item()) if "delay_depth" in model_data else 1,
+            hankel_rank=hankel_rank,
             normalize_state=_to_bool(model_data["normalize_state"], default=False),
             normalize_lifted=_to_bool(model_data["normalize_lifted"], default=True),
             rollout_mode=rollout_mode,
@@ -173,6 +190,34 @@ def load_model(
             model.expand_names = model.expander.expand_names
             model.state_indices = model.expander.state_indices
             model.expanded_dim = model.expander.expanded_dim
+
+        if str(model_data["expansion_type"]) == "hankel_svd":
+            required = ["hankel_mean", "hankel_components", "hankel_singular_values"]
+            missing = [k for k in required if k not in model_data]
+            if missing:
+                raise ValueError(
+                    f"Hankel-SVD regression_dmd checkpoint is missing {missing}. "
+                    "Please retrain and resave the model."
+                )
+
+            h_device = model.expander.mean.device
+
+            model.expander.mean.copy_(
+                torch.as_tensor(model_data["hankel_mean"], dtype=torch.float64, device=h_device)
+            )
+            model.expander.components.copy_(
+                torch.as_tensor(model_data["hankel_components"], dtype=torch.float64, device=h_device)
+            )
+            model.expander.singular_values.copy_(
+                torch.as_tensor(model_data["hankel_singular_values"], dtype=torch.float64, device=h_device)
+            )
+
+            model.expander.is_fitted = True
+
+            model.expand_names = model.expander.expand_names
+            model.state_indices = model.expander.state_indices
+            model.expanded_dim = model.expander.expanded_dim
+
         model.K_fitted = torch.tensor(model_data["K"], dtype=torch.float64)
         model.C_fitted = torch.tensor(model_data["C"], dtype=torch.float64)
 
@@ -214,14 +259,10 @@ def load_model(
             rbf_center_selection=str(train_args.get("rbf_center_selection", "farthest")),
             rbf_bandwidth_mode=str(train_args.get("rbf_bandwidth_mode", "knn")),
             rbf_knn_k=int(train_args.get("rbf_knn_k", 5)),
+            hankel_rank=train_args.get("hankel_rank", None),
         ).to(device)
         model.load_state_dict(ckpt["model_state_dict"])
-        if train_args["expansion_type"] == "rbf":
-            model.expander.is_fitted = True
-            model.expand_names = model.expander.expand_names
-            model.state_indices = model.expander.state_indices
-            model.expanded_dim = model.expander.expanded_dim
-            model.latent_dim = model.expanded_dim
+        _finalize_loaded_expander(model, train_args)
         model.eval()
         extras["ckpt"] = ckpt
         return model, extras
@@ -242,15 +283,11 @@ def load_model(
             rbf_center_selection=str(train_args.get("rbf_center_selection", "farthest")),
             rbf_bandwidth_mode=str(train_args.get("rbf_bandwidth_mode", "knn")),
             rbf_knn_k=int(train_args.get("rbf_knn_k", 5)),
+            hankel_rank=train_args.get("hankel_rank", None),
         ).to(device)
 
         model.load_state_dict(ckpt["model_state_dict"])
-        if train_args["expansion_type"] == "rbf":
-            model.expander.is_fitted = True
-            model.expand_names = model.expander.expand_names
-            model.state_indices = model.expander.state_indices
-            model.expanded_dim = model.expander.expanded_dim
-            model.latent_dim = model.expanded_dim
+        _finalize_loaded_expander(model, train_args)
         model.eval()
         extras["ckpt"] = ckpt
         return model, extras
@@ -266,6 +303,12 @@ def load_model(
             sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", "false"), default=False),
             expansion_type=train_args["expansion_type"],
             system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
+            delay_depth=int(train_args.get("delay_depth", 1)),
+            rbf_n_centers=int(train_args.get("rbf_n_centers", 50)),
+            rbf_center_selection=str(train_args.get("rbf_center_selection", "farthest")),
+            rbf_bandwidth_mode=str(train_args.get("rbf_bandwidth_mode", "knn")),
+            rbf_knn_k=int(train_args.get("rbf_knn_k", 5)),
+            hankel_rank=train_args.get("hankel_rank", None),
         ).to(device)
 
         model.load_state_dict(ckpt["model_state_dict"])
@@ -306,6 +349,7 @@ def load_model(
         ).to(device)
 
         model.load_state_dict(ckpt["model_state_dict"])
+        _finalize_loaded_expander(model, train_args)
         model.eval()
         extras["ckpt"] = ckpt
         return model, extras
@@ -400,11 +444,21 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
             if is_1d:
                 x0_t = x0_t.unsqueeze(0)
                 
-            # Handle delay auto-padding for consistency
-            if x0_t.shape[1] == model.state_dim and getattr(model.expander, "delay_depth", 1) > 1:
-                x = x0_t.repeat(1, model.expander.delay_depth)
-            else:
-                x = x0_t
+            delay_depth = int(getattr(model.expander, "delay_depth", 1))
+            expected_width = model.state_dim * delay_depth
+
+            if delay_depth > 1:
+                if x0_t.shape[1] == model.state_dim:
+                    raise ValueError(
+                        f"Delay ML model received only current state, but delay_depth={delay_depth}. "
+                        f"Pass full delay history with width {expected_width}."
+                    )
+                if x0_t.shape[1] != expected_width:
+                    raise ValueError(
+                        f"Delay ML model expected width {expected_width}, got {x0_t.shape[1]}."
+                    )
+
+            x = x0_t
 
             # 1. Expand and scale using the NEW standardization methods
             z = model.expander.expand(x)
