@@ -3,7 +3,7 @@ import torch.nn as nn
 
 from src.models.expander import build_expander
 
-class ML_DMD_FREE(nn.Module):
+class ML_DMD_L1(nn.Module):
     def __init__(
         self,
         state_dim=2,
@@ -12,20 +12,18 @@ class ML_DMD_FREE(nn.Module):
         sine_cosine_expansion=False,
         expansion_type="general",
         system=None,
-        delay_depth=1,
-        hankel_rank=None,
         rbf_n_centers=50,
         rbf_center_selection="farthest",
         rbf_bandwidth_mode="knn",
         rbf_knn_k=5,
+        l1_weight=1e-6,
     ):
 
         super().__init__()
 
         self.state_dim = state_dim
         self.expansion_type = expansion_type
-        self.delay_depth = int(delay_depth)
-        self.hankel_rank = hankel_rank
+
         # ------------------------------------------------
         # Initialize basis expansion
         # ------------------------------------------------
@@ -44,8 +42,6 @@ class ML_DMD_FREE(nn.Module):
             rbf_center_selection=rbf_center_selection,
             rbf_bandwidth_mode=rbf_bandwidth_mode,
             rbf_knn_k=rbf_knn_k,
-            delay_depth=delay_depth,
-            hankel_rank=hankel_rank,
         )
 
         # Public aliases used elsewhere in the model / training code
@@ -58,7 +54,6 @@ class ML_DMD_FREE(nn.Module):
         # ------------------------------------------------
         # Fixed lifted-feature scaling (dataset-level stats, not batch stats)
         # ------------------------------------------------
-        self.register_buffer("lift_mean", torch.zeros(self.latent_dim))
         self.register_buffer("lift_scale", torch.ones(self.latent_dim))
         self.lift_norm_eps = 1e-6
 
@@ -88,6 +83,7 @@ class ML_DMD_FREE(nn.Module):
         # ------------------------------------------------
         self.max_abs_z_norm = 1e6
         self.rollout_horizon = 20
+        self.l1_weight = l1_weight  # Weight for the L1 sparsity penalty (tune as needed)
 
     def _normalize(self, z):
         return z / self.lift_scale
@@ -176,6 +172,7 @@ class ML_DMD_FREE(nn.Module):
         if future_x is not None and future_x.ndim == 3:
             horizon = min(self.rollout_horizon, future_x.shape[1])
             if horizon >= 2:
+                # PRE-EXPAND (Saves massive time!)
                 z_targets = self.expander.expand(future_x.reshape(-1, self.state_dim))
                 z_targets = z_targets.reshape(x.shape[0], future_x.shape[1], -1)
                 z_targets_norm = self._normalize(z_targets.reshape(-1, self.latent_dim))
@@ -196,12 +193,26 @@ class ML_DMD_FREE(nn.Module):
         col_norms = torch.linalg.norm(phi_phys, dim=0)
         loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
 
+        # --- NEW: Off-Diagonal L1 Sparsity Penalty ---
+        # Get the full Lambda matrix
+        lam = self.get_Lambda() if hasattr(self, "get_Lambda") else self.Lambda
+        
+        # Create a boolean mask for everything EXCEPT the main diagonal
+        off_diag_mask = ~torch.eye(self.latent_dim, dtype=torch.bool, device=lam.device)
+        
+        # Sum the absolute values of the off-diagonal elements
+        loss_sparsity = torch.sum(torch.abs(lam[off_diag_mask]))
+        # ---------------------------------------------
+
         # Total loss
+        # Note: You can tune the 1e-3 weight on loss_sparsity. 
+        # If the matrix stays too dense, increase it. If the physics break, decrease it.
         loss = (
               1.0 * loss_state 
             + 1.0 * loss_rollout
             + 0.1 * loss_lift 
             + 1e-3 * loss_unit_length
+            + self.l1_weight * loss_sparsity  # Add the sparsity penalty
         )
 
         loss_dict = {
@@ -209,6 +220,7 @@ class ML_DMD_FREE(nn.Module):
             "state": loss_state.item(),
             "rollout": loss_rollout.item(),
             "unit": loss_unit_length.item(),
+            "sparsity": loss_sparsity.item(), # Track it!
         }
 
         return (loss, loss_dict)
@@ -225,28 +237,10 @@ class ML_DMD_FREE(nn.Module):
                 device=next(self.parameters()).device,
             )
 
-        is_1d = x0.ndim == 1
-        if is_1d:
-            x0 = x0.unsqueeze(0)
-
-        delay_depth = int(getattr(self.expander, "delay_depth", 1))
-        expected_width = self.state_dim * delay_depth
-
-        if delay_depth > 1:
-            if x0.shape[1] == self.state_dim:
-                raise ValueError(
-                    f"{self.__class__.__name__}.rollout received only the current state, "
-                    f"but delay_depth={delay_depth}. Pass a full delay history with width "
-                    f"{expected_width}: [x(t), x(t-1), ..., x(t-q+1)]."
-                )
-
-            if x0.shape[1] != expected_width:
-                raise ValueError(
-                    f"{self.__class__.__name__}.rollout expected delay-state width "
-                    f"{expected_width}, got {x0.shape[1]}."
-                )
-
-        x = x0
+        if x0.ndim == 1:
+            x = x0.unsqueeze(0)
+        else:
+            x = x0
 
         traj = [x.squeeze(0)]
         

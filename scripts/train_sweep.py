@@ -4,6 +4,7 @@ import time
 import numpy as np
 import torch
 import wandb
+from pathlib import Path
 
 from torch.utils.data import DataLoader
 
@@ -42,7 +43,7 @@ def main():
 
     parser.add_argument("--subset", type=float, default=1.0)
     parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--batch_size", type=int, default=2048)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-6)
 
@@ -53,8 +54,10 @@ def main():
 
     parser.add_argument("--eval_every", type=int, default=1)
     parser.add_argument("--max_val_rollout_trajs", type=int, default=None)
-    parser.add_argument("--rollout_horizon", type=int, default=20, help="Training rollout horizon for rollout loss (steps)")
+    parser.add_argument("--rollout_horizon", type=int, default=5, help="Training rollout horizon for rollout loss (steps)")
     parser.add_argument("--rollout_gamma", type=float, default=0.99, help="Discount factor for eval")
+    parser.add_argument("--log_phi_every", type=int, default=1, help="Print get_Phi() every N epochs")
+    parser.add_argument("--phi_print_max_dim", type=int, default=12, help="When Phi is larger than this, print only the top-left block")
 
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--print_every_batch", type=int, default=0)
@@ -107,12 +110,17 @@ def main():
         allow_val_change=True,
     )
 
+    # Setup output directory (for checkpoint saving)
+    save_dir = os.path.join("data/models", args.model, system_name, run.id)
+    os.makedirs(save_dir, exist_ok=True)
+
     # Data
     train_ds = OneStepTrajectoryDataset(args.data_path, split="train", subset=args.subset, rollout_horizon=args.rollout_horizon)
     val_ds = OneStepTrajectoryDataset(args.data_path, split="val", subset=args.subset, rollout_horizon=args.rollout_horizon)
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=True) if len(val_ds) > 0 else None
+    pin_memory = device == "cuda"
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=pin_memory)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=pin_memory) if len(val_ds) > 0 else None
 
     # Model
     model = build_model(args, state_dim, system_name, device)
@@ -160,7 +168,7 @@ def main():
     print("\n===== TRAINING =====")
     t_train_start = time.time()
     
-    model, _ = train_onestep_sweep(
+    model, (train_losses, epoch_val_losses, loss_components_val), best_checkpoint = train_onestep_sweep(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
@@ -168,10 +176,65 @@ def main():
         epochs=args.epochs,
         lr=args.lr,
         weight_decay=args.weight_decay,
+        log_phi_every=args.log_phi_every,
+        phi_print_max_dim=args.phi_print_max_dim,
         eval_callback=run_eval_callback  # <--- PASSING THE CALLBACK
     )
     
     print(f"Training completed in {time.time() - t_train_start:.1f}s")
+    
+    # --------------------------------------------------
+    # Save checkpoints (matching train.py logic)
+    # --------------------------------------------------
+    checkpoint_base = {
+        "model": args.model,
+        "system": system_name,
+        "state_dim": int(state_dim),
+        "train_args": vars(args),
+        "data_path": args.data_path,
+        "expand_names": model.expand_names if hasattr(model, "expand_names") else None,
+        "best_epoch": best_checkpoint["epoch"],
+        "best_val_loss": best_checkpoint["val_loss"],
+    }
+
+    best_save_path = os.path.join(save_dir, "model_best.pt")
+    torch.save(
+        {
+            **checkpoint_base,
+            "model_state_dict": best_checkpoint["state_dict"],
+            "checkpoint_type": "best",
+        },
+        best_save_path,
+    )
+
+    last_save_path = os.path.join(save_dir, "model_last.pt")
+    torch.save(
+        {
+            **checkpoint_base,
+            "model_state_dict": model.state_dict(),
+            "checkpoint_type": "last",
+        },
+        last_save_path,
+    )
+
+    # Keep backward-compatible default path, now pointing to best checkpoint.
+    save_path = os.path.join(save_dir, "model.pt")
+    torch.save(
+        {
+            **checkpoint_base,
+            "model_state_dict": best_checkpoint["state_dict"],
+            "checkpoint_type": "best",
+        },
+        save_path,
+    )
+    
+    loss_path = os.path.join(save_dir, "losses.npz")
+    np.savez(loss_path, train_losses=train_losses, epoch_val_losses=epoch_val_losses, loss_components_val=loss_components_val)
+    
+    print(f"Saved best model to {best_save_path}")
+    print(f"Saved last model to {last_save_path}")
+    print(f"Saved default model to {save_path}")
+    print(f"Saved losses to {loss_path}")
     
     # --------------------------------------------------
     # Summary (Log all Best Metrics)

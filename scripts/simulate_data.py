@@ -64,48 +64,50 @@ Linear system  x' = A x
 --------------------------------------------------
 
 #### SHORT TRAJECTORIES (T_train=1.0) ####
-python -m scripts.simulate_data --system inward_spiral --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
-python -m scripts.simulate_data --system harmonic_oscillator --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
-python -m scripts.simulate_data --system saddle_point --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
-python -m scripts.simulate_data --system degenerate_node --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+python -m scripts.simulate_data --system inward_spiral --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system inward_spiral_cw --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system harmonic_oscillator --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system saddle_point --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system degenerate_node --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
 
 #### LONG TRAJECTORIES (T_train=10.0) ####
-python -m scripts.simulate_data --system inward_spiral --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system harmonic_oscillator --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system saddle_point --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system degenerate_node --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system inward_spiral --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system inward_spiral_cw --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system harmonic_oscillator --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system saddle_point --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system degenerate_node --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 10 --T_test 10 --name long
 
 --------------------------------------------------
 Nonlinear systems (SHORT TRAJECTORIES, T_train=1.0)
 --------------------------------------------------
 
-python -m scripts.simulate_data --system closed_small --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
-python -m scripts.simulate_data --system closed_large --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
-python -m scripts.simulate_data --system closed_trig_small --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
-python -m scripts.simulate_data --system closed_trig_medium --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
-python -m scripts.simulate_data --system closed_trig_large --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+python -m scripts.simulate_data --system closed_small --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system closed_large --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system closed_trig_small --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system closed_trig_medium --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system closed_trig_large --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
 
-python -m scripts.simulate_data --system vanderpol --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
-python -m scripts.simulate_data --system lotka_volterra --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
-python -m scripts.simulate_data --system pendulum --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
-python -m scripts.simulate_data --system duffing --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
-python -m scripts.simulate_data --system lorenz --n_traj_train 5000 --n_traj_val 50 --n_traj_test 50 --T_train 1 --T_val 10 --T_test 10 --name short
+python -m scripts.simulate_data --system vanderpol --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system lotka_volterra --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system pendulum --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system duffing --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system lorenz --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
 
 --------------------------------------------------
 Nonlinear systems (LONG TRAJECTORIES, T_train=10.0)
 --------------------------------------------------
 
-python -m scripts.simulate_data --system closed_small --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system closed_large --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system closed_trig_small --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system closed_trig_medium --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system closed_trig_large --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system closed_small --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
+python -m scripts.simulate_data --system closed_large --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
+python -m scripts.simulate_data --system closed_trig_small --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
+python -m scripts.simulate_data --system closed_trig_medium --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
+python -m scripts.simulate_data --system closed_trig_large --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
 
-python -m scripts.simulate_data --system vanderpol --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system lotka_volterra --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system pendulum --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system duffing --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system lorenz --n_traj_train 500 --n_traj_val 50 --n_traj_test 50 --T_train 10 --T_val 10 --T_test 10 --name long
+python -m scripts.simulate_data --system vanderpol --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
+python -m scripts.simulate_data --system lotka_volterra --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
+python -m scripts.simulate_data --system pendulum --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
+python -m scripts.simulate_data --system duffing --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
+python -m scripts.simulate_data --system lorenz --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
 
 --------------------------------------------------
 Output
@@ -237,6 +239,20 @@ def sample_lorenz_ic(n_traj, rng, rho, beta,
 def build_inward_spiral(args, rng):
     A = np.array([[-0.5, -2],
                   [ 2,  -0.5]], dtype=float)
+    f = linear_system(A)
+
+    x0 = sample_ic(args, rng,
+                   kind="annulus",
+                   r_min=0.0, r_max=1.5,
+                   x0_single=[1.0, 0.0])
+
+    return f, x0, {"A": A}
+
+
+def build_inward_spiral_cw(args, rng):
+    """ Inward spiral clockwise direction """
+    A = np.array([[-0.5, 2],
+                  [-2,  -0.5]], dtype=float)
     f = linear_system(A)
 
     x0 = sample_ic(args, rng,
@@ -590,6 +606,7 @@ SYSTEMS = {
     # linear
     "linear": build_inward_spiral, # inward spiral by default
     "inward_spiral": build_inward_spiral,
+    "inward_spiral_cw": build_inward_spiral_cw,
     "harmonic_oscillator": build_harmonic_oscillator,
     "saddle_point": build_saddle_point,
     "degenerate_node": build_degenerate_node,
@@ -610,6 +627,7 @@ SYSTEMS = {
 LINEAR_SYSTEMS = {
     "linear",
     "inward_spiral",
+    "inward_spiral_cw",
     "harmonic_oscillator",
     "saddle_point",
     "degenerate_node",
