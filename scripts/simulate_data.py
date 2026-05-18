@@ -654,6 +654,7 @@ def main():
     parser.add_argument("--n_debug_traj", type=int, default=100)
     parser.add_argument("--plot_splits", action="store_true", help="Save train/val/test trajectory plots under data/figures/trajectories/<system>")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--burn_in",type=float,default=0.0,help="Extra simulation time to discard before saving each split.")
 
     # System-specific params
     # Van der Pol
@@ -880,8 +881,27 @@ def main():
         # Sample initial conditions for this split
         _, x0_split, _ = SYSTEMS[args.system](temp_args, rng)
         
-        # Simulate for this split's time period
-        t_split, X_split = simulate(f, x0=x0_split, dt=args.dt, T=T, method=args.method)
+        # Simulate extra time if burn-in is requested, then discard it before saving.
+        T_total = T + args.burn_in
+        t_full, X_full = simulate(f, x0=x0_split, dt=args.dt, T=T_total, method=args.method)
+
+        burn_steps = int(round(args.burn_in / args.dt))
+
+        if burn_steps > 0:
+            if burn_steps >= X_full.shape[0] - 2:
+                raise ValueError(
+                    f"burn_in={args.burn_in} removes too much data for split={split_name}. "
+                    f"burn_steps={burn_steps}, trajectory length={X_full.shape[0]}."
+                )
+
+            X_split = X_full[burn_steps:]
+            t_split = t_full[burn_steps:] - t_full[burn_steps]
+        else:
+            X_split = X_full
+            t_split = t_full
+
+        x0_saved = np.asarray(X_split[0]).copy()
+        T_saved = float(t_split[-1])
         
         # Save using clean dataset directory layout with linear/nonlinear categorization.
         category = "linear" if args.system in LINEAR_SYSTEMS else "nonlinear"
@@ -896,9 +916,12 @@ def main():
             outpath,
             t=t_split,
             X=X_split,
-            x0=x0_split,
+            x0=x0_saved,
+            x0_before_burn_in=x0_split,
             dt=args.dt,
-            T=T,
+            T=T_saved,
+            burn_in=args.burn_in,
+            burn_steps=burn_steps,
             system=args.system,
             n_traj=n_traj,
             seed=args.seed,
