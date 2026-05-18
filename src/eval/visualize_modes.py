@@ -531,10 +531,10 @@ def rotation_blocks_to_complex(Lambda, Phi, complex_pair_idx):
     for idx in complex_pair_idx:
         i, j = idx
 
-        # Get 2x2 block <a,b; c,d>
+        # Get 2x2 block <a,b; c,d> - but <a,c;b,d> since Lambda is transposed
         a = Lambda[i, i]
-        b = Lambda[i, j]
-        c = Lambda[j, i]
+        c = Lambda[i, j] 
+        b = Lambda[j, i] 
         d = Lambda[j, j]
 
         # find complex value
@@ -688,9 +688,10 @@ def get_real_representation(V, eigvals, jordan_value=1.0, threshold_imag=1e-5, t
                     a = np.real(eigvals[i,i])
                     b = np.imag(eigvals[i,i])
                     
+                    # <a, -b; b, a> since Lambda is transposed
                     Lambda_real[i, i] = a
-                    Lambda_real[i, i+1] = b
-                    Lambda_real[i+1, i] = -b
+                    Lambda_real[i, i+1] = -b
+                    Lambda_real[i+1, i] = b
                     Lambda_real[i+1, i+1] = a
                     i += 2
                 else:
