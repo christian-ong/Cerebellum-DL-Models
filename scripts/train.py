@@ -177,15 +177,6 @@ def prepare_ml_expander_and_lift_stats(
     device,
     max_fit_samples: int = 20000,
 ):
-    """
-    Prepare data-dependent expanders and fixed lifted-feature normalization
-    for ML Koopman models.
-
-    This supports:
-      - raw delay expansion: no fitting, but lifted stats are useful
-      - hankel_svd: fit SVD basis on training delay histories
-      - rbf: fit centers/sigmas if the expander supports fit()
-    """
     expander = getattr(model, "expander", None)
     if expander is None:
         return
@@ -210,6 +201,12 @@ def prepare_ml_expander_and_lift_stats(
     X_fit = X_fit.to(device)
 
     with torch.no_grad():
+        # 1. ALWAYS fit the state scaler FIRST so RBFs and Polynomials are stable
+        if hasattr(expander, "fit_state_scaler"):
+            expander.fit_state_scaler(X_fit)
+            model._state_scaler_initialized = True
+
+        # 2. Fit data-dependent expanders (RBF/SVD) using the scaled state
         if hasattr(expander, "fit") and not getattr(expander, "is_fitted", False):
             print(
                 f"Fitting data-dependent expander on {X_fit.shape[0]} samples "
@@ -217,7 +214,7 @@ def prepare_ml_expander_and_lift_stats(
             )
             expander.fit(X_fit)
 
-        # Refresh public aliases after fitting.
+        # 3. Refresh public aliases after fitting.
         if hasattr(expander, "expand_names"):
             model.expand_names = expander.expand_names
         if hasattr(expander, "state_indices"):
@@ -226,22 +223,8 @@ def prepare_ml_expander_and_lift_stats(
             model.expanded_dim = expander.expanded_dim
             model.latent_dim = expander.expanded_dim
 
-        if hasattr(model, "set_lifted_normalization_stats"):
-            Z = expander.expand(X_fit)
-            mean = Z.mean(dim=0)
-            centered = Z - mean
-            scale = torch.sqrt(torch.mean(centered * centered, dim=0))
-            scale = torch.clamp(scale, min=getattr(model, "lift_norm_eps", 1e-6))
-
-            # Do not destroy the constant feature.
-            for j, name in enumerate(getattr(expander, "expand_names", [])):
-                if name == "1":
-                    mean[j] = 0.0
-                    scale[j] = 1.0
-
-            model.set_lifted_normalization_stats(mean, scale)
-            print("Set fixed lifted-feature normalization stats.")
-            model._lift_stats_initialized = True
+        # NOTE: We intentionally DELETED the lifted stat calculation here!
+        # train_onestep.py handles it accurately in batches using correct RMS math.
 
 def load_best_hyperparams(config_path, system_name, model_name, expansion_type, expansion_degree):
     config_file = Path(config_path)
@@ -700,7 +683,7 @@ def main():
             bias=args.bias == "true",
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             system=system_name if args.expansion_type == "specific" else None,
-            delay_depth=args.delay_depth, # <--- ADD THIS LINE
+            delay_depth=args.delay_depth,
             rbf_n_centers=args.rbf_n_centers,
             rbf_center_selection=args.rbf_center_selection,
             rbf_bandwidth_mode=args.rbf_bandwidth_mode,

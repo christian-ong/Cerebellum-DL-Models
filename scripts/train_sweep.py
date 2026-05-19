@@ -16,6 +16,59 @@ from src.eval.sweep_utils import (
 )
 from src.train.train_onestep_sweep import train_onestep_sweep
 
+def prepare_ml_expander_and_lift_stats(
+    *,
+    model,
+    train_ds,
+    device,
+    max_fit_samples: int = 0,
+):
+    """Fit data-dependent ML expanders (RBF/Hankel/Delay) and initialize lifted stats."""
+    expander = getattr(model, "expander", None)
+    if expander is None:
+        return
+
+    if not hasattr(train_ds, "x"):
+        return
+
+    X_fit = train_ds.x
+    if not torch.is_tensor(X_fit):
+        X_fit = torch.as_tensor(X_fit)
+
+    if max_fit_samples and max_fit_samples > 0 and X_fit.shape[0] > max_fit_samples:
+        idx = torch.linspace(
+            0,
+            X_fit.shape[0] - 1,
+            steps=max_fit_samples,
+            dtype=torch.long,
+        )
+        X_fit = X_fit[idx]
+
+    X_fit = X_fit.to(device)
+
+    with torch.no_grad():
+        # 1. ALWAYS fit the state scaler FIRST so RBFs and Polynomials are stable
+        if hasattr(expander, "fit_state_scaler"):
+            expander.fit_state_scaler(X_fit)
+            model._state_scaler_initialized = True
+
+        # 2. Fit data-dependent expanders (RBF/SVD) using the scaled state
+        if hasattr(expander, "fit") and not getattr(expander, "is_fitted", False):
+            print(
+                f"Fitting data-dependent expander on {X_fit.shape[0]} samples "
+                f"for expansion_type={getattr(model, 'expansion_type', 'unknown')}..."
+            )
+            expander.fit(X_fit)
+
+        # 3. Refresh public aliases after fitting
+        if hasattr(expander, "expand_names"):
+            model.expand_names = expander.expand_names
+        if hasattr(expander, "state_indices"):
+            model.state_indices = expander.state_indices
+        if hasattr(expander, "expanded_dim"):
+            model.expanded_dim = expander.expanded_dim
+            model.latent_dim = expander.expanded_dim
+
 EVAL_HORIZONS = [10, 20, 100]
 
 def fmt_metric(x):
@@ -46,14 +99,17 @@ def main():
     parser.add_argument("--weight_decay", type=float, default=1e-6)
 
     parser.add_argument("--bias", type=str.lower, choices=["true", "false"], default="true")
-    parser.add_argument("--expansion_type", type=str, choices=["general", "specific"], default="general")
+    parser.add_argument("--expansion_type", type=str, choices=["general", "specific", "rbf", "delay", "hankel_svd"], default="general")
     parser.add_argument("--expansion_degree", type=int, default=3)
     parser.add_argument("--sine_cosine_expansion", type=str.lower, choices=["true", "false"], default="false")
     parser.add_argument("--delay_depth", type=int, default=1, help="Number of stacked delay coordinates to use when expansion_type='delay'.")
+    parser.add_argument("--hankel_rank", type=int, default=None, help="Number of SVD delay coordinates when expansion_type='hankel_svd'.")
+    parser.add_argument("--expander_fit_samples", type=int, default=0, help="Max training samples used to fit data-dependent ML expanders. Use 0 for all available.")
     parser.add_argument("--rbf_n_centers", type=int, default=50, help="Number of RBF centers when expansion_type='rbf'.")
     parser.add_argument("--rbf_center_selection", type=str, default="farthest", choices=["random", "farthest"], help="How to choose RBF centers from training states.")
     parser.add_argument("--rbf_bandwidth_mode", type=str, default="knn", choices=["global", "knn"], help="How to choose RBF widths (sigmas).")
     parser.add_argument("--rbf_knn_k", type=int, default=5, help="k for k-nearest-center bandwidth when expansion_type='rbf'.")
+    parser.add_argument("--load_rbf_from", type=str, default=None, help="Path to a model file to load fixed RBF centers from.")
     parser.add_argument("--l1_weight", type=float, default=1e-6, help="L1 regularization weight for regression DMD")
 
     parser.add_argument("--eval_every", type=int, default=1)
@@ -137,6 +193,12 @@ def main():
         except Exception:
             dataset_rollout_horizon = 20 if is_ml_model else 0
 
+    # Validate delay settings: using delay_depth>1 requires a delay-based expansion
+    if args.delay_depth > 1 and args.expansion_type not in {"delay", "hankel_svd"}:
+        raise ValueError(
+            "delay_depth > 1 requires --expansion_type delay or --expansion_type hankel_svd."
+        )
+
     train_ds = OneStepTrajectoryDataset(args.data_path, split="train", subset=args.subset, rollout_horizon=dataset_rollout_horizon, delay_depth=getattr(args, "delay_depth", 1))
     val_ds = OneStepTrajectoryDataset(args.data_path, split="val", subset=args.subset, rollout_horizon=dataset_rollout_horizon, delay_depth=getattr(args, "delay_depth", 1))
 
@@ -146,6 +208,30 @@ def main():
 
     # Model
     model = build_model(args, state_dim, system_name, device)
+
+    # Fit RBF/Hankel/other data-dependent expanders if needed
+    if args.model in {"ml_linear_dynamics", "ml_lineardynamics", "ml_dmd_free", "ml_dmd_l1", "ml_dmd_band"}:
+        prepare_ml_expander_and_lift_stats(
+            model=model,
+            train_ds=train_ds,
+            device=device,
+            max_fit_samples=args.expander_fit_samples if hasattr(args, "expander_fit_samples") else 0,
+        )
+
+    # Load fixed RBF centers if provided
+    if hasattr(args, "load_rbf_from") and args.load_rbf_from:
+        print(f"Loading fixed RBF centers and sigmas from: {args.load_rbf_from}")
+        try:
+            loaded_data = np.load(args.load_rbf_from)
+            c_tensor = torch.as_tensor(loaded_data["rbf_centers"], dtype=torch.float32, device=device)
+            s_tensor = torch.as_tensor(loaded_data["rbf_sigmas"], dtype=torch.float32, device=device)
+            
+            model.expander.centers.copy_(c_tensor)
+            model.expander.sigmas.copy_(s_tensor)
+            model.expander.is_fitted = True
+            model.expander.freeze_centers = True
+        except Exception as e:
+            print(f"Warning: Failed to load RBF from {args.load_rbf_from}: {e}")
 
     # --------------------------------------------------
     # Evaluation Callback setup
@@ -207,7 +293,7 @@ def main():
         weight_decay=args.weight_decay,
         log_phi_every=log_phi_every,
         phi_print_max_dim=args.phi_print_max_dim,
-        eval_callback=run_eval_callback,  # <--- PASSING THE CALLBACK
+        eval_callback=run_eval_callback,
         rollout_horizon=training_rollout_horizon,
     )
     

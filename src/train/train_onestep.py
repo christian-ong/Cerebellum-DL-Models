@@ -72,18 +72,22 @@ def train_onestep(
     has_expander_scaler = hasattr(model, "expander") and hasattr(model.expander, "fit_state_scaler")
     has_model_scaler = hasattr(model, "fit_state_scaler")
 
-    if has_expander_scaler or has_model_scaler:
-        all_x = []
-        for batch in train_loader:
-            x = batch[0] if isinstance(batch, (list, tuple)) else batch
-            all_x.append(x)
+    # --- NEW: Only fit if not already initialized by train.py ---
+    if not getattr(model, "_state_scaler_initialized", False):
+        if has_expander_scaler or has_model_scaler:
+            all_x = []
+            for batch in train_loader:
+                x = batch[0] if isinstance(batch, (list, tuple)) else batch
+                all_x.append(x)
+                
+            full_X_train = torch.cat(all_x, dim=0).to(device)
             
-        full_X_train = torch.cat(all_x, dim=0).to(device)
-        
-        if has_expander_scaler:
-            model.expander.fit_state_scaler(full_X_train)
-        elif has_model_scaler:
-            model.fit_state_scaler(full_X_train)
+            if has_expander_scaler:
+                model.expander.fit_state_scaler(full_X_train)
+            elif has_model_scaler:
+                model.fit_state_scaler(full_X_train)
+            
+            model._state_scaler_initialized = True
 
     # 2. THEN, calculate the lifted stats using the newly safe, bounded polynomials
     initialize_lifted_normalization(model, train_loader)
@@ -108,7 +112,7 @@ def train_onestep(
     cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, 
         T_max=(epochs - warmup_epochs), 
-        eta_min=1e-6
+        eta_min=0.0
     )
 
     # 3. Combine them sequentially

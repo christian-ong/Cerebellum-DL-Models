@@ -6,8 +6,6 @@ from scipy.linalg import expm, schur
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 from src.models.ml_dmd_free import ML_DMD_FREE
-from src.models.ml_dmd_band import ML_DMD_BAND
-from src.models.ml_dmd_schur import ML_DMD_SCHUR
 from src.models.ml_dmd_l1 import ML_DMD_L1
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 
@@ -55,10 +53,6 @@ def build_model_from_checkpoint(model_path):
 
     if model_name == "ml_dmd_free" or model_name == "hardcoded_dmd":
         model = ML_DMD_FREE(**kwargs)
-    elif model_name == "ml_dmd_band":
-        model = ML_DMD_BAND(**kwargs)
-    elif model_name == "ml_dmd_schur":
-        model = ML_DMD_SCHUR(**kwargs)
     elif model_name == "ml_dmd_l1":
         model = ML_DMD_L1(**kwargs)
     elif model_name == "ml_lineardynamics":
