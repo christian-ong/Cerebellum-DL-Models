@@ -6,7 +6,7 @@ import numpy as np
 DEFAULT_DT = 1e-2
 TRAIN_T = 2.0
 EVAL_T = 2.0
-TEST_T = 5.0
+TEST_T = 10.0
 DEFAULT_TARGET_TRAIN_WINDOWS = 80_000
 DEFAULT_MAX_ROLLOUT_HORIZON = 100
 
@@ -70,26 +70,43 @@ System-specific parameters:
 --------------------------------------------------
 Linear system  x' = A x
 --------------------------------------------------
+# dt = 0.01
+python -m scripts.simulate_data --system inward_spiral --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
+python -m scripts.simulate_data --system harmonic_oscillator --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
+python -m scripts.simulate_data --system saddle_point --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
+python -m scripts.simulate_data --system degenerate_node --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
 
-python -m scripts.simulate_data --system inward_spiral --target_train_windows 80000 --max_rollout_horizon 100
-python -m scripts.simulate_data --system harmonic_oscillator --target_train_windows 80000 --max_rollout_horizon 100
-python -m scripts.simulate_data --system saddle_point --target_train_windows 80000 --max_rollout_horizon 100
-python -m scripts.simulate_data --system degenerate_node --target_train_windows 80000 --max_rollout_horizon 100
+# dt = 0.05
+python -m scripts.simulate_data --system inward_spiral --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
+python -m scripts.simulate_data --system harmonic_oscillator --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
+python -m scripts.simulate_data --system saddle_point --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
+python -m scripts.simulate_data --system degenerate_node --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
 
-Nonlinear systems (SHORT TRAJECTORIES)
+Nonlinear systems
 --------------------------------------------------
+# dt = 0.01
+python -m scripts.simulate_data --system closed_small --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
+python -m scripts.simulate_data --system closed_large --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
+python -m scripts.simulate_data --system closed_trig_small --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
+python -m scripts.simulate_data --system closed_trig_medium --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
+python -m scripts.simulate_data --system closed_trig_large --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
+python -m scripts.simulate_data --system vanderpol --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
+python -m scripts.simulate_data --system lotka_volterra --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
+python -m scripts.simulate_data --system pendulum --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
+python -m scripts.simulate_data --system duffing --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
+python -m scripts.simulate_data --system lorenz --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
 
-python -m scripts.simulate_data --system closed_small --target_train_windows 80000 --max_rollout_horizon 100
-python -m scripts.simulate_data --system closed_large --target_train_windows 80000 --max_rollout_horizon 100
-python -m scripts.simulate_data --system closed_trig_small --target_train_windows 80000 --max_rollout_horizon 100
-python -m scripts.simulate_data --system closed_trig_medium --target_train_windows 80000 --max_rollout_horizon 100
-python -m scripts.simulate_data --system closed_trig_large --target_train_windows 80000 --max_rollout_horizon 100
-
-python -m scripts.simulate_data --system vanderpol --target_train_windows 80000 --max_rollout_horizon 100
-python -m scripts.simulate_data --system lotka_volterra --target_train_windows 80000 --max_rollout_horizon 100
-python -m scripts.simulate_data --system pendulum --target_train_windows 80000 --max_rollout_horizon 100
-python -m scripts.simulate_data --system duffing --target_train_windows 80000 --max_rollout_horizon 100
-python -m scripts.simulate_data --system lorenz --target_train_windows 80000 --max_rollout_horizon 100
+# dt = 0.05
+python -m scripts.simulate_data --system closed_small --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
+python -m scripts.simulate_data --system closed_large --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
+python -m scripts.simulate_data --system closed_trig_small --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
+python -m scripts.simulate_data --system closed_trig_medium --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
+python -m scripts.simulate_data --system closed_trig_large --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
+python -m scripts.simulate_data --system vanderpol --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
+python -m scripts.simulate_data --system lotka_volterra --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
+python -m scripts.simulate_data --system pendulum --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
+python -m scripts.simulate_data --system duffing --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
+python -m scripts.simulate_data --system lorenz --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
 
 --------------------------------------------------
 Output
