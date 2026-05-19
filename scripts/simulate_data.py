@@ -601,6 +601,42 @@ def build_closed_trig_large(args, rng):
         "beta_x2": args.beta_x2_KPT,
     }
 
+def parse_splits_arg(text):
+    return {s.strip() for s in text.split(",") if s.strip()}
+
+
+def compute_state_noise_scale(X, mode):
+    """
+    Return per-state-dimension noise scale.
+
+    X shape:
+        (T, d) or (T, n_traj, d)
+    """
+    state_dim = X.shape[-1]
+
+    if mode == "absolute":
+        return np.ones(state_dim, dtype=float)
+
+    if mode == "relative":
+        flat = X.reshape(-1, state_dim)
+        scale = np.sqrt(np.mean(flat**2, axis=0))
+        return np.maximum(scale, 1e-12)
+
+    raise ValueError(f"Unknown noise mode: {mode}")
+
+
+def add_observation_noise(X, *, noise_std, noise_mode, rng):
+    """
+    Add Gaussian measurement noise to already simulated states.
+
+    The underlying dynamics are unchanged; only the saved observations are noisy.
+    """
+    if noise_std <= 0:
+        return X, np.zeros(X.shape[-1], dtype=float)
+
+    scale = compute_state_noise_scale(X, noise_mode)
+    noise = noise_std * scale.reshape((1,) * (X.ndim - 1) + (-1,)) * rng.standard_normal(X.shape)
+    return X + noise, scale
 
 SYSTEMS = {
     # linear
@@ -656,6 +692,11 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--burn_in",type=float,default=0.0,help="Extra simulation time to discard before saving each split.")
 
+    parser.add_argument("--observation_noise_std",type=float,default=0.0,help=("Gaussian observation noise level added after simulation.If --noise_mode relative, this is a fraction of per-state RMS."))
+    parser.add_argument("--noise_mode",type=str,default="relative",choices=["relative", "absolute"],help="Noise scaling mode. relative = std * per-dimension RMS, absolute = std in state units.")
+    parser.add_argument("--noise_seed",type=int,default=123,help="Random seed for observation noise.")
+    parser.add_argument( "--noise_splits",type=str, default="train,val,test",help="Comma-separated splits to noise, e.g. train,val or train,val,test.")
+    
     # System-specific params
     # Van der Pol
     parser.add_argument("--mu", type=float, default=1.5)
@@ -712,6 +753,21 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
 
     rng = np.random.default_rng(args.seed)
+
+    if args.burn_in < 0:
+        raise ValueError("--burn_in must be non-negative.")
+
+    if args.observation_noise_std < 0:
+        raise ValueError("--observation_noise_std must be non-negative.")
+
+    noise_splits = parse_splits_arg(args.noise_splits)
+    valid_splits = {"train", "val", "test"}
+    invalid_splits = noise_splits - valid_splits
+    if invalid_splits:
+        raise ValueError(
+            f"Invalid noise split(s): {sorted(invalid_splits)}. "
+            f"Valid splits are {sorted(valid_splits)}."
+        )
 
     # Build system
     f, _, meta = SYSTEMS[args.system](args, rng)
@@ -869,7 +925,7 @@ def main():
         ("test", args.n_traj_test, args.T_test),
     ]
     
-    for split_name, n_traj, T in splits:
+    for split_idx, (split_name, n_traj, T) in enumerate(splits):
         if n_traj == 0:
             print(f"Skipping {split_name} split (n_traj=0)")
             continue
@@ -900,7 +956,25 @@ def main():
             X_split = X_full
             t_split = t_full
 
+        # Keep a clean copy before adding optional observation noise.
+        # This is mainly used for metadata/debugging; the saved X is the actual observed data.
+        X_clean_saved = X_split.copy()
+
+        if split_name in noise_splits and args.observation_noise_std > 0:
+            noise_rng = np.random.default_rng(args.noise_seed + split_idx)
+            X_split, observation_noise_scale = add_observation_noise(
+                X_split,
+                noise_std=args.observation_noise_std,
+                noise_mode=args.noise_mode,
+                rng=noise_rng,
+            )
+            observation_noise_applied = True
+        else:
+            observation_noise_scale = np.zeros(X_split.shape[-1], dtype=float)
+            observation_noise_applied = False
+
         x0_saved = np.asarray(X_split[0]).copy()
+        x0_clean_saved = np.asarray(X_clean_saved[0]).copy()
         T_saved = float(t_split[-1])
         
         # Save using clean dataset directory layout with linear/nonlinear categorization.
@@ -917,11 +991,18 @@ def main():
             t=t_split,
             X=X_split,
             x0=x0_saved,
+            x0_clean=x0_clean_saved,
             x0_before_burn_in=x0_split,
             dt=args.dt,
             T=T_saved,
             burn_in=args.burn_in,
             burn_steps=burn_steps,
+            observation_noise_std=args.observation_noise_std,
+            observation_noise_mode=args.noise_mode,
+            observation_noise_scale=observation_noise_scale,
+            observation_noise_applied=observation_noise_applied,
+            noise_seed=args.noise_seed,
+            noise_splits=args.noise_splits,
             system=args.system,
             n_traj=n_traj,
             seed=args.seed,
@@ -932,7 +1013,7 @@ def main():
             plot_dir = os.path.join("data", "figures", "trajectories", args.system)
             plot_trajectories_from_array(
                 X=X_split,
-                x0s=x0_split,
+                x0s=x0_saved,
                 system_name=args.system,
                 max_trajs_to_plot=100,
                 outdir=plot_dir,
