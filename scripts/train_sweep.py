@@ -4,7 +4,6 @@ import time
 import numpy as np
 import torch
 import wandb
-from pathlib import Path
 
 from torch.utils.data import DataLoader
 
@@ -17,7 +16,7 @@ from src.eval.sweep_utils import (
 )
 from src.train.train_onestep_sweep import train_onestep_sweep
 
-EVAL_HORIZONS = [5, 50, 100]
+EVAL_HORIZONS = [10, 20, 100]
 
 def fmt_metric(x):
     return f"{x:.6e}" if x is not None else "None"
@@ -36,9 +35,8 @@ def update_best_metrics(best_metrics, current_metrics, current_epoch):
 def main():
     parser = argparse.ArgumentParser(description="Fast W&B sweep training for Koopman models")
 
-    parser.add_argument("--model", type=str, required=True, choices=["ml_linear_dynamics", "ml_dmd_free", "ml_dmd_band"])
+    parser.add_argument("--model", type=str, required=True, choices=["ml_linear_dynamics", "ml_lineardynamics", "ml_dmd_free", "ml_dmd_l1", "ml_dmd_band", "mlp_baseline"])
     parser.add_argument("--data_path", type=str, required=True)
-    parser.add_argument("--trajectory_length", type=str, choices=["short", "long"], default="long")
     parser.add_argument("--name", type=str, default="run")
 
     parser.add_argument("--subset", type=float, default=1.0)
@@ -51,17 +49,29 @@ def main():
     parser.add_argument("--expansion_type", type=str, choices=["general", "specific"], default="general")
     parser.add_argument("--expansion_degree", type=int, default=3)
     parser.add_argument("--sine_cosine_expansion", type=str.lower, choices=["true", "false"], default="false")
+    parser.add_argument("--delay_depth", type=int, default=1, help="Number of stacked delay coordinates to use when expansion_type='delay'.")
+    parser.add_argument("--rbf_n_centers", type=int, default=50, help="Number of RBF centers when expansion_type='rbf'.")
+    parser.add_argument("--rbf_center_selection", type=str, default="farthest", choices=["random", "farthest"], help="How to choose RBF centers from training states.")
+    parser.add_argument("--rbf_bandwidth_mode", type=str, default="knn", choices=["global", "knn"], help="How to choose RBF widths (sigmas).")
+    parser.add_argument("--rbf_knn_k", type=int, default=5, help="k for k-nearest-center bandwidth when expansion_type='rbf'.")
+    parser.add_argument("--l1_weight", type=float, default=1e-6, help="L1 regularization weight for regression DMD")
 
     parser.add_argument("--eval_every", type=int, default=1)
     parser.add_argument("--max_val_rollout_trajs", type=int, default=None)
-    parser.add_argument("--rollout_horizon", type=int, default=5, help="Training rollout horizon for rollout loss (steps)")
-    parser.add_argument("--rollout_gamma", type=float, default=0.99, help="Discount factor for eval")
-    parser.add_argument("--log_phi_every", type=int, default=1, help="Print get_Phi() every N epochs")
+    parser.add_argument("--rollout_horizon", type=int, default=None, help="Rollout horizon for training loss (only used in the loss function)")
+    parser.add_argument(
+        "--dataset_rollout_reserve",
+        type=int,
+        default=None,
+        help="(Optional) Reserve this many future steps when constructing the dataset. If omitted the script will try to infer a sensible reserve from the train split (defaults to 100 or less).",
+    )
+    parser.add_argument("--log_phi_every", type=int, default=-1, help="Print get_Phi() every N epochs (default: auto-detect based on model type)")
     parser.add_argument("--phi_print_max_dim", type=int, default=12, help="When Phi is larger than this, print only the top-left block")
 
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--print_every_batch", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--outdir", type=str, default="data/models")
 
     args = parser.parse_args()
 
@@ -87,7 +97,7 @@ def main():
         project="koopman-operator-learning",
         config=vars(args),
         group=f"{system_name}_{args.model}",
-        tags=[system_name, args.model, args.expansion_type, args.trajectory_length],
+        tags=[system_name, args.model, args.expansion_type],
     )
 
     config = wandb.config
@@ -105,18 +115,30 @@ def main():
             "group_name": f"{system_name}_{args.model}",
             "model_name": args.model,
             "system_name": system_name,
-            "trajectory_length": args.trajectory_length
         },
         allow_val_change=True,
     )
 
     # Setup output directory (for checkpoint saving)
-    save_dir = os.path.join("data/models", args.model, system_name, run.id)
+    save_dir = os.path.join(args.outdir, args.model, system_name, run.id)
     os.makedirs(save_dir, exist_ok=True)
 
     # Data
-    train_ds = OneStepTrajectoryDataset(args.data_path, split="train", subset=args.subset, rollout_horizon=args.rollout_horizon)
-    val_ds = OneStepTrajectoryDataset(args.data_path, split="val", subset=args.subset, rollout_horizon=args.rollout_horizon)
+    is_ml_model = args.model in {"ml_linear_dynamics", "ml_lineardynamics", "ml_dmd_free", "ml_dmd_l1", "ml_dmd_band"}
+
+    if args.dataset_rollout_reserve is not None:
+        dataset_rollout_horizon = args.dataset_rollout_reserve
+    else:
+        try:
+            with np.load(train_meta_path) as d:
+                X = d["X"]
+                T = X.shape[0]
+            dataset_rollout_horizon = min(100, max(0, T - 2))
+        except Exception:
+            dataset_rollout_horizon = 20 if is_ml_model else 0
+
+    train_ds = OneStepTrajectoryDataset(args.data_path, split="train", subset=args.subset, rollout_horizon=dataset_rollout_horizon, delay_depth=getattr(args, "delay_depth", 1))
+    val_ds = OneStepTrajectoryDataset(args.data_path, split="val", subset=args.subset, rollout_horizon=dataset_rollout_horizon, delay_depth=getattr(args, "delay_depth", 1))
 
     pin_memory = device == "cuda"
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=pin_memory)
@@ -142,13 +164,12 @@ def main():
             _, val_rmse = compute_loader_metrics(model, val_loader, device)
             metrics["val_onestep_rmse"] = val_rmse
 
-        # Multi-step Rollout Metrics (5, 50, 100)
+        # Multi-step Rollout Metrics (10, 20, 100)
         rollout_metrics = compute_rollout_metrics(
             model=model,
             X=val_X,
             device=device,
-            eval_horizons=EVAL_HORIZONS, # [5, 50, 100]
-            gamma=args.rollout_gamma,
+            eval_horizons=EVAL_HORIZONS,
             max_trajs=args.max_val_rollout_trajs # Set this in your .sh for extra speed
         )
         
@@ -168,6 +189,14 @@ def main():
     print("\n===== TRAINING =====")
     t_train_start = time.time()
     
+    # Compute log_phi_every: use auto-detection if not explicitly set
+    if args.log_phi_every >= 0:
+        log_phi_every = args.log_phi_every
+    else:
+        log_phi_every = 1 if is_ml_model else 0
+    
+    training_rollout_horizon = args.rollout_horizon if args.rollout_horizon is not None else (20 if is_ml_model else 0)
+
     model, (train_losses, epoch_val_losses, loss_components_val), best_checkpoint = train_onestep_sweep(
         model=model,
         train_loader=train_loader,
@@ -176,9 +205,10 @@ def main():
         epochs=args.epochs,
         lr=args.lr,
         weight_decay=args.weight_decay,
-        log_phi_every=args.log_phi_every,
+        log_phi_every=log_phi_every,
         phi_print_max_dim=args.phi_print_max_dim,
-        eval_callback=run_eval_callback  # <--- PASSING THE CALLBACK
+        eval_callback=run_eval_callback,  # <--- PASSING THE CALLBACK
+        rollout_horizon=training_rollout_horizon,
     )
     
     print(f"Training completed in {time.time() - t_train_start:.1f}s")

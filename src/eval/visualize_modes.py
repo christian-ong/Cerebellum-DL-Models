@@ -225,7 +225,7 @@ def get_koopman_eigensystem(model):
 
 
 
-def get_system_matrices(system="saddle_point", decomp_type="schur"):
+def get_system_matrices(system="saddle_point", decomp_type="schur", truncate_dim=None):
     
     # system values
     vp_mu = 1.5 # vanderpol
@@ -259,7 +259,8 @@ def get_system_matrices(system="saddle_point", decomp_type="schur"):
     ct_bx = 0.3
     ct_bx2 = -0.08
 
-
+    # calculate
+    pe_c = pe_g / pe_l
 
     A_cs = {
         "saddle_point": np.array([
@@ -279,27 +280,65 @@ def get_system_matrices(system="saddle_point", decomp_type="schur"):
             [-1.3, 0]]),
 
         "vanderpol": np.array([
-            [0,1,0],
-            [-1,vp_mu, -vp_mu],
-            [0,0,0]]),
+            [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [-1, vp_mu, -vp_mu, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, vp_mu, 2, -1, -vp_mu, 0, 0, 0, 0],
+            [0, 0, -2, 2*vp_mu, 0, 0, 1, -2*vp_mu, 0, 0],
+            [0, 0, 3, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, vp_mu, 0, 4, -1, -vp_mu],
+            [0, 0, 0, -3, 0, 0, 3*vp_mu, 0, 0, 0],
+            [0, 0, 0, 0, 0, -2, 0, 2*vp_mu, 0, 0],
+            [0, 0, 0, 0, 0, 5, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, vp_mu]]),
         "lotka_volterra": np.array([
-            [lv_al,0,-lv_be],
-            [0, -lv_ga, lv_de],
-            [0,0,0]]),
+            [lv_al, 0, -lv_be, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, -lv_ga, lv_de, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, lv_al-lv_ga, -lv_be, lv_de, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, lv_al-2*lv_ga, 0, -lv_be, 2*lv_de, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 2*lv_al-lv_ga, 0, -2*lv_be, lv_de, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, lv_al-3*lv_ga, 0, 0, -lv_be, 3*lv_de, 0, 0],
+            [0, 0, 0, 0, 0, 0, 2*lv_al-2*lv_ga, 0, 0, -2*lv_be, 2*lv_de, 0],
+            [0, 0, 0, 0, 0, 0, 0, 3*lv_al-lv_ga, 0, 0, -3*lv_be, lv_de],
+            [0, 0, 0, 0, 0, 0, 0, 0, lv_al-4*lv_ga, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 2*lv_al-3*lv_ga, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3*lv_al-2*lv_ga, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4*lv_al-lv_ga]]),
         "pendulum": np.array([
-            [0,1,0],
-            [0,0,-pe_g/pe_l],
-            [0,0,0]]),
+            [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, -pe_c, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, -pe_c/2, -1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0],
+            [0, -pe_c, 0, 0, 0, 0, pe_c, 1, 0, 0, 0],
+            [0, 0, pe_c/2, 0, 0, 0, 0, 0, -pe_c/2, -2, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, -3*pe_c/2, -1],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, -pe_c, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]),
         "duffing": np.array([
-            [0,1,0],
-            [-du_al, -du_de, -du_be],
-            [0,0,0]]),
+            [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [-du_al, -du_de, -du_be, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, -du_al, -du_de, 2, -du_be, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, -2*du_al, -2*du_de, 0, 1, -2*du_be, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0],
+            [0, 0, 0, 0, -3*du_al, 0, -3*du_de, 0, -3*du_be, 0, 0, 0],
+            [0, 0, 0, 0, 0, -du_al, 0, -du_de, 4, -du_be, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, -2*du_al, -2*du_de, 0, 3, -2*du_be],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7],
+            [0, 0, 0, 0, 0, 0, 0, -3*du_al, -3*du_de, 0, 0, -3*du_be],
+            [0, 0, 0, 0, 0, 0, 0, 0, 6, -du_al, 0, -du_de]]),
         "lorenz": np.array([
-            [-lo_sigma, lo_sigma, 0,0,0],
-            [lo_rho, -1, 0,-1,0],
-            [0, 0, -lo_beta,0,1],
-            [0,0,0,0,0],
-            [0,0,0,0,0]]),
+            [-lo_sigma, lo_sigma, 0, 0, 0, 0, 0, 0, 0, 0],
+            [lo_rho, -1, 0, -1, 0, 0, 0, 0, 0, 0],
+            [0, 0, -lo_beta, 0, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, -(lo_sigma+lo_beta), 0, lo_sigma, 1, 0, 0, 0],
+            [0, 0, 0, 0, -(lo_sigma+1), 0, 0, lo_sigma, lo_rho, -1],
+            [0, 0, 0, lo_rho, 0, -(lo_beta+1), 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, -(2*lo_sigma+1), 0, 0, 0],
+            [0, 0, 0, 0, 2*lo_sigma, 0, 0, -2*lo_sigma, 0, 0],
+            [0, 0, 0, 0, 2*lo_rho, 0, 0, 0, -2, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, -(2*lo_sigma+lo_beta)]]),
 
         "closed_small": np.array([
             [cs_mu, 0, 0],
@@ -347,11 +386,11 @@ def get_system_matrices(system="saddle_point", decomp_type="schur"):
         "inward_spiral_cw": ["x", "y"],
         "harmonic_oscillator": ["x", "y"],
 
-        "vanderpol": ["x", "y", "x^2 y"],
-        "lotka_volterra": ["x", "y", "xy"],
-        "pendulum": ["x", "y", "sin(x)"],
-        "duffing": ["x", "y", "x^3"],
-        "lorenz": ["x", "y", "z", "xz", "xy"],
+        "vanderpol": ["x", "y", "x^2y", "xy^2", "x^3", "x^4y", "y^3", "x^3y^2", "x^5", "x^6y"],
+        "lotka_volterra": ["x", "y", "xy", "xy^2", "x^2y", "xy^3", "x^2y^2", "x^3y", "xy^4", "x^2y^3", "x^3y^2", "x^4y"],
+        "pendulum": ["x", "y", "sin(x)", "y cos(x)", "sin(2x)", "y^2 sin(x)", "y cos(2x)", "y^3 cos(x)", "sin(3x)", "y^2 sin(2x)", "y^4 sin(x)"],
+        "duffing": ["x", "y", "x^3", "x^2y", "xy^2", "x^5", "y^3", "x^4y", "x^3y^2", "x^7", "x^2y^3", "x^6y"],
+        "lorenz": ["x", "y", "z", "xz", "xy", "yz", "x^2y", "x^2", "y^2", "x^2z"],
 
         "closed_small": ["x", "y", "x^2"],
         "closed_large": ["x", "y", "x^2", "x^3", "x^4"],
@@ -363,7 +402,12 @@ def get_system_matrices(system="saddle_point", decomp_type="schur"):
     if system not in A_cs:
         raise ValueError(f"System '{system}' not found. Available systems: {list(A_cs.keys())}")
 
-    # ==========================================================    
+    # ==========================================================
+
+    # Truncate
+    if truncate_dim is not None:
+        A_cs[system] = A_cs[system][:truncate_dim, :truncate_dim]
+        expansion_names[system] = expansion_names[system][:truncate_dim]
 
     A_c = A_cs[system]
     system_expansion_names = expansion_names[system]
@@ -722,6 +766,7 @@ def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None):
 
     ### 1. Real trajectory projected onto modes ###
     real_proj = expanded_traj @ Phi
+    real_proj = real_proj.real
 
     ### 2. Model rollout trajectory ###
     model_rollouts = model.rollout(init_conditions, steps=n_steps-1).detach().numpy() # (n_steps, n_trajs, state_dim)
@@ -729,6 +774,7 @@ def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None):
     model_rollouts_flattened_expanded = safe_expand(model, torch.as_tensor(model_rollouts_flattened, dtype=torch.float32)).detach().numpy()
     model_rollouts_expanded = model_rollouts_flattened_expanded.reshape(n_steps, n_trajs, lifted_dim) # (n_steps, n_trajs, lifted_dim)
     model_proj = model_rollouts_expanded @ Phi
+    model_proj = model_proj.real
 
     ### 3. Mode evolution under Lambda ###
     # Initialize mode amplitudes from initial conditions
@@ -741,6 +787,7 @@ def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None):
         z = mode_evolution[t-1, :, :]
         z_next = z @ Lambda.T
         mode_evolution[t, :, :] = z_next
+    mode_evolution = mode_evolution.real
 
     ### 4. Plotting ###
     fig, axes = plt.subplots(n_trajs, n_modes, figsize=(2.5 * n_modes, 10), sharex=True)
@@ -759,10 +806,32 @@ def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None):
             if traj_idx == 0:
                 axes[traj_idx,i].set_title(f"Mode {i + 1}", fontsize=10)
 
-            # Plot first trajectory for clarity (index 0)
+            # Plot real projection, model rollout, and mode evolution
             axes[traj_idx,i].plot(time, real_proj[:, traj_idx, i], 'k-', label='Real (Proj)', alpha=0.6)
             axes[traj_idx,i].plot(time, model_proj[:, traj_idx, i], 'r--', label='Model Rollout')
             axes[traj_idx,i].plot(time, mode_evolution[:, traj_idx, i], 'b:', label='$\Lambda$ Evolution')
+
+            # y-lim : keep close to real projection
+            y_min_real = real_proj[:, traj_idx, i].min()
+            y_max_real = real_proj[:, traj_idx, i].max()
+            range_real = y_max_real - y_min_real
+            y_lower_bound_real = y_min_real - range_real * 0.1
+            y_upper_bound_real = y_max_real + range_real * 0.1
+            y_range_real = y_upper_bound_real - y_lower_bound_real
+
+            y_min_other = min(model_proj[:, traj_idx, i].min(), mode_evolution[:, traj_idx, i].min())
+            y_max_other = max(model_proj[:, traj_idx, i].max(), mode_evolution[:, traj_idx, i].max())
+            range_other = y_max_other - y_min_other
+            y_lower_bound_other = y_min_other - range_other * 0.1
+            y_upper_bound_other = y_max_other + range_other * 0.1
+            y_range_other = y_upper_bound_other - y_lower_bound_other
+            
+            if y_range_other > 10 * y_range_real:
+                axes[traj_idx,i].set_ylim([y_lower_bound_real - y_range_real * 2, y_upper_bound_real + y_range_real * 2])
+            else:
+                y_lower_bound_final = min(y_lower_bound_real, y_lower_bound_other)
+                y_upper_bound_final = max(y_upper_bound_real, y_upper_bound_other)
+                axes[traj_idx,i].set_ylim([y_lower_bound_final, y_upper_bound_final])
 
             # Legend info
             if i == 0 and traj_idx == 0:

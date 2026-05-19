@@ -103,12 +103,11 @@ class MLP_BlackBox(nn.Module):
         # --- 3. Total Loss ---
         # Add the normalized losses as the primary driver to stabilize the network!
         loss_total = (
-              0.5 * loss_state 
-            + 0.1 * loss_rollout 
-            + 1.0 * loss_state_norm 
+              1.0 * loss_state_norm 
             + 1.0 * loss_rollout_norm
         )
         
+        # We keep the physical losses in the dictionary ONLY for logging and printing to the console.
         loss_dict = {
             "state": loss_state.item(),
             "rollout": loss_rollout.item(),

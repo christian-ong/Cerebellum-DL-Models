@@ -1,8 +1,6 @@
-import re
 import torch
 import torch.nn as nn
 from itertools import product
-import math
 from typing import Optional
 
 LINEAR_BASIS = ["x", "y"]
@@ -38,15 +36,15 @@ LOTKA_BASIS = [
 PENDULUM_BASIS = [
     "x",
     "y",
-    "sin(x)",
-    "y*cos(x)",
-    "sin(2*x)",
-    "y^2*sin(x)",
-    "y*cos(2*x)",
-    "y^3*cos(x)",
-    "sin(3*x)",
-    "y^2*sin(2*x)",
-    "y^4*sin(x)",
+    "sin(xr)",
+    "y*cos(xr)",
+    "sin(2*xr)",
+    "y^2*sin(xr)",
+    "y*cos(2*xr)",
+    "y^3*cos(xr)",
+    "sin(3*xr)",
+    "y^2*sin(2*xr)",
+    "y^4*sin(xr)",
 ]
 
 DUFFING_BASIS = [
@@ -96,8 +94,8 @@ CLOSED_TRIG_SMALL_BASIS = [
     "x",
     "y",
     "x^2",    
-    "sin(x)",
-    "cos(x)"
+    "sin(xr)",
+    "cos(xr)"
 ]
 
 CLOSED_TRIG_MEDIUM_BASIS = [
@@ -105,10 +103,10 @@ CLOSED_TRIG_MEDIUM_BASIS = [
     "x",
     "y",
     "x^2",
-    "sin(x)",
-    "cos(x)",
-    "sin(2*x)",
-    "cos(2*x)"
+    "sin(xr)",
+    "cos(xr)",
+    "sin(2*xr)",
+    "cos(2*xr)"
 ]
 
 CLOSED_TRIG_LARGE_BASIS = [
@@ -116,12 +114,12 @@ CLOSED_TRIG_LARGE_BASIS = [
     "x",
     "y",
     "x^2",    
-    "sin(x)",
-    "cos(x)",
-    "sin(2*x)",
-    "cos(2*x)",
-    "sin(3*x)",
-    "cos(3*x)",
+    "sin(xr)",
+    "cos(xr)",
+    "sin(2*xr)",
+    "cos(2*xr)",
+    "sin(3*xr)",
+    "cos(3*xr)",
 ]
 
 SPECIFIC_BASES = {
@@ -266,14 +264,12 @@ class ManualExpansion(nn.Module):
         self.register_buffer("state_scale", torch.ones(self.state_dim, dtype=torch.float32))
 
     def fit_state_scaler(self, x: torch.Tensor):
-        """Calculates MaxAbs scale from training data. We ignore specific bases 
-        because they rely on exact physical units (like radians for sin(x))."""
-        if self.expansion_type == "specific":
-            return
-            
         max_abs = torch.max(torch.abs(x), dim=0)[0]
-        max_abs[max_abs == 0] = 1.0 # Prevent division by zero
-        self.state_scale.copy_(max_abs)
+        max_abs[max_abs == 0] = 1.0 
+        
+        # Add a 20% safety margin to prevent validation explosions
+        safety_margin = 1.2 
+        self.state_scale.copy_(max_abs * safety_margin)
 
     def _compile_basis(self, expr):
         """
@@ -301,20 +297,22 @@ class ManualExpansion(nn.Module):
     
     def expand(self, x):
         expanded_features = []
+        # Pre-calculate scaled state for polynomial stability
+        x_scaled = x / self.state_scale 
 
         if self.expansion_type == "specific":
             var_names = ["x", "y", "z", "w", "v", "u"]
             var_dict = {}
 
             for i in range(self.state_dim):
-                if i < len(var_names):
-                    var_dict[var_names[i]] = x[:, i]
-                else:
-                    var_dict[f"x{i+1}"] = x[:, i]
+                name = var_names[i] if i < len(var_names) else f"x{i+1}"
+                # STABILITY: Provide scaled variables for polynomial terms
+                var_dict[name] = x_scaled[:, i] 
+                # PHYSICS: Provide raw variables (e.g. 'xr') for trig terms
+                var_dict[name + "r"] = x[:, i] 
 
             for fn in self._compiled_basis:
                 expanded_features.append(fn(var_dict))
-
         else:
             # --- ADD THIS: Scale down the state before raising to high powers ---
             x_scaled = x / self.state_scale
@@ -342,14 +340,9 @@ class ManualExpansion(nn.Module):
         return torch.stack(expanded_features, dim=1)
 
     def de_expand(self, x_expanded):
-        """
-        Recover original state variables and restore physical scaling.
-        """
+        """Recover original state variables and restore physical scaling."""
         extracted = x_expanded[:, self.state_indices]
-        
-        if self.expansion_type == "specific":
-            return extracted
-            
+        # ALWAYS restore scaling so de_expand returns physical units
         return extracted * self.state_scale
 
 

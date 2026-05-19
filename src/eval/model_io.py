@@ -10,8 +10,6 @@ from src.models.dmd_baseline import rollout_dmd_eig
 from src.models.regression_dmd import Regression_DMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.ml_dmd_free import ML_DMD_FREE
-from src.models.ml_dmd_band import ML_DMD_BAND
-from src.models.ml_dmd_schur import ML_DMD_SCHUR
 from src.models.ml_dmd_l1 import ML_DMD_L1
 from src.models.mlp_baseline import MLP_BlackBox
 from src.models.sindy_baseline import SINDyBaseline
@@ -292,48 +290,6 @@ def load_model(
         extras["ckpt"] = ckpt
         return model, extras
 
-    if model_name == "ml_dmd_band":
-        ckpt = torch.load(model_path, map_location=device)
-        train_args = ckpt["train_args"]
-
-        model = ML_DMD_BAND(
-            state_dim=ckpt["state_dim"],
-            expansion_degree=train_args["expansion_degree"],
-            bias=_to_bool(train_args.get("bias", "true"), default=True),
-            sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", "false"), default=False),
-            expansion_type=train_args["expansion_type"],
-            system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
-            delay_depth=int(train_args.get("delay_depth", 1)),
-            rbf_n_centers=int(train_args.get("rbf_n_centers", 50)),
-            rbf_center_selection=str(train_args.get("rbf_center_selection", "farthest")),
-            rbf_bandwidth_mode=str(train_args.get("rbf_bandwidth_mode", "knn")),
-            rbf_knn_k=int(train_args.get("rbf_knn_k", 5)),
-            hankel_rank=train_args.get("hankel_rank", None),
-        ).to(device)
-
-        model.load_state_dict(ckpt["model_state_dict"])
-        model.eval()
-        extras["ckpt"] = ckpt
-        return model, extras
-
-    if model_name == "ml_dmd_schur":
-        ckpt = torch.load(model_path, map_location=device)
-        train_args = ckpt["train_args"]
-
-        model = ML_DMD_SCHUR(
-            state_dim=ckpt["state_dim"],
-            expansion_degree=train_args["expansion_degree"],
-            bias=_to_bool(train_args.get("bias", "true"), default=True),
-            sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", "false"), default=False),
-            expansion_type=train_args["expansion_type"],
-            system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
-        ).to(device)
-
-        model.load_state_dict(ckpt["model_state_dict"])
-        model.eval()
-        extras["ckpt"] = ckpt
-        return model, extras
-    
     if model_name == "ml_dmd_l1":
         ckpt = torch.load(model_path, map_location=device)
         train_args = ckpt["train_args"]

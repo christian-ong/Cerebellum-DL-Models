@@ -3,7 +3,8 @@ import torch
 
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.ml_dmd_free import ML_DMD_FREE
-from src.models.ml_dmd_band import ML_DMD_BAND
+from src.models.ml_dmd_l1 import ML_DMD_L1
+from src.models.mlp_baseline import MLP_BlackBox
 
 def build_run_name(args, system_name, run_id=None):
     parts = [system_name, args.model]
@@ -22,7 +23,7 @@ def build_run_name(args, system_name, run_id=None):
 
 
 def build_model(args, state_dim, system_name, device):
-    if args.model == "ml_linear_dynamics":
+    if args.model in {"ml_linear_dynamics", "ml_lineardynamics"}:
         model = ML_LinearDynamics(
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
@@ -30,6 +31,7 @@ def build_model(args, state_dim, system_name, device):
             bias=args.bias == "true",
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             system=system_name,
+            delay_depth=getattr(args, "delay_depth", 1),
             rbf_n_centers=getattr(args, "rbf_n_centers", 50),
             rbf_center_selection=getattr(args, "rbf_center_selection", "farthest"),
             rbf_bandwidth_mode=getattr(args, "rbf_bandwidth_mode", "knn"),
@@ -44,24 +46,34 @@ def build_model(args, state_dim, system_name, device):
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             expansion_type=args.expansion_type,
             system=system_name if args.expansion_type == "specific" else None,
+            delay_depth=getattr(args, "delay_depth", 1),
             rbf_n_centers=getattr(args, "rbf_n_centers", 50),
             rbf_center_selection=getattr(args, "rbf_center_selection", "farthest"),
             rbf_bandwidth_mode=getattr(args, "rbf_bandwidth_mode", "knn"),
             rbf_knn_k=getattr(args, "rbf_knn_k", 5),
         ).to(device)
 
-    elif args.model == "ml_dmd_band":
-        model = ML_DMD_BAND(
+    elif args.model in {"ml_dmd_l1", "ml_dmd_band"}:
+        model = ML_DMD_L1(
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
             bias=args.bias == "true",
             sine_cosine_expansion=args.sine_cosine_expansion == "true",
             expansion_type=args.expansion_type,
             system=system_name if args.expansion_type == "specific" else None,
+            delay_depth=getattr(args, "delay_depth", 1),
             rbf_n_centers=getattr(args, "rbf_n_centers", 50),
             rbf_center_selection=getattr(args, "rbf_center_selection", "farthest"),
             rbf_bandwidth_mode=getattr(args, "rbf_bandwidth_mode", "knn"),
             rbf_knn_k=getattr(args, "rbf_knn_k", 5),
+            l1_weight=getattr(args, "l1_weight", 1e-6),
+        ).to(device)
+
+    elif args.model == "mlp_baseline":
+        model = MLP_BlackBox(
+            state_dim=state_dim,
+            hidden_dim=64,
+            num_layers=4,
         ).to(device)
 
     else:
@@ -117,8 +129,7 @@ def compute_rollout_metrics(
     model,
     X,
     device,
-    eval_horizons=[5, 50, 100],
-    gamma=0.99,
+    eval_horizons=[10, 20, 100],
     max_trajs=None
 ):
     if X is None:
@@ -142,7 +153,6 @@ def compute_rollout_metrics(
 
     model.eval()
     results = {"rollout_failed": 0.0}
-    rmse_list = []
 
     with torch.no_grad():
         rollout_pred = model.rollout(X[0], max_h)
@@ -150,21 +160,18 @@ def compute_rollout_metrics(
         if not torch.isfinite(rollout_pred).all():
             results["rollout_failed"] = 1.0
             for hh in eval_horizons:
-                results[f"rollout_rmse_h{hh}"] = np.nan
-                results[f"discounted_mean_rmse_h{hh}_g{gamma:.2f}"] = np.nan
+                results[f"rollout_mse_h{hh}"] = np.nan
             return results
 
-        for h in range(1, max_h + 1):
-            diff = rollout_pred[h] - X[h]
-            rmse_list.append(torch.sqrt(torch.mean(diff ** 2)))
-
-    # 4. PROCESS HORIZONS
-    rmse_tensor = torch.stack(rmse_list)
-    for h in eval_horizons:
-        if h <= max_h:
-            results[f"rollout_rmse_h{h}"] = float(rmse_tensor[h-1].item())
-            weights = torch.tensor([gamma ** i for i in range(1, h + 1)], device=device)
-            weighted_rmse = torch.sum(weights * rmse_tensor[:h]) / torch.sum(weights)
-            results[f"discounted_mean_rmse_h{h}_g{gamma:.2f}"] = float(weighted_rmse.item())
+        # Compute cumulative MSE for each horizon (matching training loss computation), then take RMSE
+        for h in eval_horizons:
+            if h <= max_h:
+                cumulative_mse = torch.tensor(0.0, device=device)
+                for k in range(1, h + 1):
+                    diff = rollout_pred[k] - X[k]
+                    cumulative_mse += torch.mean(diff ** 2)
+                avg_mse = cumulative_mse / h
+                avg_rmse = torch.sqrt(avg_mse)
+                results[f"rollout_rmse_h{h}"] = float(avg_rmse.item())
 
     return results

@@ -12,10 +12,12 @@ class ML_DMD_L1(nn.Module):
         sine_cosine_expansion=False,
         expansion_type="general",
         system=None,
+        delay_depth=1,
         rbf_n_centers=50,
         rbf_center_selection="farthest",
         rbf_bandwidth_mode="knn",
         rbf_knn_k=5,
+        hankel_rank=None,
         l1_weight=1e-6,
     ):
 
@@ -23,6 +25,8 @@ class ML_DMD_L1(nn.Module):
 
         self.state_dim = state_dim
         self.expansion_type = expansion_type
+        self.delay_depth = int(delay_depth)
+        self.hankel_rank = hankel_rank
 
         # ------------------------------------------------
         # Initialize basis expansion
@@ -42,20 +46,23 @@ class ML_DMD_L1(nn.Module):
             rbf_center_selection=rbf_center_selection,
             rbf_bandwidth_mode=rbf_bandwidth_mode,
             rbf_knn_k=rbf_knn_k,
+            delay_depth=delay_depth,
+            hankel_rank=hankel_rank,
         )
 
         # Public aliases used elsewhere in the model / training code
         self.expand_names = self.expander.expand_names
         self.state_indices = self.expander.state_indices
         self.expanded_dim = self.expander.expanded_dim
-
         self.latent_dim = self.expanded_dim
+        self.l1_weight = l1_weight
+        self.rollout_horizon = 20
 
         # ------------------------------------------------
         # Fixed lifted-feature scaling (dataset-level stats, not batch stats)
         # ------------------------------------------------
+        self.register_buffer("lift_mean", torch.zeros(self.latent_dim))
         self.register_buffer("lift_scale", torch.ones(self.latent_dim))
-        self.lift_norm_eps = 1e-6
 
         # ------------------------------------------------
         # Eigenvector matrix Φ
@@ -78,12 +85,11 @@ class ML_DMD_L1(nn.Module):
             + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
         )
 
-        # ------------------------------------------------
-        # Feature scaling buffer
-        # ------------------------------------------------
-        self.max_abs_z_norm = 1e6
-        self.rollout_horizon = 20
-        self.l1_weight = l1_weight  # Weight for the L1 sparsity penalty (tune as needed)
+    def set_lifted_normalization_stats(self, mean, scale):
+    # For dynamical systems, we often ONLY want to scale, not shift.
+    # To follow your intuition: force mean to 0 to preserve the origin.
+        self.lift_mean.fill_(0.0) 
+        self.lift_scale.copy_(scale)
 
     def _normalize(self, z):
         return z / self.lift_scale
@@ -127,7 +133,7 @@ class ML_DMD_L1(nn.Module):
 
     def _modal_to_latent(self, b):
         z = b @ self.Phi.mT
-        return torch.clamp(z, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
+        return z
 
     # ------------------------------------------------
     # Forward pass
@@ -210,8 +216,8 @@ class ML_DMD_L1(nn.Module):
         loss = (
               1.0 * loss_state 
             + 1.0 * loss_rollout
-            + 0.1 * loss_lift 
-            + 1e-3 * loss_unit_length
+            + 0.01 * loss_lift 
+            + 1e-5 * loss_unit_length
             + self.l1_weight * loss_sparsity  # Add the sparsity penalty
         )
 
@@ -237,10 +243,28 @@ class ML_DMD_L1(nn.Module):
                 device=next(self.parameters()).device,
             )
 
-        if x0.ndim == 1:
-            x = x0.unsqueeze(0)
-        else:
-            x = x0
+        is_1d = x0.ndim == 1
+        if is_1d:
+            x0 = x0.unsqueeze(0)
+
+        delay_depth = int(getattr(self.expander, "delay_depth", 1))
+        expected_width = self.state_dim * delay_depth
+
+        if delay_depth > 1:
+            if x0.shape[1] == self.state_dim:
+                raise ValueError(
+                    f"{self.__class__.__name__}.rollout received only the current state, "
+                    f"but delay_depth={delay_depth}. Pass a full delay history with width "
+                    f"{expected_width}: [x(t), x(t-1), ..., x(t-q+1)]."
+                )
+
+            if x0.shape[1] != expected_width:
+                raise ValueError(
+                    f"{self.__class__.__name__}.rollout expected delay-state width "
+                    f"{expected_width}, got {x0.shape[1]}."
+                )
+
+        x = x0
 
         traj = [x.squeeze(0)]
         
