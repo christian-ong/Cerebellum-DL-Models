@@ -390,6 +390,17 @@ class DelayExpansion(nn.Module):
             for i in range(self.state_dim):
                 self.expand_names.append(f"x{i+1}{suffix}")
 
+        # --- NEW: Add History Scaler ---
+        self.register_buffer("history_scale", torch.ones(self.history_dim, dtype=torch.float32))
+
+    # --- NEW: Add the scaler method ---
+    def fit_state_scaler(self, x: torch.Tensor):
+        H = self._to_2d_tensor(x)
+        max_abs = torch.max(torch.abs(H), dim=0)[0]
+        max_abs[max_abs == 0] = 1.0 
+        safety_margin = 1.2 
+        self.history_scale.copy_(max_abs * safety_margin)
+
     def _to_2d_tensor(self, x):
         if not torch.is_tensor(x):
             x = torch.as_tensor(x)
@@ -431,17 +442,25 @@ class DelayExpansion(nn.Module):
         return x
 
     def expand(self, x):
-        x = self._to_2d_tensor(x)
+        H = self._to_2d_tensor(x)
+        
+        # --- NEW: Scale state ---
+        H_scaled = H / self.history_scale
 
         if self.bias:
-            bias_col = torch.ones(x.shape[0], 1, dtype=x.dtype, device=x.device)
-            return torch.cat([bias_col, x], dim=1)
+            bias_col = torch.ones(H_scaled.shape[0], 1, dtype=H_scaled.dtype, device=H_scaled.device)
+            return torch.cat([bias_col, H_scaled], dim=1)
 
-        return x
+        return H_scaled
 
     def de_expand(self, x_expanded):
         offset = 1 if self.bias else 0
-        return x_expanded[:, offset : offset + self.state_dim]
+        raw_history_scaled = x_expanded[:, offset:]
+        
+        # --- NEW: Unscale state ---
+        raw_history = raw_history_scaled * self.history_scale
+        
+        return raw_history[:, : self.state_dim]
 
     def extra_repr(self):
         return (
@@ -520,6 +539,16 @@ class HankelSVDDelayExpansion(nn.Module):
             "singular_values",
             torch.zeros(self.rank, dtype=torch.float64),
         )
+        # --- NEW: Add History Scaler ---
+        self.register_buffer("history_scale", torch.ones(self.history_dim, dtype=torch.float64))
+
+    # --- NEW: Add the scaler method ---
+    def fit_state_scaler(self, x: torch.Tensor):
+        H = self._to_2d_history(x)
+        max_abs = torch.max(torch.abs(H), dim=0)[0]
+        max_abs[max_abs == 0] = 1.0 
+        safety_margin = 1.2 
+        self.history_scale.copy_(max_abs * safety_margin)
 
     def _to_2d_history(self, x):
         if not torch.is_tensor(x):
@@ -569,6 +598,9 @@ class HankelSVDDelayExpansion(nn.Module):
         """
         H = self._to_2d_history(X_delay).to(dtype=torch.float64)
 
+        # --- NEW: Scale data before computing SVD ---
+        H = H / self.history_scale.to(device=H.device, dtype=H.dtype)
+
         if H.shape[0] < self.rank:
             raise ValueError(
                 f"Need at least rank={self.rank} training samples, got {H.shape[0]}."
@@ -605,6 +637,10 @@ class HankelSVDDelayExpansion(nn.Module):
         H = self._to_2d_history(x)
         mean = self.mean.to(dtype=H.dtype, device=H.device)
         components = self.components.to(dtype=H.dtype, device=H.device)
+        scale = self.history_scale.to(dtype=H.dtype, device=H.device)
+
+        # --- NEW: Scale state before projection ---
+        H = H / scale
 
         Hc = H - mean if self.center else H
         scores = Hc @ components.T
@@ -618,21 +654,20 @@ class HankelSVDDelayExpansion(nn.Module):
     def de_expand(self, z):
         if not self.is_fitted:
             raise RuntimeError("HankelSVDDelayExpansion must be fitted before de_expand().")
-
         if not torch.is_tensor(z):
             z = torch.as_tensor(z)
-
-        # IMPORTANT:
-        # Do not force float64 here. For ML models, z is usually float32
-        # because model parameters are float32. The decoded state must keep
-        # the same dtype as z to avoid Float/Double autograd errors.
         if self.bias:
             z = z[:, 1:]
 
         mean = self.mean.to(dtype=z.dtype, device=z.device)
         components = self.components.to(dtype=z.dtype, device=z.device)
+        scale = self.history_scale.to(dtype=z.dtype, device=z.device)
 
-        H_hat = z @ components + mean
+        H_hat_scaled = z @ components + mean
+        
+        # --- NEW: Restore physical units ---
+        H_hat = H_hat_scaled * scale
+        
         return H_hat[:, : self.state_dim]
 
     def extra_repr(self):
@@ -712,6 +747,15 @@ class RBFExpansion(nn.Module):
         self.expanded_dim = 0
 
         self._build_feature_metadata()
+
+        # --- NEW: Add State Scaler ---
+        self.register_buffer("state_scale", torch.ones(self.state_dim, dtype=torch.float32))
+    
+    def fit_state_scaler(self, x: torch.Tensor):
+        max_abs = torch.max(torch.abs(x), dim=0)[0]
+        max_abs[max_abs == 0] = 1.0 
+        safety_margin = 1.2 
+        self.state_scale.copy_(max_abs * safety_margin)
 
     def _build_feature_metadata(self):
         names = []
@@ -844,14 +888,18 @@ class RBFExpansion(nn.Module):
             return self
         
         X = self._to_2d_tensor(X_train)
+        
+        # --- NEW: Scale data before finding centers and sigmas ---
+        X_scaled = X / self.state_scale
 
         if self.center_selection == "random":
-            centers = self._select_centers_random(X)
+            centers = self._select_centers_random(X_scaled)
         elif self.center_selection == "farthest":
-            centers = self._select_centers_farthest(X)
+            centers = self._select_centers_farthest(X_scaled)
         else:
             raise RuntimeError("Unexpected center_selection branch.")
 
+        # Compute sigmas using the SCALED centers
         if self.bandwidth_mode == "global":
             sigmas = self._compute_global_sigma(centers)
         elif self.bandwidth_mode == "knn":
@@ -888,15 +936,19 @@ class RBFExpansion(nn.Module):
             [optional bias, raw state, gaussian RBF features]
         """
         x = self._to_2d_tensor(x)
+        # --- NEW: Scale state ---
+        x_scaled = x / self.state_scale
+
         feats = []
 
         if self.bias:
             feats.append(torch.ones(x.shape[0], 1, dtype=x.dtype, device=x.device))
 
         if self.include_state:
-            feats.append(x)
+            feats.append(x_scaled) # Append scaled state to match ManualExpansion!
 
-        feats.append(self._rbf_features(x))
+        # Compute RBFs against the scaled state
+        feats.append(self._rbf_features(x_scaled))
 
         return torch.cat(feats, dim=1)
 
@@ -907,8 +959,10 @@ class RBFExpansion(nn.Module):
         """
         if not self.include_state:
             raise RuntimeError("de_expand() requires include_state=True.")
-
-        return x_expanded[:, self.state_indices]
+        
+        # --- NEW: Restore physical units ---
+        extracted = x_expanded[:, self.state_indices]
+        return extracted * self.state_scale
 
     def extra_repr(self) -> str:
         return (

@@ -154,7 +154,7 @@ class ML_LinearDynamics(nn.Module):
                     loss_rollout += torch.mean((self.expander.de_expand(z_curr_phys) - future_x[:, k, :])**2)
                 loss_rollout /= (horizon - 1)
 
-        # Total loss (you will need a smaller L1 weight now since we use sum instead of mean)
+        # Total loss
         loss = (
             1.0 * loss_state 
             + 1.0 * loss_rollout
