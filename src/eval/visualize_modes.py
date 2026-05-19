@@ -10,6 +10,7 @@ from src.models.ml_dmd_band import ML_DMD_BAND
 from src.models.ml_dmd_schur import ML_DMD_SCHUR
 from src.models.ml_dmd_l1 import ML_DMD_L1
 from src.models.ml_linear_dynamics import ML_LinearDynamics
+from src.models.regression_dmd import Regression_DMD
 
 
 
@@ -39,7 +40,67 @@ def safe_de_expand(model, x):
     raise AttributeError("Model does not expose a de_expander or de_expand() method.")
 
 
-def build_model_from_checkpoint(model_path):
+def build_model_from_checkpoint(model_path, device="cpu"):
+
+    # ---------------------------------------------------------
+    # Regression DMD models
+    # ---------------------------------------------------------
+
+    if model_path.endswith(".npz"):
+        ckpt = np.load(model_path, allow_pickle=True)
+        model_name = str(ckpt["model"].item() if hasattr(ckpt["model"], "item") else ckpt["model"])
+            
+        if model_name != "regression_dmd":
+            raise NotImplementedError("Not implemented")
+        
+        # Helper to safely extract scalars from numpy bounds
+        def get_scalar(key, default=None):
+            if key in ckpt:
+                val = ckpt[key]
+                return val.item() if hasattr(val, 'item') else val
+            return default
+
+        # 1. Instantiate the shell
+        model = Regression_DMD(
+            state_dim=int(get_scalar("state_dim")),
+            expansion_degree=int(get_scalar("expansion_degree")),
+            bias=bool(get_scalar("bias")),
+            sine_cosine_expansion=bool(get_scalar("sine_cosine_expansion")),
+            expansion_type=str(get_scalar("expansion_type")),
+            system=str(get_scalar("system")) if get_scalar("expansion_type") == "specific" else None,
+            delay_depth=int(get_scalar("delay_depth")),
+            hankel_rank=None if get_scalar("hankel_rank") == -1 else int(get_scalar("hankel_rank")),
+            normalize_state=bool(get_scalar("normalize_state")),
+            normalize_lifted=bool(get_scalar("normalize_lifted")),
+            rollout_mode=str(get_scalar("rollout_mode")),
+            ridge=float(get_scalar("ridge")),
+            rank=None if get_scalar("rank") == -1 else int(get_scalar("rank")),
+            rbf_n_centers=int(get_scalar("rbf_n_centers")),
+            rbf_center_selection=str(get_scalar("rbf_center_selection")),
+            rbf_bandwidth_mode=str(get_scalar("rbf_bandwidth_mode")),
+            rbf_knn_k=int(get_scalar("rbf_knn_k")),
+        ).to(device)
+
+        # 2. Re-hydrate arrays back to model attributes
+        matrix_mappings = {
+            "x_mean": "x_mean", "x_scale": "x_scale", "psi_scale": "psi_scale",
+            "K_fitted": "K", "C_fitted": "C", "K_tilde_fitted": "K_tilde",
+            "U_r_fitted": "U_r", "W_reduced_fitted": "W_reduced",
+            "Lambda_fitted": "Lambda", "Phi_lift_fitted": "Phi_lift", "Phi_state_fitted": "Phi_state"
+        }
+        
+        for attr, np_key in matrix_mappings.items():
+            if np_key in ckpt:
+                tensor_val = torch.as_tensor(ckpt[np_key], dtype=torch.float32, device=device)
+                setattr(model, attr, tensor_val)
+
+        model.is_fitted = True
+        return model, model_name
+
+    # ---------------------------------------------------------
+    # ML models
+    # ---------------------------------------------------------
+
     ckpt = torch.load(model_path, map_location="cpu")
     model_name = ckpt.get("model", "ml_dmd_free")
     train_args = ckpt["train_args"]
@@ -141,7 +202,7 @@ def get_koopman_eigensystem(model):
     # ------------------------------------------------------------------
     # Case 2: Old scaled models that expose get_Phi_true and get_Lambda
     # ------------------------------------------------------------------
-    if hasattr(model, "get_Phi_true") and hasattr(model, "get_Lambda"):
+    elif hasattr(model, "get_Phi_true") and hasattr(model, "get_Lambda"):
         Phi_true_obj = model.get_Phi_true()
         Lambda_obj = model.get_Lambda()
         K_obj = model.get_K_true() if hasattr(model, "get_K_true") else None
@@ -191,7 +252,7 @@ def get_koopman_eigensystem(model):
         return Phi_true, Lambda, eigvals, V, W, K_true
 
     # Case 2: Models that expose only the Koopman operator K (e.g., ML_LinearDynamics)
-    if hasattr(model, "get_K_true"):
+    elif hasattr(model, "get_K_true"):
         K_obj = model.get_K_true()
         K_true = K_obj.detach().cpu().numpy() if hasattr(K_obj, "detach") else np.array(K_obj)
 
@@ -221,7 +282,47 @@ def get_koopman_eigensystem(model):
 
         return Phi_true, Lambda, eigvals, V, W, K_true
 
-    raise ValueError("Model format not recognized for eigensystem extraction.")
+    # Regression DMD
+    if hasattr(model, "Phi_lift_fitted") and hasattr(model, "Lambda_fitted"):
+        Phi_true = model.Phi_lift_fitted.detach().cpu().numpy() if hasattr(model.Phi_lift_fitted, "detach") else np.array(model.Phi_lift_fitted)
+        Lambda = model.Lambda_fitted.detach().cpu().numpy() if hasattr(model.Lambda_fitted, "detach") else np.array(model.Lambda_fitted)
+        K_true = model.K_fitted.detach().cpu().numpy() if hasattr(model.K_fitted, "detach") else np.array(model.K_fitted)
+
+        # Also model.Phi_fitted, model.Phi_fitted, ..?
+
+        if Lambda.ndim == 1:
+            Lambda = np.diag(Lambda)
+
+        eigvals, V_inner = np.linalg.eig(Lambda)
+        _, W_inner = np.linalg.eig(Lambda.T)
+
+        V = Phi_true @ V_inner
+
+        v_norms = np.linalg.norm(V, axis=0)
+        V = V / (v_norms + 1e-12)
+
+        Phi_inv_T = np.linalg.pinv(Phi_true).T
+        W = Phi_inv_T @ W_inner
+
+        W = W * (v_norms + 1e-12)
+
+        dominant_rows = np.argmax(np.abs(V), axis=0)
+        sort_idx = np.argsort(dominant_rows)
+
+        eigvals = eigvals[sort_idx]
+        V = V[:, sort_idx]
+        W = W[:, sort_idx]
+
+        for i in range(V.shape[1]):
+            dom_idx = np.argmax(np.abs(V[:, i]))
+            if np.real(V[dom_idx, i]) < 0:
+                V[:, i] *= -1
+                W[:, i] *= -1
+
+        return Phi_true, Lambda, V, W, K_true
+
+    else:
+        raise ValueError("Model format not recognized for eigensystem extraction.")
 
 
 

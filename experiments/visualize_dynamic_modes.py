@@ -61,9 +61,8 @@ elif "hardcoded_dmd" in args.model_name:
     model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model.pt"
 else:
     model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model.npz"
-    raise NotImplementedError("Sorry Kavus, I didn't implement regression models yet...")
 
-model, model_type = build_model_from_checkpoint(model_path)
+model, model_type = build_model_from_checkpoint(model_path, device="device")
 
 Phi_model, Lambda_model, V, W, K_model = get_koopman_eigensystem(model)
 num_modes = Lambda_model.shape[0]
@@ -94,10 +93,10 @@ Lambda_model_complex, Phi_model_complex = rotation_blocks_to_complex(
 K_model_complex = Phi_model_complex @ Lambda_model_complex @ np.linalg.pinv(Phi_model_complex)
 
 matrices_to_plot = [
-    # # Model matrices, real
-    # (K_model, "Model Operator K, real"),
-    # (Lambda_model, "Model Raw $\Lambda$, real"),
-    # (Phi_model, "Model Raw $\Phi_{true}$, real"),
+    # Model matrices, real
+    (K_model, "Model Operator K, real"),
+    (Lambda_model, "Model Raw $\Lambda$, real"),
+    (Phi_model, "Model Raw $\Phi_{true}$, real"),
 
     # Model matrices, complex
     (K_model_complex, "Model Operator K, complex"),
