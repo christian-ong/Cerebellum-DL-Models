@@ -89,7 +89,7 @@ def build_model_from_checkpoint(model_path, device="cpu"):
         
         for attr, np_key in matrix_mappings.items():
             if np_key in ckpt:
-                tensor_val = torch.as_tensor(ckpt[np_key], dtype=torch.float32, device=device)
+                tensor_val = torch.as_tensor(ckpt[np_key], dtype=torch.complex64, device=device)
                 setattr(model, attr, tensor_val)
 
         model.is_fitted = True
@@ -866,7 +866,8 @@ def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None):
     ### 2. Model rollout trajectory ###
     model_rollouts = model.rollout(init_conditions, steps=n_steps-1).detach().numpy() # (n_steps, n_trajs, state_dim)
     model_rollouts_flattened = model_rollouts.reshape(-1, state_dim) # (n_steps * n_trajs, state_dim)
-    model_rollouts_flattened_expanded = safe_expand(model, torch.as_tensor(model_rollouts_flattened, dtype=torch.float32)).detach().numpy()
+    model_rollouts_flattened_real = model_rollouts_flattened.real if np.iscomplexobj(model_rollouts_flattened) else model_rollouts_flattened
+    model_rollouts_flattened_expanded = safe_expand(model, torch.as_tensor(model_rollouts_flattened_real, dtype=torch.float32)).detach().numpy()
     model_rollouts_expanded = model_rollouts_flattened_expanded.reshape(n_steps, n_trajs, lifted_dim) # (n_steps, n_trajs, lifted_dim)
     model_proj = model_rollouts_expanded @ Phi
     model_proj = model_proj.real
