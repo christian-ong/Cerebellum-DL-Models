@@ -164,34 +164,59 @@ def resolve_n_traj(args, default=1):
 
 
 def set_simulation_vars(args):
-    args.dt = DEFAULT_DT
-    data_points = int(TRAIN_T / DEFAULT_DT)
-    args.T_train = (data_points + args.max_rollout_horizon) * args.dt
+    dt = float(args.dt)
 
-    # Validation always uses the short usable horizon.
-    val_data_points = int(EVAL_T / DEFAULT_DT)
-    args.T_val = (val_data_points + args.max_rollout_horizon) * args.dt
+    train_points = int(round(TRAIN_T / dt))
+    val_points = int(round(EVAL_T / dt))
+    test_points = int(round(TEST_T / dt))
 
-    # Test uses the same short usable horizon.
-    test_data_points = int(TEST_T / DEFAULT_DT)
-    args.T_test = (test_data_points + args.max_rollout_horizon) * args.dt
+    args.T_train = (train_points + args.max_rollout_horizon) * dt
+    args.T_val = (val_points + args.max_rollout_horizon) * dt
+    args.T_test = (test_points + args.max_rollout_horizon) * dt
 
-    # Default counts for val/test if not explicitly provided by user
-    if args.n_traj_val == 1:
-        args.n_traj_val = int(math.ceil(10000.0 / float(val_data_points)))
-    if args.n_traj_test == 1:
-        args.n_traj_test = int(math.ceil(10000.0 / float(test_data_points)))
+    args.n_traj_train = int(math.ceil(args.target_train_windows / float(train_points)))
 
-    # Compute needed training trajectories based on the target windows
-    if args.target_train_windows is not None:
+    if args.n_traj_val is None:
+        args.n_traj_val = int(math.ceil(10000.0 / float(val_points)))
+    if args.n_traj_test is None:
+        args.n_traj_test = int(math.ceil(10000.0 / float(test_points)))
+
+def resolve_simulation_args(args):
+    args.dt = DEFAULT_DT if args.dt is None else args.dt
+    args.max_rollout_horizon = DEFAULT_MAX_ROLLOUT_HORIZON if args.max_rollout_horizon is None else args.max_rollout_horizon
+
+    manual_T = any(v is not None for v in [args.T_train, args.T_val, args.T_test])
+    manual_n = any(v is not None for v in [args.n_traj_train, args.n_traj_val, args.n_traj_test])
+    manual_mode = manual_T or manual_n
+
+    if args.dt <= 0:
+        raise ValueError("--dt must be positive.")
+    if args.max_rollout_horizon < 0:
+        raise ValueError("--max_rollout_horizon must be non-negative.")
+
+    if args.target_train_windows is not None and manual_T:
+        raise ValueError("Do not combine --target_train_windows with explicit --T_train/--T_val/--T_test.")
+
+    if args.target_train_windows is not None and args.n_traj_train is not None:
+        raise ValueError("Do not combine --target_train_windows with explicit --n_traj_train.")
+
+    if args.target_train_windows is not None or not manual_mode:
+        args.target_train_windows = DEFAULT_TARGET_TRAIN_WINDOWS if args.target_train_windows is None else args.target_train_windows
         if args.target_train_windows <= 0:
-            raise ValueError("target_train_windows must be positive")
+            raise ValueError("--target_train_windows must be positive.")
+        set_simulation_vars(args)
+        args.simulation_mode = "auto_windows"
+        return args
 
-        usable_per_traj = data_points
-        args.n_traj_train = int(math.ceil(args.target_train_windows / float(usable_per_traj)))
+    args.T_train = TRAIN_T if args.T_train is None else args.T_train
+    args.T_val = EVAL_T if args.T_val is None else args.T_val
+    args.T_test = TEST_T if args.T_test is None else args.T_test
+    args.n_traj_train = 1 if args.n_traj_train is None else args.n_traj_train
+    args.n_traj_val = 1 if args.n_traj_val is None else args.n_traj_val
+    args.n_traj_test = 1 if args.n_traj_test is None else args.n_traj_test
 
-        if args.n_traj_train < 1:
-            args.n_traj_train = 1
+    args.simulation_mode = "manual"
+    return args
 
 def sample_ic(args, rng, *, kind, x0_single,
               lows=None, highs=None,
@@ -692,17 +717,17 @@ def main():
     parser.add_argument("--system", type=str, required=True, choices=SYSTEMS.keys())
     parser.add_argument("--name", type=str, default=None, help="Optional suffix added to the dataset filename")
 
-    parser.add_argument("--target_train_windows", type=int, default=None, help="Exact number of training initial conditions/pairs to generate. When set, training time is forced to (max_rollout_horizon + 1) * dt so each initial condition has one next-state pair plus the full future rollout.")
-    parser.add_argument("--max_rollout_horizon", type=int, default=DEFAULT_MAX_ROLLOUT_HORIZON, help="Maximum rollout horizon to reserve in the generated data.")
-
-    parser.add_argument("--dt", type=float, default=DEFAULT_DT)
-    parser.add_argument("--T_train", type=float, default=3.0)
-    parser.add_argument("--T_val", type=float, default=5.0)
-    parser.add_argument("--T_test", type=float, default=20.0)
+    parser.add_argument("--target_train_windows", type=int, default=None, help="Target number of training one-step windows. If omitted and no manual T/n_traj args are given, DEFAULT_TARGET_TRAIN_WINDOWS is used.")
+    parser.add_argument("--max_rollout_horizon", type=int, default=None, help="Maximum rollout horizon reserved in auto-window mode. If omitted, DEFAULT_MAX_ROLLOUT_HORIZON is used.")
+    parser.add_argument("--dt", type=float, default=None)
+    parser.add_argument("--T_train", type=float, default=None)
+    parser.add_argument("--T_val", type=float, default=None)
+    parser.add_argument("--T_test", type=float, default=None)
     parser.add_argument("--method", type=str, default="rk4")
-    parser.add_argument("--n_traj_train", type=int, default=1)
-    parser.add_argument("--n_traj_val", type=int, default=1)
-    parser.add_argument("--n_traj_test", type=int, default=1)
+    parser.add_argument("--n_traj_train", type=int, default=None)
+    parser.add_argument("--n_traj_val", type=int, default=None)
+    parser.add_argument("--n_traj_test", type=int, default=None)
+
     parser.add_argument("--n_debug_traj", type=int, default=100)
     parser.add_argument("--plot_splits", action="store_true", help="Save train/val/test trajectory plots under data/figures/trajectories/<system>")
     parser.add_argument("--seed", type=int, default=0)
@@ -764,9 +789,14 @@ def main():
 
     parser.add_argument("--outdir", type=str, default="data/trajectories")
 
-    args = parser.parse_args()
+    args = resolve_simulation_args(parser.parse_args())
 
-    set_simulation_vars(args)
+    print(
+        f"[simulate_data] mode={args.simulation_mode}, dt={args.dt}, "
+        f"T_train={args.T_train}, T_val={args.T_val}, T_test={args.T_test}, "
+        f"n_train={args.n_traj_train}, n_val={args.n_traj_val}, n_test={args.n_traj_test}, "
+        f"burn_in={args.burn_in}"
+    )
 
     os.makedirs(args.outdir, exist_ok=True)
 
