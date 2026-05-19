@@ -1,6 +1,14 @@
 import argparse
+import math
 import os
 import numpy as np
+
+DEFAULT_DT = 1e-2
+TRAIN_T = 2.0
+EVAL_T = 2.0
+TEST_T = 5.0
+DEFAULT_TARGET_TRAIN_WINDOWS = 80_000
+DEFAULT_MAX_ROLLOUT_HORIZON = 100
 
 from src.data_generation.data_simulation import (
     simulate,
@@ -29,8 +37,8 @@ Defaults parameters:
     --name (optional suffix for filename)
     --dt 0.01
     --T_train 3.0
-    --T_val 5.0
-    --T_test 20.0
+    --T_val 3.0
+    --T_test 3.0
     --method rk4
     --n_traj_train 1
     --n_traj_val 1
@@ -63,51 +71,25 @@ System-specific parameters:
 Linear system  x' = A x
 --------------------------------------------------
 
-#### SHORT TRAJECTORIES (T_train=1.0) ####
-python -m scripts.simulate_data --system inward_spiral --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
-python -m scripts.simulate_data --system inward_spiral_cw --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
-python -m scripts.simulate_data --system harmonic_oscillator --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
-python -m scripts.simulate_data --system saddle_point --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
-python -m scripts.simulate_data --system degenerate_node --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system inward_spiral --target_train_windows 80000 --max_rollout_horizon 100
+python -m scripts.simulate_data --system harmonic_oscillator --target_train_windows 80000 --max_rollout_horizon 100
+python -m scripts.simulate_data --system saddle_point --target_train_windows 80000 --max_rollout_horizon 100
+python -m scripts.simulate_data --system degenerate_node --target_train_windows 80000 --max_rollout_horizon 100
 
-#### LONG TRAJECTORIES (T_train=10.0) ####
-python -m scripts.simulate_data --system inward_spiral --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system inward_spiral_cw --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system harmonic_oscillator --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system saddle_point --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 10 --T_test 10 --name long
-python -m scripts.simulate_data --system degenerate_node --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 10 --T_test 10 --name long
-
---------------------------------------------------
-Nonlinear systems (SHORT TRAJECTORIES, T_train=1.0)
+Nonlinear systems (SHORT TRAJECTORIES)
 --------------------------------------------------
 
-python -m scripts.simulate_data --system closed_small --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
-python -m scripts.simulate_data --system closed_large --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
-python -m scripts.simulate_data --system closed_trig_small --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
-python -m scripts.simulate_data --system closed_trig_medium --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
-python -m scripts.simulate_data --system closed_trig_large --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
+python -m scripts.simulate_data --system closed_small --target_train_windows 80000 --max_rollout_horizon 100
+python -m scripts.simulate_data --system closed_large --target_train_windows 80000 --max_rollout_horizon 100
+python -m scripts.simulate_data --system closed_trig_small --target_train_windows 80000 --max_rollout_horizon 100
+python -m scripts.simulate_data --system closed_trig_medium --target_train_windows 80000 --max_rollout_horizon 100
+python -m scripts.simulate_data --system closed_trig_large --target_train_windows 80000 --max_rollout_horizon 100
 
-python -m scripts.simulate_data --system vanderpol --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
-python -m scripts.simulate_data --system lotka_volterra --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
-python -m scripts.simulate_data --system pendulum --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
-python -m scripts.simulate_data --system duffing --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
-python -m scripts.simulate_data --system lorenz --n_traj_train 5000 --n_traj_val 250 --n_traj_test 250 --T_train 1 --T_val 2 --T_test 2 --name short
-
---------------------------------------------------
-Nonlinear systems (LONG TRAJECTORIES, T_train=10.0)
---------------------------------------------------
-
-python -m scripts.simulate_data --system closed_small --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
-python -m scripts.simulate_data --system closed_large --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
-python -m scripts.simulate_data --system closed_trig_small --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
-python -m scripts.simulate_data --system closed_trig_medium --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
-python -m scripts.simulate_data --system closed_trig_large --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
-
-python -m scripts.simulate_data --system vanderpol --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
-python -m scripts.simulate_data --system lotka_volterra --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
-python -m scripts.simulate_data --system pendulum --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
-python -m scripts.simulate_data --system duffing --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
-python -m scripts.simulate_data --system lorenz --n_traj_train 500 --n_traj_val 250 --n_traj_test 250 --T_train 10 --T_val 2 --T_test 2 --name long
+python -m scripts.simulate_data --system vanderpol --target_train_windows 80000 --max_rollout_horizon 100
+python -m scripts.simulate_data --system lotka_volterra --target_train_windows 80000 --max_rollout_horizon 100
+python -m scripts.simulate_data --system pendulum --target_train_windows 80000 --max_rollout_horizon 100
+python -m scripts.simulate_data --system duffing --target_train_windows 80000 --max_rollout_horizon 100
+python -m scripts.simulate_data --system lorenz --target_train_windows 80000 --max_rollout_horizon 100
 
 --------------------------------------------------
 Output
@@ -179,6 +161,37 @@ def resolve_n_traj(args, default=1):
     if hasattr(args, "n_traj_current"):
         return int(args.n_traj_current)
     return int(default)
+
+
+def set_simulation_vars(args):
+    args.dt = DEFAULT_DT
+    data_points = int(TRAIN_T / DEFAULT_DT)
+    args.T_train = (data_points + args.max_rollout_horizon) * args.dt
+
+    # Validation always uses the short usable horizon.
+    val_data_points = int(EVAL_T / DEFAULT_DT)
+    args.T_val = (val_data_points + args.max_rollout_horizon) * args.dt
+
+    # Test uses the same short usable horizon.
+    test_data_points = int(TEST_T / DEFAULT_DT)
+    args.T_test = (test_data_points + args.max_rollout_horizon) * args.dt
+
+    # Default counts for val/test if not explicitly provided by user
+    if args.n_traj_val == 1:
+        args.n_traj_val = int(math.ceil(10000.0 / float(val_data_points)))
+    if args.n_traj_test == 1:
+        args.n_traj_test = int(math.ceil(10000.0 / float(test_data_points)))
+
+    # Compute needed training trajectories based on the target windows
+    if args.target_train_windows is not None:
+        if args.target_train_windows <= 0:
+            raise ValueError("target_train_windows must be positive")
+
+        usable_per_traj = data_points
+        args.n_traj_train = int(math.ceil(args.target_train_windows / float(usable_per_traj)))
+
+        if args.n_traj_train < 1:
+            args.n_traj_train = 1
 
 def sample_ic(args, rng, *, kind, x0_single,
               lows=None, highs=None,
@@ -643,7 +656,10 @@ def main():
     parser.add_argument("--system", type=str, required=True, choices=SYSTEMS.keys())
     parser.add_argument("--name", type=str, default=None, help="Optional suffix added to the dataset filename")
 
-    parser.add_argument("--dt", type=float, default=1e-2)
+    parser.add_argument("--target_train_windows", type=int, default=None, help="Exact number of training initial conditions/pairs to generate. When set, training time is forced to (max_rollout_horizon + 1) * dt so each initial condition has one next-state pair plus the full future rollout.")
+    parser.add_argument("--max_rollout_horizon", type=int, default=DEFAULT_MAX_ROLLOUT_HORIZON, help="Maximum rollout horizon to reserve in the generated data.")
+
+    parser.add_argument("--dt", type=float, default=DEFAULT_DT)
     parser.add_argument("--T_train", type=float, default=3.0)
     parser.add_argument("--T_val", type=float, default=5.0)
     parser.add_argument("--T_test", type=float, default=20.0)
@@ -708,6 +724,8 @@ def main():
     parser.add_argument("--outdir", type=str, default="data/trajectories")
 
     args = parser.parse_args()
+
+    set_simulation_vars(args)
 
     os.makedirs(args.outdir, exist_ok=True)
 

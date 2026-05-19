@@ -14,6 +14,7 @@ def train_onestep(
     log_phi_every=0,
     phi_print_max_dim=12,
     eval_callback=None,
+    rollout_horizon=None,
 ):
 
     model = model.to(device)
@@ -47,9 +48,11 @@ def train_onestep(
         if total_count == 0:
             return
 
+        # We do NOT subtract the mean (to preserve the Koopman origin).
+        # Therefore, we MUST scale by the Root Mean Square (RMS), not Standard Deviation.
         mean = feature_sum / total_count
-        var = torch.clamp(feature_sq_sum / total_count - mean**2, min=1e-12)
-        scale = torch.sqrt(var)
+        rms_sq = torch.clamp(feature_sq_sum / total_count, min=1e-4) # E[x^2]
+        scale = torch.sqrt(rms_sq)
 
         fixed_mask = []
         for name in model.expand_names:
@@ -92,22 +95,28 @@ def train_onestep(
     )
 
     warmup_epochs = 5
+    
+    # 1. Warmup Phase: Linearly scale up to the initial lr
     warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
         optimizer, 
-        start_factor=0.1,
-        end_factor=1.0,
+        start_factor=0.1, 
         total_iters=warmup_epochs
     )
 
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode="min",
-        factor=0.5,
-        patience=5,
-        min_lr=1e-6,
-        threshold=1e-3
+    # 2. Cosine Phase: Smoothly curve down to 1e-6
+    # T_max is the number of epochs left after warmup
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, 
+        T_max=(epochs - warmup_epochs), 
+        eta_min=1e-6
     )
 
+    # 3. Combine them sequentially
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[warmup_scheduler, cosine_scheduler],
+        milestones=[warmup_epochs] # Switch schedulers at this epoch
+    )
     loss_fn = torch.nn.MSELoss()
 
     def unpack_loss_output(loss_output):
@@ -216,6 +225,10 @@ def train_onestep(
         model.current_epoch = epoch
         model.train()
 
+        # Set rollout horizon for this epoch
+        if rollout_horizon is not None:
+            model.rollout_horizon = int(rollout_horizon)
+
         train_loss = 0.0
         n_train = 0
         train_losses = []
@@ -240,13 +253,15 @@ def train_onestep(
             # -------------------
             # Training loss
             # -------------------
+            x_for_loss = x
+
             if hasattr(model, "compute_loss"):
                 if future_targets is not None:
                     loss, loss_dict = unpack_loss_output(
-                        model.compute_loss(x, y, future_targets)
+                        model.compute_loss(x_for_loss, y, future_targets)
                     )
                 else:
-                    loss, loss_dict = unpack_loss_output(model.compute_loss(x, y))
+                    loss, loss_dict = unpack_loss_output(model.compute_loss(x_for_loss, y))
             else:
                 y_hat = model(x)
                 loss = loss_fn(y_hat, y)
@@ -294,11 +309,12 @@ def train_onestep(
 
         if val_loader is not None:
             model.eval()
-            val_loss_acc = 0.0 # Use a unique name for the accumulator
+            val_loss_acc = 0.0
+            val_state_loss_acc = 0.0
             n_val = 0
 
             with torch.no_grad():
-                for val_batch in val_loader: # Use val_batch to support optional rollout windows
+                for val_batch in val_loader:
                     if len(val_batch) == 2:
                         xv, yv = val_batch
                         future_val_targets = None
@@ -311,36 +327,40 @@ def train_onestep(
 
                     if hasattr(model, "compute_loss"):
                         if future_val_targets is not None:
-                            batch_l, _ = unpack_loss_output(
+                            batch_l, batch_loss_dict = unpack_loss_output(
                                 model.compute_loss(xv, yv, future_val_targets)
                             )
                         else:
-                            batch_l, _ = unpack_loss_output(model.compute_loss(xv, yv))
+                            batch_l, batch_loss_dict = unpack_loss_output(model.compute_loss(xv, yv))
                     else:
                         y_hat = model(xv)
                         batch_l = loss_fn(y_hat, yv)
+                        batch_loss_dict = {"state": batch_l.item()}
 
                     batch_size = xv.size(0)
-                    val_loss_acc += batch_l.item() * batch_size # Accumulate batch_l
+                    val_loss_acc += batch_l.item() * batch_size
+                    # Track state loss separately for scheduler
+                    state_loss = batch_loss_dict.get("state", batch_l.item())
+                    val_state_loss_acc += state_loss * batch_size
                     n_val += batch_size
 
-            val_loss = val_loss_acc / n_val # Calculate the final average
+            val_loss = val_loss_acc / n_val
+            val_state_loss = val_state_loss_acc / n_val
 
         epoch_val_losses.append(val_loss)
 
-        if val_loss is not None and val_loss < best_val_loss:
-            best_val_loss = float(val_loss)
+        if val_state_loss is not None and val_state_loss < best_val_loss:
+            best_val_loss = float(val_state_loss)
             best_epoch = epoch
             best_state_dict = {
                 key: value.detach().cpu().clone()
                 for key, value in model.state_dict().items()
             }
 
-        if epoch < warmup_epochs:
-            warmup_scheduler.step()
-        else:
-            scheduler.step(val_loss)
-
+        # -------------------
+        # Scheduler Step
+        # -------------------
+        scheduler.step()
         current_lr = optimizer.param_groups[0]["lr"]
 
         if val_loss is not None:

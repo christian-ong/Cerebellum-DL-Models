@@ -26,6 +26,7 @@ class ML_LinearDynamics(nn.Module):
         self.expansion_type = expansion_type
         self.delay_depth = int(delay_depth)
         self.hankel_rank = hankel_rank
+        
         # ------------------------------------------------
         # Initialize basis expansion
         # ------------------------------------------------
@@ -55,11 +56,11 @@ class ML_LinearDynamics(nn.Module):
 
         # Dimension of lifted space
         self.latent_dim = self.expanded_dim
+        self.rollout_horizon = 20
 
         # Fixed lifted-feature scaling (dataset-level stats, not batch stats)
         self.register_buffer("lift_mean", torch.zeros(self.latent_dim))
         self.register_buffer("lift_scale", torch.ones(self.latent_dim))
-        self.lift_norm_eps = 1e-6
 
         # ------------------------------------------------
         # Koopman operator
@@ -79,12 +80,12 @@ class ML_LinearDynamics(nn.Module):
         # This assumes small time steps (dt small), so dynamics are near identity.
         nn.init.eye_(self.K.weight)
 
-        # ------------------------------------------------
-        # Feature scaling buffer
-        # ------------------------------------------------
-        self.max_abs_z_norm = 1e6
-        self.rollout_horizon = 20
-
+    def set_lifted_normalization_stats(self, mean, scale):
+    # For dynamical systems, we often ONLY want to scale, not shift.
+    # To follow your intuition: force mean to 0 to preserve the origin.
+        self.lift_mean.fill_(0.0) 
+        self.lift_scale.copy_(scale)
+        
     def _normalize(self, z):
         return z / self.lift_scale
 
@@ -100,7 +101,7 @@ class ML_LinearDynamics(nn.Module):
     
     def _advance_z(self, z):
         z_next = self.K(z)
-        return torch.clamp(z_next, min=-self.max_abs_z_norm, max=self.max_abs_z_norm)
+        return z_next
     
     # ------------------------------------------------
     # Forward pass
@@ -129,6 +130,8 @@ class ML_LinearDynamics(nn.Module):
         z_next_pred = self._advance_z(z_norm)
         z_next_physical = self._unnormalize(z_next_pred)
 
+        # You can keep 1-step lift and state as MSE, or change to Smooth L1. 
+        # MSE is usually fine for 1-step because it doesn't compound.
         loss_lift = torch.mean((z_next_pred - z_next_true_norm)**2)
         loss_state = nn.MSELoss()(self.expander.de_expand(z_next_physical), x_next_true)
 
@@ -151,9 +154,9 @@ class ML_LinearDynamics(nn.Module):
                     loss_rollout += torch.mean((self.expander.de_expand(z_curr_phys) - future_x[:, k, :])**2)
                 loss_rollout /= (horizon - 1)
 
-        # Total loss
+        # Total loss (you will need a smaller L1 weight now since we use sum instead of mean)
         loss = (
-              1.0 * loss_state 
+            1.0 * loss_state 
             + 1.0 * loss_rollout
             + 0.1 * loss_lift 
         )

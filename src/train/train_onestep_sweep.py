@@ -12,6 +12,7 @@ def train_onestep_sweep(
     log_phi_every=1,
     phi_print_max_dim=12,
     eval_callback=None,
+    rollout_horizon=None,
 ):
     model, losses, best_checkpoint = train_onestep(
         model=model,
@@ -24,6 +25,7 @@ def train_onestep_sweep(
         log_phi_every=log_phi_every,
         phi_print_max_dim=phi_print_max_dim,
         eval_callback=eval_callback,
+        rollout_horizon=rollout_horizon,
     )
 
     return model, losses, best_checkpoint
