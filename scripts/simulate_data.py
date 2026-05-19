@@ -72,12 +72,14 @@ Linear system  x' = A x
 --------------------------------------------------
 # dt = 0.01
 python -m scripts.simulate_data --system inward_spiral --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
+python -m scripts.simulate_data --system inward_spiral_cw --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
 python -m scripts.simulate_data --system harmonic_oscillator --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
 python -m scripts.simulate_data --system saddle_point --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
 python -m scripts.simulate_data --system degenerate_node --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --n_traj_val 40 --n_traj_test 40
 
 # dt = 0.05
 python -m scripts.simulate_data --system inward_spiral --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
+python -m scripts.simulate_data --system inward_spiral_cw --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
 python -m scripts.simulate_data --system harmonic_oscillator --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
 python -m scripts.simulate_data --system saddle_point --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
 python -m scripts.simulate_data --system degenerate_node --target_train_windows 80000 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --n_traj_val 200 --n_traj_test 200
