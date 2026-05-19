@@ -62,8 +62,9 @@ elif "hardcoded_dmd" in args.model_name:
 else:
     model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model.npz"
 
-model, model_type = build_model_from_checkpoint(model_path, device="device")
+model, model_type = build_model_from_checkpoint(model_path, device="cpu")
 
+model_param_type = "complex" if "regression" in args.model_name else "real"
 Phi_model, Lambda_model, V, W, K_model = get_koopman_eigensystem(model)
 num_modes = Lambda_model.shape[0]
 n_top_modes = min(n_top_modes, num_modes)
@@ -85,11 +86,22 @@ complex_pair_idx = find_complex_pairs(
     threshold_diag=complex_mode_threshold,
     print_info=debug_printing
 )
-Lambda_model_complex, Phi_model_complex = rotation_blocks_to_complex(
-    Lambda_model, 
-    Phi_model, 
-    complex_pair_idx
-)
+if model_param_type == "real" and detect_complex_modes:
+    Lambda_model_complex, Phi_model_complex = rotation_blocks_to_complex(
+        Lambda_model, 
+        Phi_model, 
+        complex_pair_idx
+    )
+elif model_param_type == "complex" and detect_complex_modes:
+    Lambda_model_complex, Phi_model_complex = Lambda_model, Phi_model
+    Phi_model, Lambda_model = get_real_representation(
+        Phi_model, 
+        Lambda_model, 
+        jordan_value=1, 
+        threshold_jordan=1e-1
+    )
+
+
 K_model_complex = Phi_model_complex @ Lambda_model_complex @ np.linalg.pinv(Phi_model_complex)
 
 matrices_to_plot = [
