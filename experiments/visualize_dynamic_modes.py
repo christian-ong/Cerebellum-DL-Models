@@ -79,7 +79,7 @@ os.makedirs(save_dir, exist_ok=True)
 # Get analytic matrices for the system
 K_c_analytic, K_d_analytic, Lambda_analytic, Phi_analytic, analytic_expansion_names = get_system_matrices(system, decomp_type=args.decomp_method)
 
-# Re-format: Lambda_model, Phi_model --> complex matrices instead of rotation blocks
+# Find both complex and rotation block formats
 complex_pair_idx = find_complex_pairs(
     Lambda_model, 
     threshold_off_diag=complex_mode_threshold, 
@@ -245,6 +245,7 @@ plot_koopman_mode_rollout(
     Phi=plot_Phi,
     Lambda=plot_Lambda,
     real_traj=plot_trajectories,
+    model_type=model_type,
     save_path=os.path.join(save_dir, "mode_trajectories_real.png")
 )
 
@@ -255,6 +256,7 @@ plot_koopman_mode_rollout(
     Phi=plot_Phi,
     Lambda=plot_Lambda,
     real_traj=plot_trajectories,
+    model_type=model_type,
     save_path=os.path.join(save_dir, "mode_trajectories_complex.png")
 )
 

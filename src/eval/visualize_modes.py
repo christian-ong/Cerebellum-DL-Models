@@ -277,15 +277,17 @@ def get_koopman_eigensystem(model):
         return Phi_true, Lambda, eigvals, V, W, K_true
 
     # Regression DMD
-    if hasattr(model, "Phi_lift_fitted") and hasattr(model, "Lambda_fitted"):
+    elif hasattr(model, "Phi_lift_fitted") and hasattr(model, "Lambda_fitted"): 
         Phi_true = model.Phi_lift_fitted.detach().cpu().numpy() if hasattr(model.Phi_lift_fitted, "detach") else np.array(model.Phi_lift_fitted)
         Lambda = model.Lambda_fitted.detach().cpu().numpy() if hasattr(model.Lambda_fitted, "detach") else np.array(model.Lambda_fitted)
         K_true = model.K_fitted.detach().cpu().numpy() if hasattr(model.K_fitted, "detach") else np.array(model.K_fitted)
 
-        # Also model.Phi_fitted, model.Phi_fitted, ..?
-
         if Lambda.ndim == 1:
             Lambda = np.diag(Lambda)
+
+        # Transpose to match convention
+        Lambda = Lambda.T
+        Phi_true = np.linalg.pinv(Phi_true).T
 
         eigvals, V_inner = np.linalg.eig(Lambda)
         _, W_inner = np.linalg.eig(Lambda.T)
@@ -600,29 +602,49 @@ def find_complex_pairs(
     In case of overlaps, keeps highest scoring blocks (sum of off-diagonal elements).
     """
     
-    block_indices = []
-    block_scores = []
+    if np.iscomplexobj(Lambda):
 
-    # Loop through 2x2 diagonal blocks
-    for diag_idx in range(len(Lambda)-1):
+        block_indices = []
+        block_scores = []
 
-        # Get 2x2 block <a,b; c,d>
-        a = Lambda[diag_idx, diag_idx]
-        b = Lambda[diag_idx, diag_idx+1]
-        c = Lambda[diag_idx+1, diag_idx]
-        d = Lambda[diag_idx+1, diag_idx+1]
+        for i in range(Lambda.shape[0]):
+            if (np.iscomplex(Lambda[i, i]) and 
+                i < Lambda.shape[0] - 1):
+                
+                if (Lambda[i,i].real - Lambda[i+1,i+1].real < threshold_diag and
+                    Lambda[i,i].imag - (-Lambda[i+1,i+1].imag) < threshold_diag):
 
-        # Detect rotation blocks (significant off-diagonal values)
-        if ((abs(b) > threshold_off_diag) and # off-diag val 1 significant
-            (abs(c) > threshold_off_diag) and # off-diag val 2 significant
-            (np.sign(b) != np.sign(c)) and # off-diag vals have opposite signs, indicating rotation
-            (abs(a - d) < threshold_diag)): # diag vals similar 
-            block_indices.append((diag_idx, diag_idx+1))
+                    block_indices.append((i, i+1))
+                    score = (Lambda[i,i].real - Lambda[i+1,i+1].real + 
+                             Lambda[i,i].imag - (-Lambda[i+1,i+1].imag))
+                    block_scores.append(score)
 
-            # Give a significance score
-            score_off_diag = (abs(b) + abs(c)) + abs(b - (-c)) # higher for more significant off-diagonal values and values are (conjugate) similar
-            score_diag = abs(a - d) # higher if a and d are closer
-            block_scores.append(score_off_diag + score_diag)
+    elif np.isrealobj(Lambda):
+
+        block_indices = []
+        block_scores = []
+
+        # Loop through 2x2 diagonal blocks
+        for diag_idx in range(len(Lambda)-1):
+
+            # Get 2x2 block <a,b; c,d>
+            a = Lambda[diag_idx, diag_idx]
+            b = Lambda[diag_idx, diag_idx+1]
+            c = Lambda[diag_idx+1, diag_idx]
+            d = Lambda[diag_idx+1, diag_idx+1]
+
+            # Detect rotation blocks (significant off-diagonal values)
+            if ((abs(b) > threshold_off_diag) and # off-diag val 1 significant
+                (abs(c) > threshold_off_diag) and # off-diag val 2 significant
+                (np.sign(b) != np.sign(c)) and # off-diag vals have opposite signs, indicating rotation
+                (abs(a - d) < threshold_diag)): # diag vals similar 
+
+                block_indices.append((diag_idx, diag_idx+1))
+
+                # Give a significance score
+                score_off_diag = (abs(b) + abs(c)) + abs(b - (-c)) # higher for more significant off-diagonal values and values are (conjugate) similar
+                score_diag = abs(a - d) # higher if a and d are closer
+                block_scores.append(score_off_diag + score_diag)
 
     # Sort blocks by score
     sorted_scores_idx = np.argsort(block_scores)[::-1] # descending order
@@ -636,24 +658,6 @@ def find_complex_pairs(
         if not any(i in final_idxs for i in idx): # if not already included, include this block
             final_blocks_idx.append(idx)
             final_idxs.extend(idx)
-
-    if print_info:
-        print(f"Detected complex conjugate pair indices in model modes: {final_blocks_idx}")
-
-        # print complex values for each block
-        conjugate_pairs = []
-        for idx in final_blocks_idx:
-            a = Lambda[idx[0], idx[0]]
-            b = Lambda[idx[0], idx[1]]
-            c = Lambda[idx[1], idx[0]]
-            d = Lambda[idx[1], idx[1]]
-            val1 = a + 1j*b
-            val2 = d + 1j*c
-            conjugate_pairs.append((val1, val2))
-        
-        print("These are the detected complex conjugate pairs:")
-        for i, (val1, val2) in enumerate(conjugate_pairs):
-            print(f"{val1:.3f}, {val2:.3f}")
 
     return final_blocks_idx
     
@@ -707,7 +711,7 @@ def plot_transition_matrices(matrices, title, model_expansion_names, analytic_ex
     for i, (M, subtitle) in enumerate(matrices):
         ax = axes[i]
         M_mag = np.abs(M)
-        im = ax.imshow(M_mag) # color by magnitude, but show values as real/imaginary parts
+        im = ax.imshow(M_mag, vmin=0) # color by magnitude, but show values as real/imaginary parts
         ax.set_title(subtitle, fontsize=14)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         
@@ -824,12 +828,14 @@ def get_real_representation(V, eigvals, jordan_value=1.0, threshold_imag=1e-5, t
                 
                 a = np.real(eigvals[i,i])
                 b = np.imag(eigvals[i,i])
+                c = np.imag(eigvals[i+1,i+1])
+                d = np.real(eigvals[i+1,i+1])
                 
                 # <a, -b; b, a> since Lambda is transposed
                 Lambda_real[i, i] = a
-                Lambda_real[i, i+1] = b
-                Lambda_real[i+1, i] = -b
-                Lambda_real[i+1, i+1] = a
+                Lambda_real[i, i+1] = c
+                Lambda_real[i+1, i] = b
+                Lambda_real[i+1, i+1] = d
                 i += 2
             else:
                 V_real[:, i] = np.real(V[:, i])
@@ -839,7 +845,7 @@ def get_real_representation(V, eigvals, jordan_value=1.0, threshold_imag=1e-5, t
     return V_real, Lambda_real
 
 
-def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None):
+def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None, model_type="regression_dmd"):
     """
     Plot data projected onto one mode at a time to compare real vs. model evolution.
     """
@@ -865,8 +871,7 @@ def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None):
 
     ### 2. Model rollout trajectory ###
     model_rollouts = model.rollout(init_conditions, steps=n_steps-1).detach().numpy() # (n_steps, n_trajs, state_dim)
-    model_rollouts_flattened = model_rollouts.reshape(-1, state_dim) # (n_steps * n_trajs, state_dim)
-    model_rollouts_flattened_real = model_rollouts_flattened.real if np.iscomplexobj(model_rollouts_flattened) else model_rollouts_flattened
+    model_rollouts_flattened_real = model_rollouts.reshape(-1, state_dim).real if np.iscomplexobj(model_rollouts) else model_rollouts.reshape(-1, state_dim) # (n_steps * n_trajs, state_dim)
     model_rollouts_flattened_expanded = safe_expand(model, torch.as_tensor(model_rollouts_flattened_real, dtype=torch.float32)).detach().numpy()
     model_rollouts_expanded = model_rollouts_flattened_expanded.reshape(n_steps, n_trajs, lifted_dim) # (n_steps, n_trajs, lifted_dim)
     model_proj = model_rollouts_expanded @ Phi
@@ -881,7 +886,10 @@ def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None):
     # Evolve with Lambda
     for t in range(1, n_steps):
         z = mode_evolution[t-1, :, :]
-        z_next = z @ Lambda.T
+        if "regression" in model_type: # For regression models, we can directly apply Lambda
+            z_next = z @ Lambda.T
+        else:
+            z_next = z @ Lambda.T
         mode_evolution[t, :, :] = z_next
     mode_evolution = mode_evolution.real
 
