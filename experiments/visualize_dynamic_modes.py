@@ -40,7 +40,7 @@ args = parser.parse_args()
 # Settings
 n_top_modes = 12
 grid_res = 100
-order_modes_by = "magnitude" # "magnitude" (abs lambda), "quality", "power", "energy"
+order_modes_by = "original" # "original", "magnitude" (abs lambda), "quality", "power", "energy"
 detect_complex_modes = True
 complex_mode_threshold = 1e-3
 
@@ -139,7 +139,16 @@ with torch.no_grad(): grid_points_expanded = safe_expand(model, torch.as_tensor(
 
 # Order modes by chosen criterion
 sorting_info = {} # scores are unsorted, indices are the order to sort by
-if order_modes_by == "magnitude":
+if order_modes_by == "original":
+    # keep original order (no sorting)
+    sorting_info["original"] = {
+        "scores_model": np.zeros(num_modes), # dummy scores for plotting
+        "scores_analytic": np.zeros(len(Lambda_analytic)), # dummy scores for plotting
+        "indices_model": np.arange(num_modes),
+        "indices_analytic": np.arange(len(Lambda_analytic))
+    }
+
+elif order_modes_by == "magnitude":
     # sort model modes learnt by the model
     if detect_complex_modes:
         # For complex modes, we can use the magnitude of the eigenvalue (which is the same for both modes in a pair)
