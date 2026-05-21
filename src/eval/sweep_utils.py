@@ -111,6 +111,24 @@ def compute_loader_metrics(model, loader, device):
 
     return mean_loss, rmse
 
+
+def _build_rollout_initial_state(model, X):
+    delay_depth = int(getattr(model.expander, "delay_depth", 1))
+    state_dim = int(model.state_dim)
+
+    if delay_depth <= 1:
+        return X[0], 0
+
+    if X.shape[0] < delay_depth:
+        raise ValueError(
+            f"Cannot build a delay history with delay_depth={delay_depth} from only {X.shape[0]} time steps."
+        )
+
+    start_idx = delay_depth - 1
+    history = X[start_idx::-1]  # [x(t), x(t-1), ..., x(t-q+1)]
+    x0 = history.permute(1, 0, 2).reshape(history.shape[1], delay_depth * state_dim)
+    return x0, start_idx
+
 def compute_rollout_metrics(
     model,
     X,
@@ -141,7 +159,13 @@ def compute_rollout_metrics(
     results = {"rollout_failed": 0.0}
 
     with torch.no_grad():
-        rollout_pred = model.rollout(X[0], max_h)
+        x0, start_idx = _build_rollout_initial_state(model, X)
+        max_h = min(max_h, T - 1 - start_idx)
+
+        if max_h < 1:
+            return None
+
+        rollout_pred = model.rollout(x0, max_h)
 
         if not torch.isfinite(rollout_pred).all():
             results["rollout_failed"] = 1.0
@@ -154,7 +178,7 @@ def compute_rollout_metrics(
             if h <= max_h:
                 cumulative_mse = torch.tensor(0.0, device=device)
                 for k in range(1, h + 1):
-                    diff = rollout_pred[k] - X[k]
+                    diff = rollout_pred[k] - X[start_idx + k]
                     cumulative_mse += torch.mean(diff ** 2)
                 avg_mse = cumulative_mse / h
                 avg_rmse = torch.sqrt(avg_mse)
