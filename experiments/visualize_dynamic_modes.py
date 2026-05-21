@@ -40,7 +40,7 @@ args = parser.parse_args()
 # Settings
 n_top_modes = 10
 grid_res = 100
-order_modes_by = "mse" # "original", "magnitude", "phase", "mse" || TODO: "init_energy", "time_int_energy", "quality", "power"
+order_modes_by = "mse" # "original", "magnitude", "phase", "mse", "init_energy", "time_int_energy" || TODO: "quality", "power"
 
 # Load test trajectories to find true boundaries and system name dynamically
 test_data_path = resolve_split_npz_path(args.data_path, "test")
@@ -144,7 +144,7 @@ if order_modes_by == "original":
         "indices_analytic": np.arange(len(Lambda_analytic))
     }
 
-elif order_modes_by in ["magnitude", "phase"]:
+elif order_modes_by in ["magnitude", "phase"]: # simple soring criterias (also sorts analytic modes)
     if order_modes_by == "magnitude":
         if model_param_type == "complex": # magnitude = abs(lambda)
             scores_model = np.abs(Lambda_model_complex.diagonal())
@@ -172,22 +172,41 @@ elif order_modes_by in ["magnitude", "phase"]:
         "indices_analytic": sorted_idx_analytic
     }
 
-elif order_modes_by == "mse":
-    n_trajectories = 3
-    n_steps = trajectories.shape[0] # use all steps available
-    calculate_trajectories = trajectories[:n_steps, :n_trajectories, :] # (steps, id, state_dim)
+elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven sorting criterias (doesn't sort analytic modes)
+    if order_modes_by == "mse":
+        n_trajectories = 3
+        n_steps = trajectories.shape[0] # use all steps available
+        calculate_trajectories = trajectories[:n_steps, :n_trajectories, :] # (steps, id, state_dim)
 
-    indices_model, scores_model, _ = modes_by_mse(
-        model=model,
-        Phi=Phi_model,
-        Lambda=Lambda_model,
-        real_traj=calculate_trajectories,
-        model_type=model_type,
-    )
+        sorted_idx_model, inv_mses, _ = modes_by_mse(
+            model=model,
+            Phi=Phi_model,
+            Lambda=Lambda_model,
+            real_traj=calculate_trajectories,
+            model_type=model_type)
+        scores_model = inv_mses
+
+    elif order_modes_by == "init_energy":
+        # Energy of each mode in the initial conditions (higher energy modes are more important for reconstruction)
+        with torch.no_grad():
+            expanded_init_conditions = safe_expand(model, torch.as_tensor(trajectories[0,:,:], dtype=torch.float32)).cpu().numpy() # (n_trajs, lifted_dim)
+        init_mode_amplitudes = expanded_init_conditions @ Phi_model # (n_trajs, n_modes)
+        mode_energies = np.linalg.norm(init_mode_amplitudes, axis=0) # (n_modes,)
+        sorted_idx_model = np.argsort(mode_energies)[::-1] # Descending order
+        scores_model = mode_energies
+
+    elif order_modes_by == "time_int_energy":
+        # Time-integrated energy of each mode along the trajectories (higher energy modes are more important for reconstruction)
+        with torch.no_grad():
+            expanded_traj = safe_expand(model, torch.as_tensor(trajectories.reshape(-1, state_dim), dtype=torch.float32)).cpu().numpy() # (n_steps*n_trajs, lifted_dim)
+        mode_amplitudes = expanded_traj @ Phi_model # (n_steps*n_trajs, n_modes)
+        mode_energies = np.linalg.norm(mode_amplitudes, axis=0) # (n_modes,)
+        sorted_idx_model = np.argsort(mode_energies)[::-1] # Descending order
+        scores_model = mode_energies
 
     sorting_info[order_modes_by] = {
         "scores_model": scores_model,
-        "indices_model": indices_model,
+        "indices_model": sorted_idx_model,
         "scores_analytic": np.zeros(len(Lambda_analytic)), # dummy scores for plotting
         "indices_analytic": np.arange(len(Lambda_analytic)) # keep original order for analytic modes
     }
