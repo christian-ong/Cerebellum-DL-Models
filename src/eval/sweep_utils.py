@@ -125,7 +125,7 @@ def _build_rollout_initial_state(model, X):
         )
 
     start_idx = delay_depth - 1
-    history = X[start_idx::-1]  # [x(t), x(t-1), ..., x(t-q+1)]
+    history = X[:delay_depth].flip(0)  # [x(t), x(t-1), ..., x(t-q+1)]
     x0 = history.permute(1, 0, 2).reshape(history.shape[1], delay_depth * state_dim)
     return x0, start_idx
 
