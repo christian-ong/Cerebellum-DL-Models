@@ -3,7 +3,7 @@ entity: DeepLearningP4Destruction
 method: grid
 
 metric:
-  name: val_discounted_mean_rmse_h100_g0.99
+  name: val_rollout_rmse_h100
   goal: minimize
 
 command:
@@ -13,10 +13,10 @@ command:
   - scripts.train_sweep
   - --epochs
   - 100
-  - --rollout_horizon
-  - 5
   - --eval_every
   - 1
+  - --eval_horizon_divisor
+  - 5
   - --num_workers
   - 4
   - ${args}
@@ -24,36 +24,35 @@ command:
 parameters:
   model:
     values:
-      - ml_dmd_free
       - ml_linear_dynamics
 
   data_path:
     values:
-      - data/trajectories/nonlinear/vanderpol/short
-      - data/trajectories/nonlinear/lotka_volterra/short
-      - data/trajectories/nonlinear/duffing/short
-      - data/trajectories/nonlinear/lorenz/short
+      - data/trajectories/nonlinear/vanderpol/dt_0.05
+      - data/trajectories/nonlinear/lotka_volterra/dt_0.05
+      - data/trajectories/nonlinear/duffing/dt_0.05
+      - data/trajectories/nonlinear/lorenz/dt_0.05
 
   lr:
-    values: [1e-5, 1e-4, 1e-3]
+    values: [1e-2, 1e-3, 1e-4, 1e-5]
+
+  expansion_degree:
+    values: [3, 5, 7]
+  
+  rollout_horizon:
+    values: [2, 4, 10]
 
   weight_decay:
-    values: [0.0, 1e-6]
+    values: [0.0]
 
   batch_size:
     values: [2048]
-
-  expansion_degree:
-    values: [3, 5, 7, 10]
 
   expansion_type:
     values: ["general"]
 
   sine_cosine_expansion:
     values: ["false"]
-  
-  trajectory_length:
-    values: ["short"]
 
   bias:
-    values: ["true"]  
+    values: ["true"]

@@ -7,7 +7,7 @@
 #BSUB -e hpc/runs/%J.err
 
 # GPU
-#BSUB -q gpua100
+#BSUB -q gpua10
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -R "rusage[mem=32GB] span[hosts=1]"
 #BSUB -n 4
@@ -25,14 +25,17 @@ module load python3/3.11.11
 source .venv/bin/activate
 
 # ----------------------------------
-# Linear Systems (Using example defaults)
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_trig_large/long --epochs 200 --lr 1e-5 --name long
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_large/short --epochs 200 --lr 1e-5 --name short
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_trig_small/long --epochs 200 --lr 1e-5 --name long
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_trig_medium/long --epochs 200 --lr 1e-5 --name long
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_small/short --epochs 200 --lr 1e-5 --name short
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/saddle_point/long --epochs 200 --lr 1e-5 --name long
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/degenerate_node/long --epochs 200 --lr 1e-5 --name long
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/inward_spiral/short --epochs 200 --lr 1e-5 --name short
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/harmonic_oscillator/short --epochs 200 --lr 1e-5 --name short
-python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/duffing/short --epochs 200 --lr 1e-5 --name short
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_trig_large --epochs 100 --lr 1e-3 --rollout_horizon 20
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_large --epochs 100 --lr 1e-3 --rollout_horizon 20
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_trig_small --epochs 100 --lr 1e-3 --rollout_horizon 20
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_trig_medium --epochs 100 --lr 1e-3 --rollout_horizon 20
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/closed_small --epochs 100 --lr 1e-3 --rollout_horizon 20
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/saddle_point --epochs 100 --lr 1e-3 --rollout_horizon 20
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/degenerate_node --epochs 100 --lr 1e-3 --rollout_horizon 20
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/inward_spiral --epochs 100 --lr 1e-3 --rollout_horizon 20
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/linear/harmonic_oscillator --epochs 100 --lr 1e-3 --rollout_horizon 20
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/vanderpol --epochs 100 --lr 1e-3 --rollout_horizon 20
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/duffing --epochs 100  --lr 1e-3 --rollout_horizon 20
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/lotka_volterra --epochs 100 --lr 1e-3 --rollout_horizon 20
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/pendulum --epochs 100 --lr 1e-3 --rollout_horizon 20
+python -m scripts.train --model mlp_baseline --data_path data/trajectories/nonlinear/lorenz --epochs 100 --lr 1e-3 --rollout_horizon 20

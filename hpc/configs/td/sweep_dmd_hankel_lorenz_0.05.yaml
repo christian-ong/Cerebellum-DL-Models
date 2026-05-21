@@ -1,0 +1,61 @@
+project: koopman-operator-learning
+entity: DeepLearningP4Destruction
+method: grid
+
+metric:
+  name: val_rollout_rmse_h100
+  goal: minimize
+
+command:
+  - ${env}
+  - python
+  - -m
+  - scripts.train_sweep
+  - --epochs
+  - 100
+  - --eval_every
+  - 1
+  - --eval_horizon_divisor
+  - 5
+  - --num_workers
+  - 4
+  - ${args}
+
+parameters:
+  model:
+    values:
+      - ml_dmd
+
+  data_path:
+    values:
+      - data/trajectories/nonlinear/lorenz/dt_0.05
+
+  lr:
+    values: [1e-3, 1e-4, 1e-5]
+  
+  rollout_horizon:
+    values: [2, 4, 10]
+
+  l1_weight:
+    values: [0.0, 1e-3, 1e-2]
+  
+  expansion_type:
+    values: ["hankel_svd"]
+
+  delay_depth:
+    values: [25, 50, 100]
+
+  hankel_rank:
+    values: [20, 50, 80]
+
+  weight_decay:
+    values: [0.0]
+
+  batch_size:
+    values: [2048]
+
+  sine_cosine_expansion:
+    values: ["false"]
+
+  bias:
+    values: ["true"]

@@ -114,6 +114,12 @@ def main():
 
     parser.add_argument("--eval_every", type=int, default=1)
     parser.add_argument("--max_val_rollout_trajs", type=int, default=None)
+    parser.add_argument(
+        "--eval_horizon_divisor",
+        type=int,
+        default=1,
+        help="Divide EVAL_HORIZONS by this integer (integer division). Default 1 = no change.",
+    )
     parser.add_argument("--rollout_horizon", type=int, default=None, help="Rollout horizon for training loss (only used in the loss function)")
     parser.add_argument(
         "--dataset_rollout_reserve",
@@ -174,6 +180,24 @@ def main():
         },
         allow_val_change=True,
     )
+
+    # Compute effective eval horizons based on optional divisor (default: no change)
+    divisor = int(getattr(args, "eval_horizon_divisor", 1)) if getattr(args, "eval_horizon_divisor", None) is not None else 1
+    if divisor < 1:
+        print(f"Warning: --eval_horizon_divisor must be >=1, got {divisor}. Using 1.")
+        divisor = 1
+    if divisor == 1:
+        eval_horizons = list(EVAL_HORIZONS)
+    else:
+        # Integer divide each horizon, clamp to at least 1, and preserve order/uniqueness
+        seen = set()
+        eval_horizons = []
+        for h in EVAL_HORIZONS:
+            h2 = max(1, int(h) // divisor)
+            if h2 not in seen:
+                seen.add(h2)
+                eval_horizons.append(h2)
+        print(f"Using eval_horizons={eval_horizons} (EVAL_HORIZONS={EVAL_HORIZONS} divided by {divisor})")
 
     # Setup output directory (for checkpoint saving)
     save_dir = os.path.join(args.outdir, args.model, system_name, run.id)
@@ -250,12 +274,12 @@ def main():
             _, val_rmse = compute_loader_metrics(model, val_loader, device)
             metrics["val_onestep_rmse"] = val_rmse
 
-        # Multi-step Rollout Metrics (10, 20, 100)
+        # Multi-step Rollout Metrics
         rollout_metrics = compute_rollout_metrics(
             model=model,
             X=val_X,
             device=device,
-            eval_horizons=EVAL_HORIZONS,
+            eval_horizons=eval_horizons,
             max_trajs=args.max_val_rollout_trajs # Set this in your .sh for extra speed
         )
         

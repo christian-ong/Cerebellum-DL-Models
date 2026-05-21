@@ -3,7 +3,7 @@ entity: DeepLearningP4Destruction
 method: grid
 
 metric:
-  name: val_discounted_mean_rmse_h100_g0.99
+  name: val_rollout_rmse_h100
   goal: minimize
 
 command:
@@ -13,8 +13,6 @@ command:
   - scripts.train_sweep
   - --epochs
   - 100
-  - --rollout_horizon
-  - 5
   - --eval_every
   - 1
   - --num_workers
@@ -24,32 +22,34 @@ command:
 parameters:
   model:
     values:
-      - ml_dmd_free
-      - ml_linear_dynamics
+      - ml_dmd
 
   data_path:
-    values: [data/trajectories/nonlinear/pendulum/long]
+    values: [data/trajectories/nonlinear/lorenz/dt_0.01]
 
   lr:
-    values: [1e-5, 1e-4, 1e-3]
+    values: [1e-3, 1e-4, 1e-5]
+
+  expansion_degree:
+    values: [3, 5, 7]
+  
+  rollout_horizon:
+    values: [10, 20, 50]
+
+  l1_weight:
+    values: [0.0, 1e-3, 1e-2]
 
   weight_decay:
-    values: [0.0, 1e-6]
+    values: [0.0]
 
   batch_size:
     values: [2048]
-
-  expansion_degree:
-    values: [3, 5, 7, 10]
 
   expansion_type:
     values: ["general"]
 
   sine_cosine_expansion:
     values: ["true"]
-
-  trajectory_length:
-    values: ["long"]
 
   bias:
     values: ["true"]

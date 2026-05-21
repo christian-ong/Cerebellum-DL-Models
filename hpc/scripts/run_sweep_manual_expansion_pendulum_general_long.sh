@@ -7,13 +7,13 @@
 #BSUB -e hpc/runs/%J.err
 
 # GPU
-#BSUB -q gpuv100
+#BSUB -q gpua100
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -R "rusage[mem=32GB] span[hosts=1]"
 #BSUB -n 4
 
 # Runtime
-#BSUB -W 12:00
+#BSUB -W 24:00
 
 # ----------------------------------
 # ENV
@@ -28,7 +28,7 @@ source .venv/bin/activate
 # SWEEP
 # ----------------------------------
 
-SWEEP_ID=DeepLearningP4Destruction/koopman-operator-learning/vo7rooib
+SWEEP_ID=DeepLearningP4Destruction/koopman-operator-learning/5kimrbdc
 
 # ----------------------------------
 # RUN (ONLY ONE AGENT!)
