@@ -11,7 +11,7 @@ from torch import device
 from torch.utils.data import DataLoader
 from scipy.linalg import schur
 from src.data_generation.load_data import OneStepTrajectoryDataset
-from src.models.ml_dmd_free import ML_DMD_FREE
+from src.models.ml_dmd import ML_DMD
 from src.eval.visualize_modes import get_system_matrices, get_sorted_jordan_form, get_real_representation
 
 """
@@ -60,7 +60,7 @@ sine_cosine_expansion=True if "sin" in system_expansion_names else False
 state_dim = 3 if "lorenz" in system_name else 2
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = ML_DMD_FREE(
+model = ML_DMD(
     state_dim=state_dim,
     expansion_degree=expansion_degree,
     bias=bias,

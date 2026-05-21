@@ -88,7 +88,7 @@ def update_best_metrics(best_metrics, current_metrics, current_epoch):
 def main():
     parser = argparse.ArgumentParser(description="Fast W&B sweep training for Koopman models")
 
-    parser.add_argument("--model", type=str, required=True, choices=["ml_linear_dynamics", "ml_lineardynamics", "ml_dmd_free", "ml_dmd_l1", "ml_dmd_band", "mlp_baseline"])
+    parser.add_argument("--model", type=str, required=True, choices=["ml_linear_dynamics", "ml_lineardynamics", "ml_dmd", "mlp_baseline"])
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--name", type=str, default="run")
 
@@ -180,7 +180,7 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
 
     # Data
-    is_ml_model = args.model in {"ml_linear_dynamics", "ml_lineardynamics", "ml_dmd_free", "ml_dmd_l1", "ml_dmd_band"}
+    is_ml_model = args.model in {"ml_linear_dynamics", "ml_lineardynamics", "ml_dmd"}
 
     if args.dataset_rollout_reserve is not None:
         dataset_rollout_horizon = args.dataset_rollout_reserve
@@ -210,7 +210,7 @@ def main():
     model = build_model(args, state_dim, system_name, device)
 
     # Fit RBF/Hankel/other data-dependent expanders if needed
-    if args.model in {"ml_linear_dynamics", "ml_lineardynamics", "ml_dmd_free", "ml_dmd_l1", "ml_dmd_band"}:
+    if args.model in {"ml_linear_dynamics", "ml_lineardynamics", "ml_dmd"}:
         prepare_ml_expander_and_lift_stats(
             model=model,
             train_ds=train_ds,

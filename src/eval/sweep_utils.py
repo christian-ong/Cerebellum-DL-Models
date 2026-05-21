@@ -2,8 +2,7 @@ import numpy as np
 import torch
 
 from src.models.ml_linear_dynamics import ML_LinearDynamics
-from src.models.ml_dmd_free import ML_DMD_FREE
-from src.models.ml_dmd_l1 import ML_DMD_L1
+from src.models.ml_dmd import ML_DMD
 from src.models.mlp_baseline import MLP_BlackBox
 
 def build_run_name(args, system_name, run_id=None):
@@ -39,24 +38,8 @@ def build_model(args, state_dim, system_name, device):
             rbf_knn_k=getattr(args, "rbf_knn_k", 5),
         ).to(device)
 
-    elif args.model == "ml_dmd_free":
-        model = ML_DMD_FREE(
-            state_dim=state_dim,
-            expansion_degree=args.expansion_degree,
-            bias=args.bias == "true",
-            sine_cosine_expansion=args.sine_cosine_expansion == "true",
-            expansion_type=args.expansion_type,
-            system=system_name if args.expansion_type == "specific" else None,
-            delay_depth=getattr(args, "delay_depth", 1),
-            hankel_rank=getattr(args, "hankel_rank", None),
-            rbf_n_centers=getattr(args, "rbf_n_centers", 50),
-            rbf_center_selection=getattr(args, "rbf_center_selection", "farthest"),
-            rbf_bandwidth_mode=getattr(args, "rbf_bandwidth_mode", "knn"),
-            rbf_knn_k=getattr(args, "rbf_knn_k", 5),
-        ).to(device)
-
-    elif args.model in {"ml_dmd_l1", "ml_dmd_band"}:
-        model = ML_DMD_L1(
+    elif args.model in {"ml_dmd"}:
+        model = ML_DMD(
             state_dim=state_dim,
             expansion_degree=args.expansion_degree,
             bias=args.bias == "true",

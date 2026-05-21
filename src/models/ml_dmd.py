@@ -3,7 +3,7 @@ import torch.nn as nn
 
 from src.models.expander import build_expander
 
-class ML_DMD_L1(nn.Module):
+class ML_DMD(nn.Module):
     def __init__(
         self,
         state_dim=2,
@@ -135,6 +135,29 @@ class ML_DMD_L1(nn.Module):
         z = b @ self.Phi.mT
         return z
 
+    def _build_next_delay_input(self, x_history, x_next):
+        delay_depth = int(getattr(self.expander, "delay_depth", 1))
+        if delay_depth <= 1:
+            return x_next
+
+        return torch.cat([x_next, x_history[:, :-self.state_dim]], dim=1)
+
+    def _build_future_delay_inputs(self, x_history, future_x):
+        delay_depth = int(getattr(self.expander, "delay_depth", 1))
+        if future_x is None or future_x.ndim != 3:
+            return None
+
+        if delay_depth <= 1:
+            return future_x
+
+        history = x_history
+        histories = []
+        for k in range(future_x.shape[1]):
+            history = torch.cat([future_x[:, k, :], history[:, :-self.state_dim]], dim=1)
+            histories.append(history)
+
+        return torch.stack(histories, dim=1)
+
     # ------------------------------------------------
     # Forward pass
     # ------------------------------------------------
@@ -161,7 +184,8 @@ class ML_DMD_L1(nn.Module):
 
     def compute_loss(self, x, x_next_true, future_x=None):
         z_raw = self.expander.expand(x)
-        z_next_true_raw = self.expander.expand(x_next_true)
+        x_next_for_expander = self._build_next_delay_input(x, x_next_true)
+        z_next_true_raw = self.expander.expand(x_next_for_expander)
 
         z_norm = self._normalize(z_raw)
         z_next_true_norm = self._normalize(z_next_true_raw)
@@ -178,9 +202,15 @@ class ML_DMD_L1(nn.Module):
         if future_x is not None and future_x.ndim == 3:
             horizon = min(self.rollout_horizon, future_x.shape[1])
             if horizon >= 2:
-                # PRE-EXPAND (Saves massive time!)
-                z_targets = self.expander.expand(future_x.reshape(-1, self.state_dim))
-                z_targets = z_targets.reshape(x.shape[0], future_x.shape[1], -1)
+                future_histories = self._build_future_delay_inputs(x, future_x)
+
+                if future_histories is None:
+                    z_targets = self.expander.expand(future_x.reshape(-1, self.state_dim))
+                    z_targets = z_targets.reshape(x.shape[0], future_x.shape[1], -1)
+                else:
+                    z_targets = self.expander.expand(future_histories.reshape(-1, future_histories.shape[-1]))
+                    z_targets = z_targets.reshape(x.shape[0], future_x.shape[1], -1)
+
                 z_targets_norm = self._normalize(z_targets.reshape(-1, self.latent_dim))
                 z_targets_norm = z_targets_norm.reshape_as(z_targets)
 
@@ -266,7 +296,12 @@ class ML_DMD_L1(nn.Module):
 
         x = x0
 
-        traj = [x.squeeze(0)]
+        if delay_depth > 1:
+            x_curr0 = x[:, : self.state_dim]
+        else:
+            x_curr0 = x
+
+        traj = [x_curr0.squeeze(0)]
         
         # 1. Expand the state to latent space exactly ONCE
         z = self.expander.expand(x)

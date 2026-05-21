@@ -5,8 +5,7 @@ import sympy
 from scipy.linalg import expm, schur
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
-from src.models.ml_dmd_free import ML_DMD_FREE
-from src.models.ml_dmd_l1 import ML_DMD_L1
+from src.models.deprecated.ml_dmd_free import ML_DMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.regression_dmd import Regression_DMD
 
@@ -112,10 +111,8 @@ def build_model_from_checkpoint(model_path, device="cpu"):
         "system": ckpt["system"],
     }
 
-    if model_name == "ml_dmd_free" or model_name == "hardcoded_dmd":
-        model = ML_DMD_FREE(**kwargs)
-    elif model_name == "ml_dmd_l1":
-        model = ML_DMD_L1(**kwargs)
+    if model_name == "ml_dmd" or model_name == "hardcoded_dmd":
+        model = ML_DMD(**kwargs)
     elif model_name == "ml_lineardynamics":
         model = ML_LinearDynamics(**kwargs)
     else:
