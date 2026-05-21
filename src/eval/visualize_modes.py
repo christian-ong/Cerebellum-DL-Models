@@ -5,7 +5,7 @@ import sympy
 from scipy.linalg import expm, schur
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
-from src.models.deprecated.ml_dmd_free import ML_DMD
+from src.models.ml_dmd import ML_DMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.regression_dmd import Regression_DMD
 
@@ -591,8 +591,7 @@ def get_sorted_jordan_form(K_d_analytic, block_tol=1e-12):
 def find_complex_pairs(
         Lambda, 
         threshold_off_diag=1e-3, 
-        threshold_diag=1e-3,
-        print_info=False):
+        threshold_diag=1e-3):
     """
     Detects pairs of complex conjugate modes in the Lambda matrix.
     Looks for significant (> threshold) off-diagonal values in 2x2 blocks.
@@ -1013,7 +1012,55 @@ def plot_eigenfunctions(
         plt.show()
 
 
-def modes_by_quality(
+def modes_by_mse(model, Phi, Lambda, real_traj, model_type="regression_dmd"):
+    """
+    Plot data projected onto one mode at a time to compare real vs. model evolution.
+    """
+    # Measure dimensions
+    n_steps = real_traj.shape[0]
+    n_trajs = real_traj.shape[1]
+    state_dim = real_traj.shape[2]
+    n_modes = Phi.shape[1]
+    lifted_dim = Phi.shape[0]
+    
+    # Lift real trajectory
+    real_traj_flattened = real_traj.reshape(-1, state_dim) # (n_steps * n_trajs, state_dim)
+    expanded_traj_flattened = safe_expand(model, torch.tensor(real_traj_flattened, dtype=torch.float32)).cpu().numpy() # (n_steps * n_trajs, lifted_dim)
+    expanded_traj = expanded_traj_flattened.reshape(n_steps, n_trajs, lifted_dim)
+    
+    # Grab initial conditions
+    init_conditions = torch.as_tensor(real_traj[0, :, :], dtype=torch.float32) # (n_trajs, state_dim)
+    expanded_init_conditions = expanded_traj[0, :, :] 
+
+    ### 1. Real trajectory projected onto modes ###
+    real_proj = expanded_traj @ Phi
+    real_proj = real_proj.real
+
+    ### 2. Mode evolution under Lambda ###
+    # Initialize mode amplitudes from initial conditions
+    z0 = expanded_init_conditions @ Phi # Initial mode amplitudes
+    mode_evolution = np.zeros((n_steps, n_trajs, n_modes), dtype=complex)
+    mode_evolution[0, :, :] = z0
+
+    # Evolve with Lambda
+    for t in range(1, n_steps):
+        z = mode_evolution[t-1, :, :]
+        if "regression" in model_type: # For regression models, we can directly apply Lambda
+            z_next = z @ Lambda.T
+        else:
+            z_next = z @ Lambda.T
+        mode_evolution[t, :, :] = z_next
+    mode_evolution = mode_evolution.real
+
+    ### 3. Calculate mode qualities : error between mode rollout and real data ###
+    mode_errors = np.linalg.norm(mode_evolution - real_proj, axis=(0,1)) # L2 error across all time steps and trajectories for each mode
+    mode_scores = 1.0 / (mode_errors + 1e-12) # Higher score for lower error
+    ranked_indices = np.argsort(mode_scores)[::-1] # Descending order
+
+    return ranked_indices, mode_scores, mode_errors
+
+
+def modes_by_quality_deprecated(
     model, 
     W, 
     eigvals_analytic, 

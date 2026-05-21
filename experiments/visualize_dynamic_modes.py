@@ -38,13 +38,9 @@ parser.add_argument("--decomp_method", type=str, default="schur", choices=["nump
 args = parser.parse_args()
 
 # Settings
-n_top_modes = 12
+n_top_modes = 10
 grid_res = 100
-order_modes_by = "original" # "original", "magnitude" (abs lambda), "quality", "power", "energy"
-detect_complex_modes = True
-complex_mode_threshold = 1e-3
-
-debug_printing = False
+order_modes_by = "mse" # "original", "magnitude", "phase", "mse" || TODO: "init_energy", "time_int_energy", "quality", "power"
 
 # Load test trajectories to find true boundaries and system name dynamically
 test_data_path = resolve_split_npz_path(args.data_path, "test")
@@ -80,19 +76,19 @@ os.makedirs(save_dir, exist_ok=True)
 K_c_analytic, K_d_analytic, Lambda_analytic, Phi_analytic, analytic_expansion_names = get_system_matrices(system, decomp_type=args.decomp_method)
 
 # Find both complex and rotation block formats
+complex_mode_threshold = 1e-3
 complex_pair_idx = find_complex_pairs(
     Lambda_model, 
     threshold_off_diag=complex_mode_threshold, 
-    threshold_diag=complex_mode_threshold,
-    print_info=debug_printing
+    threshold_diag=complex_mode_threshold
 )
-if model_param_type == "real" and detect_complex_modes:
+if model_param_type == "real":
     Lambda_model_complex, Phi_model_complex = rotation_blocks_to_complex(
         Lambda_model, 
         Phi_model, 
         complex_pair_idx
     )
-elif model_param_type == "complex" and detect_complex_modes:
+elif model_param_type == "complex":
     Lambda_model_complex, Phi_model_complex = Lambda_model, Phi_model
     Phi_model, Lambda_model = get_real_representation(
         Phi_model, 
@@ -148,42 +144,72 @@ if order_modes_by == "original":
         "indices_analytic": np.arange(len(Lambda_analytic))
     }
 
-elif order_modes_by == "magnitude":
-    # sort model modes learnt by the model
-    if detect_complex_modes:
-        # For complex modes, we can use the magnitude of the eigenvalue (which is the same for both modes in a pair)
-        scores_model = np.abs(Lambda_model_complex.diagonal()) # Use diagonal since Lambda is now complex and diagonalized
-    else:
-        scores_model = np.linalg.norm(Lambda_model_complex, axis=1) # by row, since row i in Lambda determines row i in b_next
-    sorted_idx_model = np.argsort(scores_model)[::-1] # Descending order
-    # sort analytic modes
-    scores_analytic = np.abs(Lambda_analytic)
-    sorted_idx_analytic = np.argsort(scores_analytic)[::-1] # Descending order
-    
-    sorting_info["magnitude"] = {
+elif order_modes_by in ["magnitude", "phase"]:
+    if order_modes_by == "magnitude":
+        if model_param_type == "complex": # magnitude = abs(lambda)
+            scores_model = np.abs(Lambda_model_complex.diagonal())
+            scores_analytic = np.abs(Lambda_analytic)
+        elif model_param_type == "real": # magnitude = norm(lambda_row) ; (since Lambda determines how mode i contributes to all modes in next step)
+            scores_model = np.linalg.norm(Lambda_model, axis=1)
+            scores_analytic = np.linalg.norm(Lambda_analytic, axis=1)
+        sorted_idx_model = np.argsort(scores_model)[::-1] # Descending order
+        sorted_idx_analytic = np.argsort(scores_analytic)[::-1] # Descending order
+
+    elif order_modes_by == "phase":
+        if model_param_type == "complex": # phase = angle(lambda)
+            scores_model = np.abs(np.angle(Lambda_model_complex.diagonal()))
+            scores_analytic = np.abs(np.angle(Lambda_analytic))
+        elif model_param_type == "real": # idk
+            scores_model = np.abs(np.angle(Lambda_model_complex.diagonal())) # idk
+            scores_analytic = np.abs(np.angle(Lambda_analytic)) # idk
+        sorted_idx_model = np.argsort(scores_model)[::1] # Ascending order
+        sorted_idx_analytic = np.argsort(scores_analytic)[::1] # Ascending order
+
+    sorting_info[order_modes_by] = {
         "scores_model": scores_model,
         "scores_analytic": scores_analytic,
         "indices_model": sorted_idx_model,
         "indices_analytic": sorted_idx_analytic
     }
 
-elif order_modes_by == "quality":
-    print("Warning: This one is cheating!")
-    sorted_idx_model, scores_model, _ = modes_by_quality(
+elif order_modes_by == "mse":
+    n_trajectories = 3
+    n_steps = trajectories.shape[0] # use all steps available
+    calculate_trajectories = trajectories[:n_steps, :n_trajectories, :] # (steps, id, state_dim)
+
+    indices_model, scores_model, _ = modes_by_mse(
         model=model,
-        W=W,
-        eigvals_analytic=Lambda_analytic,
-        state_bounds=state_bounds
+        Phi=Phi_model,
+        Lambda=Lambda_model,
+        real_traj=calculate_trajectories,
+        model_type=model_type,
     )
 
-    sorting_info["quality"] = {
+    sorting_info[order_modes_by] = {
         "scores_model": scores_model,
-        "indices_model": sorted_idx_model,
-
-        # in this case, model = analytic
-        "scores_analytic": scores_model, 
-        "indices_analytic": sorted_idx_model
+        "indices_model": indices_model,
+        "scores_analytic": np.zeros(len(Lambda_analytic)), # dummy scores for plotting
+        "indices_analytic": np.arange(len(Lambda_analytic)) # keep original order for analytic modes
     }
+
+# # Deprecated : This one cheats
+# elif order_modes_by == "quality":
+#     print("Warning: This one is cheating!")
+#     sorted_idx_model, scores_model, _ = modes_by_quality_deprecated(
+#         model=model,
+#         W=W,
+#         eigvals_analytic=Lambda_analytic,
+#         state_bounds=state_bounds
+#     )
+
+#     sorting_info[order_modes_by] = {
+#         "scores_model": scores_model,
+#         "indices_model": sorted_idx_model,
+
+#         # in this case, model = analytic
+#         "scores_analytic": scores_model, 
+#         "indices_analytic": sorted_idx_model
+#     }
 
 else:
     raise ValueError(f"Invalid mode ordering method: {order_modes_by}")
@@ -192,13 +218,12 @@ else:
 sorting = sorting_info[order_modes_by]
 
 # update complex pair indices to reflect sorting
-if detect_complex_modes:
-    sorted_complex_pair_idx = []
-    for i, j in complex_pair_idx:
-        new_i = np.where(sorting["indices_model"] == i)[0][0]
-        new_j = np.where(sorting["indices_model"] == j)[0][0]
-        sorted_complex_pair_idx.append((new_i, new_j))
-    complex_pair_idx = sorted_complex_pair_idx
+sorted_complex_pair_idx = []
+for i, j in complex_pair_idx:
+    new_i = np.where(sorting["indices_model"] == i)[0][0]
+    new_j = np.where(sorting["indices_model"] == j)[0][0]
+    sorted_complex_pair_idx.append((new_i, new_j))
+complex_pair_idx = sorted_complex_pair_idx
 
 sorted_data = {
     "model": {
@@ -208,7 +233,7 @@ sorted_data = {
             "K": K_model[sorting["indices_model"]][:, sorting["indices_model"]],
             "scores": sorting["scores_model"][sorting["indices_model"]], # sorted
             "indeces": sorting["indices_model"],
-            "complex_pairs": complex_pair_idx if detect_complex_modes else None,
+            "complex_pairs": complex_pair_idx,
         },
         "real": {
             "Lambda": Lambda_model[sorting["indices_model"]][:, sorting["indices_model"]], # matrix
@@ -216,7 +241,7 @@ sorted_data = {
             "K": K_model[sorting["indices_model"]][:, sorting["indices_model"]],
             "scores": sorting["scores_model"][sorting["indices_model"]], # sorted
             "indeces": sorting["indices_model"],
-            "complex_pairs": complex_pair_idx if detect_complex_modes else None,
+            "complex_pairs": complex_pair_idx,
         }
     },
     "analytic": {
@@ -227,16 +252,6 @@ sorted_data = {
         "indeces": sorting["indices_analytic"],
     }
 }
-
-if debug_printing:
-    print(f"Total modes: {num_modes}")
-    print(f"Top {n_top_modes} modes:")
-    print(f"  Model:")
-    print(f"    Indices: {sorted_data['model']['indeces'][:n_top_modes]}")
-    print(f"    Scores: {[f'{s:.4f}' for s in sorted_data['model']['scores'][:n_top_modes]]}")
-    print(f"  Analytic:")
-    print(f"    Indices: {sorted_data['analytic']['indeces'][:n_top_modes]}")
-    print(f"    Scores: {[f'{s:.4f}' for s in sorted_data['analytic']['scores'][:n_top_modes]]}")
 
 # --------------------------------------------------
 # Visualize mode trajectories (using real matrices to avoid hardcoded translation issues)
