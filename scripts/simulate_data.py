@@ -72,12 +72,14 @@ Linear system  x' = A x
 --------------------------------------------------
 # dt = 0.01
 python -m scripts.simulate_data --system inward_spiral --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01
+python -m scripts.simulate_data --system inward_spiral_cw --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01
 python -m scripts.simulate_data --system harmonic_oscillator --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01
 python -m scripts.simulate_data --system saddle_point --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01
 python -m scripts.simulate_data --system degenerate_node --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01
 
 # dt = 0.05
 python -m scripts.simulate_data --system inward_spiral --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05
+python -m scripts.simulate_data --system inward_spiral_cw --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05
 python -m scripts.simulate_data --system harmonic_oscillator --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05
 python -m scripts.simulate_data --system saddle_point --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05
 python -m scripts.simulate_data --system degenerate_node --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05
