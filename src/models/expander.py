@@ -510,9 +510,11 @@ class HankelSVDDelayExpansion(nn.Module):
 
         self.history_dim = self.state_dim * self.delay_depth
         if self.rank > self.history_dim:
-            raise ValueError(
-                f"rank={self.rank} cannot exceed history_dim={self.history_dim}."
+            print(
+                f"Warning: requested Hankel rank={self.rank} exceeds history_dim={self.history_dim}; "
+                f"capping rank to {self.history_dim}."
             )
+            self.rank = self.history_dim
 
         self.bias = bool(bias)
 
