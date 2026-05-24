@@ -1,0 +1,40 @@
+project: koopman-operator-learning
+entity: DeepLearningP4Destruction
+method: grid
+
+metric:
+  name: val_rollout_rmse_h100
+  goal: minimize
+
+command:
+  - ${env}
+  - python
+  - -m
+  - scripts.train_sweep
+  - --num_workers
+  - 4
+  - ${args}
+
+parameters:
+  model:
+    values:
+      - regression_dmd
+
+  data_path:
+    values:
+      - data/trajectories/nonlinear/closed_large/dt_0.01
+  
+  regression_rollout_mode:
+    values: ["DMD", "linear_dynamics"]
+
+  expansion_degree:
+    values: [5]
+
+  expansion_type:
+    values: ["specific"]
+
+  sine_cosine_expansion:
+    values: ["false"]
+
+  bias:
+    values: ["false"]
