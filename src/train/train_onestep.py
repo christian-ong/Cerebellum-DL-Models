@@ -98,29 +98,30 @@ def train_onestep(
         weight_decay=weight_decay,
     )
 
-    warmup_epochs = 5
-    
+    warmup_epochs = min(5, max(1, int(epochs)))
+
     # 1. Warmup Phase: Linearly scale up to the initial lr
     warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
-        optimizer, 
-        start_factor=0.1, 
-        total_iters=warmup_epochs
-    )
-
-    # 2. Cosine Phase: Smoothly curve down to 1e-6
-    # T_max is the number of epochs left after warmup
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, 
-        T_max=(epochs - warmup_epochs), 
-        eta_min=0.0
-    )
-
-    # 3. Combine them sequentially
-    scheduler = torch.optim.lr_scheduler.SequentialLR(
         optimizer,
-        schedulers=[warmup_scheduler, cosine_scheduler],
-        milestones=[warmup_epochs] # Switch schedulers at this epoch
+        start_factor=0.1,
+        total_iters=warmup_epochs,
     )
+
+    # 2/3. If there are epochs after warmup, add a cosine decay phase.
+    # For short debug runs (e.g. epochs <= warmup), keep warmup-only scheduling.
+    if int(epochs) > warmup_epochs:
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=int(epochs) - warmup_epochs,
+            eta_min=0.0,
+        )
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[warmup_epochs],
+        )
+    else:
+        scheduler = warmup_scheduler
     loss_fn = torch.nn.MSELoss()
 
     def unpack_loss_output(loss_output):

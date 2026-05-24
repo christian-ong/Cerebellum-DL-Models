@@ -117,9 +117,14 @@ class Regression_DMD(nn.Module):
         return aliases[mode]
 
     def _to_tensor(self, x):
+        try:
+            device = next(self.buffers()).device
+        except StopIteration:
+            device = torch.device("cpu")
+
         if isinstance(x, np.ndarray):
-            return torch.tensor(x, dtype=torch.float64)
-        return x.to(dtype=torch.float64)
+            return torch.tensor(x, dtype=torch.float64, device=device)
+        return x.to(device=device, dtype=torch.float64)
     
     def _validate_delay_rollout_input(self, x, *, caller: str):
         """
@@ -225,7 +230,8 @@ class Regression_DMD(nn.Module):
         Since z_s[idx] = x_n[idx] / psi_scale[idx] for the original state features,
         we need C[row, idx] = psi_scale[idx].
         """
-        C = torch.zeros((self.state_dim, self.expanded_dim), dtype=torch.float64)
+        device = self.psi_scale.device
+        C = torch.zeros((self.state_dim, self.expanded_dim), dtype=torch.float64, device=device)
         for i, idx in enumerate(self.state_indices):
             C[i, idx] = self.psi_scale[idx]
         return C
@@ -295,7 +301,14 @@ class Regression_DMD(nn.Module):
         else:
             x_next_n = self._normalize_x(x_next)
 
+        if hasattr(self.expander, "fit_state_scaler"):
+            self.expander.fit_state_scaler(x_n)
+
         if self.expansion_type in {"rbf", "hankel_svd"}:
+            fit_device = x_n.device
+            self.expander = self.expander.to(fit_device)
+            x_n = x_n.to(fit_device)
+            x_next_n = x_next_n.to(fit_device)
             self.expander.fit(x_n)
             self.expand_names = self.expander.expand_names
             self.state_indices = self.expander.state_indices
@@ -359,15 +372,20 @@ class Regression_DMD(nn.Module):
         self.Phi_lift_fitted = Phi_lift
         
         if Phi_lift.ndim > 1:
-            Phi_state = self.C_fitted.to(torch.complex128) @ Phi_lift
+            C_state = self.C_fitted.to(device=Phi_lift.device, dtype=torch.complex128)
+            Phi_state = C_state @ Phi_lift
         else:
-            Phi_state = self.C_fitted.to(torch.complex128)
+            Phi_state = self.C_fitted.to(device=Phi_lift.device, dtype=torch.complex128)
         
         self.Phi_state_fitted = Phi_state
         self.Phi_pinv_fitted = torch.linalg.pinv(Phi_lift) if Phi_lift.ndim > 1 else torch.linalg.pinv(Phi_lift.unsqueeze(1))
         self.Phi_fitted = Phi_lift
 
         return self.K_fitted, self.C_fitted
+
+    def forward(self, x):
+        """Return the next-state prediction using the configured rollout mode."""
+        return self.rollout(x, 1)[1]
 
     def _predict_one_step(self, x):
         x = self._to_tensor(x)
@@ -377,7 +395,8 @@ class Regression_DMD(nn.Module):
         x_n = self._normalize_x(x)
         z = self.expand(x_n) / self.psi_scale
         z_next = z @ self.K_fitted.T
-        x_next_n = z_next @ self.C_fitted.T
+        C = self.C_fitted.to(device=z_next.device, dtype=z_next.dtype)
+        x_next_n = z_next @ C.T
         
         # C_fitted outputs ONLY the head (state_dim). We must shift it for delay!
         x_next_head = self._denormalize_x(x_next_n)
@@ -429,6 +448,7 @@ class Regression_DMD(nn.Module):
         traj = [x0[:, :self.state_dim].clone()]
 
         has_bias_coord = len(self.expand_names) > 0 and self.expand_names[0] == "1"
+        C = self.C_fitted.to(device=z.device, dtype=z.dtype)
 
         for _ in range(steps):
             z = z @ self.K_fitted.T
@@ -437,7 +457,7 @@ class Regression_DMD(nn.Module):
             if has_bias_coord:
                 z[:, 0] = 1.0
 
-            x_next_n = z @ self.C_fitted.T
+            x_next_n = z @ C.T
             x_next = self._denormalize_x(x_next_n)
 
             traj.append(x_next[:, :self.state_dim].clone())
@@ -467,7 +487,7 @@ class Regression_DMD(nn.Module):
 
         Phi_lift = self.Phi_lift_fitted.to(torch.complex128)
         Lambda = self.Lambda_fitted.to(torch.complex128)
-        C = self.C_fitted.to(torch.complex128)
+        C = self.C_fitted.to(device=z0.device, dtype=torch.complex128)
 
         idx = self._prepare_mode_subset(mode_indices)
         if idx is not None:
@@ -506,7 +526,7 @@ class Regression_DMD(nn.Module):
 
         Phi = self.Phi_lift_fitted.to(torch.complex128)
         Lambda = self.Lambda_fitted.to(torch.complex128)
-        C = self.C_fitted.to(torch.complex128)
+        C = self.C_fitted.to(device=x.device, dtype=torch.complex128)
 
         idx = self._prepare_mode_subset(mode_indices)
         if idx is not None:

@@ -240,7 +240,7 @@ def load_model(
         model.eval()
         return model, extras
 
-    if model_name == "ml_lineardynamics":
+    if model_name == "ml_lineardynamics" or model_name == "ml_linear_dynamics":
         ckpt = torch.load(model_path, map_location=device)
         train_args = ckpt["train_args"]
 

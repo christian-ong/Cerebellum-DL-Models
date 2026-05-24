@@ -3,6 +3,7 @@ import torch
 
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.ml_dmd import ML_DMD
+from src.models.regression_dmd import Regression_DMD
 from src.models.mlp_baseline import MLP_BlackBox
 
 def build_run_name(args, system_name, run_id=None):
@@ -55,11 +56,32 @@ def build_model(args, state_dim, system_name, device):
             l1_weight=getattr(args, "l1_weight", 1e-6),
         ).to(device)
 
+    elif args.model == "regression_dmd":
+        model = Regression_DMD(
+            state_dim=state_dim,
+            expansion_degree=args.expansion_degree,
+            bias=args.bias == "true",
+            sine_cosine_expansion=args.sine_cosine_expansion == "true",
+            expansion_type=args.expansion_type,
+            system=system_name if args.expansion_type == "specific" else None,
+            delay_depth=getattr(args, "delay_depth", 1),
+            hankel_rank=getattr(args, "hankel_rank", None),
+            normalize_state=getattr(args, "normalize_state", "false") == "true",
+            normalize_lifted=getattr(args, "normalize_lifted", "true") == "true",
+            rollout_mode=getattr(args, "regression_rollout_mode", "DMD"),
+            ridge=getattr(args, "ridge", 0.0),
+            rank=getattr(args, "rank", None),
+            rbf_n_centers=getattr(args, "rbf_n_centers", 50),
+            rbf_center_selection=getattr(args, "rbf_center_selection", "farthest"),
+            rbf_bandwidth_mode=getattr(args, "rbf_bandwidth_mode", "knn"),
+            rbf_knn_k=getattr(args, "rbf_knn_k", 5),
+        ).to(device)
+
     elif args.model == "mlp_baseline":
         model = MLP_BlackBox(
             state_dim=state_dim,
-            hidden_dim=64,
-            num_layers=4,
+            hidden_dim=getattr(args, "hidden_dim", 64),
+            num_layers=getattr(args, "num_layers", 4),
         ).to(device)
 
     else:
@@ -113,7 +135,8 @@ def compute_loader_metrics(model, loader, device):
 
 
 def _build_rollout_initial_state(model, X):
-    delay_depth = int(getattr(model.expander, "delay_depth", 1))
+    expander = getattr(model, "expander", None)
+    delay_depth = int(getattr(expander, "delay_depth", 1)) if expander is not None else 1
     state_dim = int(model.state_dim)
 
     if delay_depth <= 1:
