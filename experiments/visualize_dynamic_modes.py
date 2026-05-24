@@ -9,19 +9,6 @@ from src.eval.visualize_modes import *
 This script visualizes the dynamic modes and eigensystem of a trained Koopman model.
 
 python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_long_spec10 --data_path data\trajectories\nonlinear\closed_trig_large\long\test.npz
-
-python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_long_gen3_fix3 --data_path data/trajectories/linear/saddle_point/long
-
-python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_long_spec10_fix3 --data_path data/trajectories/nonlinear/closed_trig_large/long
-
-python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_short_spec10_fix3 --data_path data/trajectories/nonlinear/duffing/long
-
-python -m experiments.visualize_dynamic_modes --model_name hardcoded_dmd --custom_name numpy --decomp_method numpy --data_path data/trajectories/nonlinear/closed_large/long
-python -m experiments.visualize_dynamic_modes --model_name hardcoded_dmd --custom_name jordan --decomp_method jordan --data_path data/trajectories/nonlinear/closed_large/long
-python -m experiments.visualize_dynamic_modes --model_name hardcoded_dmd --custom_name schur --decomp_method schur --data_path data/trajectories/nonlinear/closed_large/long
-
-
-python -m experiments.visualize_dynamic_modes --model_name hardcoded_dmd --custom_name default --decomp_method numpy --data_path data/trajectories/linear/harmonic_oscillator/long
 """
 
 # --------------------------------------------------
@@ -35,12 +22,13 @@ parser.add_argument("--custom_name", type=str, default="default", help="Custom n
 parser.add_argument("--data_path", type=str, required=True, help="Path to the dataset directory")
 
 parser.add_argument("--decomp_method", type=str, default="schur", choices=["numpy","jordan", "schur"], help="Method to use for decomposition (Jordan or Schur)")
+parser.add_argument("--mode_order", type=str, default="magnitude", choices=["original", "magnitude", "phase", "mse", "init_energy", "time_int_energy"], help="Criterion to order modes by for visualization")
 args = parser.parse_args()
 
 # Settings
 n_top_modes = 10
 grid_res = 100
-order_modes_by = "mse" # "original", "magnitude", "phase", "mse", "init_energy", "time_int_energy" || TODO: "quality", "power"
+order_modes_by = args.mode_order # "original", "magnitude", "phase", "mse", "init_energy", "time_int_energy" || TODO: "quality", "power"
 
 # Load test trajectories to find true boundaries and system name dynamically
 test_data_path = resolve_split_npz_path(args.data_path, "test")
@@ -178,13 +166,12 @@ elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven 
         n_steps = trajectories.shape[0] # use all steps available
         calculate_trajectories = trajectories[:n_steps, :n_trajectories, :] # (steps, id, state_dim)
 
-        sorted_idx_model, inv_mses, _ = modes_by_mse(
+        sorted_idx_model, mode_mses = modes_by_mse(
             model=model,
             Phi=Phi_model,
             Lambda=Lambda_model,
-            real_traj=calculate_trajectories,
-            model_type=model_type)
-        scores_model = inv_mses
+            real_traj=calculate_trajectories)
+        scores_model = mode_mses
 
     elif order_modes_by == "init_energy":
         # Energy of each mode in the initial conditions (higher energy modes are more important for reconstruction)
@@ -273,7 +260,7 @@ sorted_data = {
 }
 
 # --------------------------------------------------
-# Visualize mode trajectories (using real matrices to avoid hardcoded translation issues)
+# Visualize koopman mode rollouts
 # --------------------------------------------------
 # Parameters
 n_modes = 10
@@ -288,7 +275,6 @@ plot_koopman_mode_rollout(
     Phi=plot_Phi,
     Lambda=plot_Lambda,
     real_traj=plot_trajectories,
-    model_type=model_type,
     save_path=os.path.join(save_dir, "mode_trajectories_real.png")
 )
 
@@ -299,14 +285,12 @@ plot_koopman_mode_rollout(
     Phi=plot_Phi,
     Lambda=plot_Lambda,
     real_traj=plot_trajectories,
-    model_type=model_type,
     save_path=os.path.join(save_dir, "mode_trajectories_complex.png")
 )
 
 # --------------------------------------------------
 # Plot eigenfunctions (top N modes)
 # --------------------------------------------------
-# Plot
 plot_eigenfunctions(
     grid_points=grid_points, 
     grid_points_expanded=grid_points_expanded, 
@@ -316,6 +300,26 @@ plot_eigenfunctions(
     complex_pair_idx=sorted_data["model"]["complex"]["complex_pairs"],
     save_path=os.path.join(save_dir, "eigenfunctions.png")
 )
+
+# --------------------------------------------------
+# Plot truncated rollouts (using top N modes)
+# --------------------------------------------------
+# Parameters
+n_trajectories = 4
+n_modes = range(1, n_top_modes+1) # progressively include more modes to see how the reconstruction improves
+
+trunc_trajectories = trajectories[:, :n_trajectories, :] # (steps, id, state_dim)
+Phi = sorted_data["model"]["real"]["Phi"]
+Lambda = sorted_data["model"]["real"]["Lambda"]
+for n in n_modes:
+    truncated_rollout(
+        model=model,
+        # Phi=Phi,
+        # Lambda=Lambda,
+        real_traj=trunc_trajectories,
+        n_modes=n,
+        save_path=os.path.join(save_dir)
+    )
 
 # --------------------------------------------------
 # Spectrum plot with quality coloring
