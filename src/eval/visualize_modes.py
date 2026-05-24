@@ -1123,9 +1123,8 @@ def truncated_rollout(model, real_traj, n_modes=2, save_path=None):
     # 7. Calculate errors (RMSE)
     mse = np.mean((truncated_trajectory - real_traj[:, :, :state_dim]) ** 2, axis=(0, 2))
     rmse = np.sqrt(mse)
-
-    print(f"Min max real: {real_traj.real.min():.3e} to {real_traj.real.max():.3e}")
-    print(f"Min max truncated: {truncated_trajectory.real.min():.3e} to {truncated_trajectory.real.max():.3e}")
+    # print(f"Min max real: {real_traj.real.min():.3e} to {real_traj.real.max():.3e}")
+    # print(f"Min max truncated: {truncated_trajectory.real.min():.3e} to {truncated_trajectory.real.max():.3e}")
 
     # 9. Plot each trajectory in state space
     n_rows = 2
