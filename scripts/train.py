@@ -538,6 +538,19 @@ def main():
         # for i, name in enumerate(model.expand_names):
         #     print(f"  [{i:02d}] {name}")
         K, C = model.fit(X, Y)
+
+        if getattr(model, "singular_values_fitted", None) is not None:
+            s_np = model.singular_values_fitted.detach().cpu().numpy()
+            energy_np = np.cumsum(s_np**2) / np.sum(s_np**2)
+
+            print("\nSVD energy ranks:")
+            for threshold in [0.90, 0.95, 0.99, 0.999]:
+                rank_needed = int(np.searchsorted(energy_np, threshold) + 1)
+                print(f"  {100*threshold:5.1f}% -> rank {rank_needed}")
+
+            print(f"  total available rank -> {len(s_np)}")
+
+
         phi_cond = np.linalg.cond(model.Phi_lift_fitted.detach().cpu().numpy())
         print(f"cond(Phi_lift): {phi_cond:.3e}")
         K_np = model.K_fitted.detach().cpu().numpy()
@@ -595,6 +608,9 @@ def main():
             Lambda=model.Lambda_fitted.detach().cpu().numpy(),
             Phi_lift=model.Phi_lift_fitted.detach().cpu().numpy(),
             Phi_state=model.Phi_state_fitted.detach().cpu().numpy(),
+
+            svd_singular_values=model.singular_values_fitted.detach().cpu().numpy(),
+            svd_energy_cumulative=model.svd_energy_fitted.detach().cpu().numpy(),
         )
 
         if args.expansion_type == "rbf":

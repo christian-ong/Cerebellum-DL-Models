@@ -1,15 +1,16 @@
 import argparse
-from html import parser
 import os
 import numpy as np
 
-from src.eval.eval_runner import MODEL_CHOICES, parse_int_list, prepare_eval_context, save_metadata_json, maybe_load_core_summary
-from src.eval.metrics import (
-    compute_one_step_metrics,
-    compute_horizon_metrics,
-    compute_full_rollout_metrics,
-    compute_composite_validation_score,
+from src.eval.eval_runner import (
+    MODEL_CHOICES,
+    parse_int_list,
+    prepare_eval_context,
+    save_metadata_json,
+    maybe_load_core_summary,
+    compute_core_metrics_bundle,
 )
+
 from src.eval.diagnostics import run_diagnostics
 """
 Behavior diagnostics for a trained model.
@@ -84,7 +85,11 @@ def main():
     parser.add_argument("--phase_map_horizons", type=str, default="1,10,50", help="Comma-separated horizons for optional phase-space error maps.")
     parser.add_argument("--sampled_heatmap_horizon", type=int, default=10, help="Horizon used for the sampled-start heatmap.")
     parser.add_argument("--true_grid_horizons", type=str, default="1", help="Comma-separated horizons for dense true-grid heatmaps when enabled.")
-
+    parser.add_argument(
+    "--reuse_core_metrics",
+    action="store_true",
+    help="Reuse the core summary produced by eval.py instead of recomputing one-step, horizon, and rollout metrics.",
+)
     parser.add_argument("--heatmap_mode", type=str, default="traj_initials", choices=["traj_initials", "all_valid_starts"])
     parser.add_argument("--linear_error_scale", action="store_true")
     parser.add_argument("--metric_cap", type=int, default=64)
@@ -115,11 +120,13 @@ def main():
     grid_max = max(true_grid_horizons) if args.run_true_grid_heatmap else args.sampled_heatmap_horizon
     max_needed = max(max(metric_horizons), max(rollout_metric_horizons), phase_max, args.sampled_heatmap_horizon, grid_max)
 
+    need_cache_initially = args.use_cache and not args.reuse_core_metrics
+
     ctx = prepare_eval_context(
         args=args,
         split=args.split,
         subdir=f"diagnostics_{args.split}",
-        need_cache=args.use_cache,
+        need_cache=need_cache_initially,
         max_horizon_for_cache=max_needed,
     )
 
@@ -165,58 +172,85 @@ def main():
         raise IndexError(
             f"traj_index={args.traj_index} but only {len(ctx.traj_indices)} trajectories exist in split '{args.split}'"
         )
-
     metric_cap = None if args.metric_cap == 0 else args.metric_cap
 
-    print("Computing one-step metrics...")
-    one_step_metrics = compute_one_step_metrics(
-        X=ctx.X,
-        traj_indices=ctx.traj_indices,
-        model_name=args.model,
-        model=ctx.model,
-        extras=ctx.extras,
-        scale_std=ctx.scale_std,
-        max_pairs_per_traj=metric_cap,
-        rollout_cache=ctx.rollout_cache,
-    )
+    def _split_core_summary(summary):
+        one_step_metrics = {
+            k: v for k, v in summary.items()
+            if k.startswith("one_step_")
+        }
+        horizon_metrics = {
+            k: v for k, v in summary.items()
+            if k.startswith("horizon_") or k == "horizons"
+        }
+        rollout_metrics = {
+            k: v for k, v in summary.items()
+            if k.startswith("rollout_")
+        }
+        return one_step_metrics, horizon_metrics, rollout_metrics
 
-    print("Computing horizon metrics...")
-    horizon_metrics = compute_horizon_metrics(
-        X=ctx.X,
-        traj_indices=ctx.traj_indices,
-        horizons=metric_horizons,
-        model_name=args.model,
-        model=ctx.model,
-        extras=ctx.extras,
-        scale_std=ctx.scale_std,
-        max_starts_per_traj=metric_cap,
-        rollout_cache=ctx.rollout_cache,
-    )
 
-    print("Computing full-rollout metrics...")
-    rollout_metrics = compute_full_rollout_metrics(
-        X=ctx.X,
-        traj_indices=ctx.traj_indices,
-        rollout_horizons=rollout_metric_horizons,
-        model_name=args.model,
-        model=ctx.model,
-        extras=ctx.extras,
-        scale_std=ctx.scale_std,
-        rollout_cache=ctx.rollout_cache,
-    )
+    def _core_summary_matches_request(summary, metric_horizons, rollout_metric_horizons):
+        if "horizons" not in summary or "rollout_horizons" not in summary:
+            return False
 
-    composite = compute_composite_validation_score(
-        one_step_nrmse=float(one_step_metrics["one_step_nrmse"]),
-        horizon_nrmse=np.asarray(horizon_metrics["horizon_nrmse"]),
-        rollout_nrmse=np.asarray(rollout_metrics["rollout_nrmse"]),
-    )
+        saved_horizons = np.asarray(summary["horizons"], dtype=int)
+        saved_rollout_horizons = np.asarray(summary["rollout_horizons"], dtype=int)
 
-    summary = {}
-    summary.update(one_step_metrics)
-    summary.update(horizon_metrics)
-    summary.update(rollout_metrics)
-    summary["composite_score"] = np.array(composite)
+        return (
+            np.array_equal(saved_horizons, np.asarray(metric_horizons, dtype=int))
+            and np.array_equal(saved_rollout_horizons, np.asarray(rollout_metric_horizons, dtype=int))
+        )
 
+
+    if args.reuse_core_metrics:
+        if existing_core is None:
+            raise FileNotFoundError(
+                "--reuse_core_metrics was set, but no core summary from eval.py was found. "
+                "Run scripts.eval first with matching --split, --horizons, and --rollout_horizons."
+            )
+
+        if not _core_summary_matches_request(existing_core, metric_horizons, rollout_metric_horizons):
+            raise ValueError(
+                "Existing core summary does not match requested metric horizons.\n"
+                f"Requested metric_horizons={metric_horizons}, "
+                f"rollout_metric_horizons={rollout_metric_horizons}.\n"
+                f"Saved horizons={np.asarray(existing_core.get('horizons', []), dtype=int).tolist()}, "
+                f"saved rollout_horizons={np.asarray(existing_core.get('rollout_horizons', []), dtype=int).tolist()}.\n"
+                "Either rerun scripts.eval with matching horizons or remove --reuse_core_metrics."
+            )
+
+        print("[eval_behavior] Reusing core metrics from eval.py summary.")
+        summary = dict(existing_core)
+        one_step_metrics, horizon_metrics, rollout_metrics = _split_core_summary(summary)
+
+    else:
+        if args.reuse_core_metrics:
+            print("[eval_behavior] No reusable matching core summary found. Computing core metrics instead.")
+
+        if args.use_cache and ctx.rollout_cache is None:
+            ctx = prepare_eval_context(
+                args=args,
+                split=args.split,
+                subdir=f"diagnostics_{args.split}",
+                need_cache=True,
+                max_horizon_for_cache=max_needed,
+            )
+
+            if args.outdir:
+                ctx.figdir = args.outdir
+                os.makedirs(ctx.figdir, exist_ok=True)
+
+        print("Computing core metrics...")
+        summary, _ = compute_core_metrics_bundle(
+            ctx,
+            horizons=metric_horizons,
+            rollout_horizons=rollout_metric_horizons,
+        )
+
+        one_step_metrics, horizon_metrics, rollout_metrics = _split_core_summary(summary)
+
+    # Save a local diagnostics copy either way, so future behavior runs can find it.
     np.savez(os.path.join(ctx.figdir, "diagnostics_summary.npz"), **summary)
 
     run_diagnostics(

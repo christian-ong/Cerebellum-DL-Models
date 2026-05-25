@@ -52,6 +52,8 @@ class Regression_DMD(nn.Module):
         self.eps = eps
         self.hankel_rank = hankel_rank
 
+        self.singular_values_fitted = None
+        self.svd_energy_fitted = None
         # -------------------------------------------------
         # Expansion module
         # -------------------------------------------------
@@ -334,6 +336,11 @@ class Regression_DMD(nn.Module):
         Yc = Z_y.T   # (p, N)
 
         U, s, Vh = torch.linalg.svd(Xc, full_matrices=False)
+
+        # for noise experiments:
+        self.singular_values_fitted = s.detach().clone()
+        energy = s**2
+        self.svd_energy_fitted = torch.cumsum(energy, dim=0) / torch.sum(energy)
 
         r = len(s) if self.rank is None else max(1, min(int(self.rank), len(s)))
         U_r = U[:, :r]
