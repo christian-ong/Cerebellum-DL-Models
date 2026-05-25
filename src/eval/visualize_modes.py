@@ -606,56 +606,61 @@ def find_complex_pairs(
     if np.iscomplexobj(Lambda):
 
         block_indices = []
-        block_scores = []
+        block_errors = []
 
         for i in range(Lambda.shape[0]):
-            if (np.iscomplex(Lambda[i, i]) and 
-                i < Lambda.shape[0] - 1):
-                
-                if (Lambda[i,i].real - Lambda[i+1,i+1].real < threshold_diag and
-                    Lambda[i,i].imag - (-Lambda[i+1,i+1].imag) < threshold_diag):
+            for j in range(i+1, Lambda.shape[0]):
+                num1 = Lambda[i,i]
+                num2 = Lambda[j,j]
+                if (abs(num1.real - num2.real) < threshold_diag and
+                    abs(num1.imag - (-num2.imag)) < threshold_diag):
 
-                    block_indices.append((i, i+1))
-                    score = (Lambda[i,i].real - Lambda[i+1,i+1].real + 
-                             Lambda[i,i].imag - (-Lambda[i+1,i+1].imag))
-                    block_scores.append(score)
+                    block_indices.append((i, j))
+                    pair_error = (
+                        abs(num1.real - num2.real) + # higher if real parts are similar
+                        abs(num1.imag - (-num2.imag)) # higher if imaginary parts are similar
+                    )
+                    block_errors.append(pair_error)
 
     elif np.isrealobj(Lambda):
 
         block_indices = []
-        block_scores = []
+        block_errors = []
 
         # Loop through 2x2 diagonal blocks
-        for diag_idx in range(len(Lambda)-1):
+        for id1 in range(len(Lambda)-1):
+            for id2 in range(id1+1, len(Lambda)-1):
 
-            # Get 2x2 block <a,b; c,d>
-            a = Lambda[diag_idx, diag_idx]
-            b = Lambda[diag_idx, diag_idx+1]
-            c = Lambda[diag_idx+1, diag_idx]
-            d = Lambda[diag_idx+1, diag_idx+1]
+                # Get 2x2 block <a,b; c,d>
+                a = Lambda[id1, id1]
+                b = Lambda[id1, id2]
+                c = Lambda[id2, id1]
+                d = Lambda[id2, id2]
 
-            # Detect rotation blocks (significant off-diagonal values)
-            if ((abs(b) > threshold_off_diag) and # off-diag val 1 significant
-                (abs(c) > threshold_off_diag) and # off-diag val 2 significant
-                (np.sign(b) != np.sign(c)) and # off-diag vals have opposite signs, indicating rotation
-                (abs(a - d) < threshold_diag)): # diag vals similar 
+                # Detect rotation blocks (significant off-diagonal values)
+                if ((abs(b) > threshold_off_diag) and # off-diag val 1 significant
+                    (abs(c) > threshold_off_diag) and # off-diag val 2 significant
+                    (np.sign(b) != np.sign(c)) and # off-diag vals have opposite signs, indicating rotation
+                    (abs(a - d) < threshold_diag)): # diag vals similar 
 
-                block_indices.append((diag_idx, diag_idx+1))
+                    block_indices.append((id1, id2))
 
-                # Give a significance score
-                score_off_diag = (abs(b) + abs(c)) + abs(b - (-c)) # higher for more significant off-diagonal values and values are (conjugate) similar
-                score_diag = abs(a - d) # higher if a and d are closer
-                block_scores.append(score_off_diag + score_diag)
+                    # Give a significance score
+                    pair_error = (
+                        abs(b - (-c)) + # higher if im parts are similar
+                        abs(a - d) # higher if real parts are similar
+                    )
+                    block_errors.append(pair_error)
 
-    # Sort blocks by score
-    sorted_scores_idx = np.argsort(block_scores)[::-1] # descending order
-    sorted_block_scores = [block_scores[i] for i in sorted_scores_idx]
-    sorted_block_indices = [block_indices[i] for i in sorted_scores_idx]
+    # Sort blocks by error
+    sorted_errors_idx = np.argsort(block_errors)[::1] # ascending order
+    sorted_block_errors = [block_errors[i] for i in sorted_errors_idx]
+    sorted_block_indices = [block_indices[i] for i in sorted_errors_idx]
 
     # Remove overlapping blocks (keep only the highest scoring)
     final_blocks_idx = []
     final_idxs = []
-    for idx, score in zip(sorted_block_indices, sorted_block_scores):
+    for idx, error in zip(sorted_block_indices, sorted_block_errors):
         if not any(i in final_idxs for i in idx): # if not already included, include this block
             final_blocks_idx.append(idx)
             final_idxs.extend(idx)
@@ -796,54 +801,74 @@ def get_data_bounds_and_grid_points(trajectories, grid_res=100, state_dim=2):
     return state_bounds, grid_points
 
 
-def get_real_representation(V, eigvals, jordan_value=1.0, threshold_imag=1e-5, threshold_jordan=1):
+def get_real_representation(Phi, Lambda, complex_pairs, jordan_value=1.0, threshold_jordan=1):
+# def get_real_representation(Phi, eigvals, jordan_value=1.0, threshold_imag=1e-5, threshold_jordan=1):
     """
     Converts complex Koopman modes and eigenvalues into their 
     real-valued block-diagonal form.
     """
     
-    # Initialize real-valued V and Lambda
-    V_real = np.copy(np.real(V).astype(np.float64))
-    Lambda_real = np.copy(np.real(eigvals).astype(np.float64))
+    # Initialize real-valued Phi and Lambda
+    Phi_real = np.copy(np.real(Phi).astype(np.float64))
+    Lambda_real = np.copy(np.real(Lambda).astype(np.float64))
 
-    i = 0
-    while i < len(eigvals):
-        if abs(np.imag(eigvals[i,i])) < threshold_imag: # real eigenvalue
-            V_real[:, i] = np.real(V[:, i])
-            Lambda_real[i, i] = np.real(eigvals[i, i])
+    # Loop through complex pairs
+    for i, j in complex_pairs:
+        a = np.real(Lambda[i, i])
+        b = np.imag(Lambda[i, i])
+        c = np.imag(Lambda[j, j])
+        d = np.real(Lambda[j, j])
+
+        # Replace 2x2 block with complex conjugate pair
+        Lambda_real[i, i] = a
+        Lambda_real[i, j] = c
+        Lambda_real[j, i] = b
+        Lambda_real[j, j] = d
+
+        # Convert corresponding columns in Phi to real and imaginary parts
+        real_part = (Phi[:, i].real + Phi[:, j].real) / 2 # avg real
+        imag_part = (Phi[:, i].imag - Phi[:, j].imag) / 2 # avg imag
+        Phi_real[:, i] = real_part
+        Phi_real[:, j] = imag_part
+
+    # i = 0
+    # while i < len(Lambda):
+    #     if abs(np.imag(Lambda[i,i])) < threshold_imag: # real eigenvalue
+    #         Phi_real[:, i] = np.real(Phi[:, i])
+    #         Lambda_real[i, i] = np.real(Lambda[i, i])
             
-            if jordan_value != 0:
-                # Check for Jordan block
-                if (i + 2 <= len(eigvals) and (
-                    abs(eigvals[i+1,i]) > threshold_jordan or
-                    abs(eigvals[i,i+1]) > threshold_jordan
-                )): 
-                    Lambda_real[i, i+1] = jordan_value # Jordan block off-diagonal
+        #     if jordan_value != 0:
+        #         # Check for Jordan block
+        #         if (i + 2 <= len(Lambda) and (
+        #             abs(Lambda[i+1,i]) > threshold_jordan or
+        #             abs(Lambda[i,i+1]) > threshold_jordan
+        #         )): 
+        #             Lambda_real[i, i+1] = jordan_value # Jordan block off-diagonal
         
-            i += 1
+        #     i += 1
 
-        else: # complex conjugate pair
-            if i + 1 < len(eigvals):
-                V_real[:, i] = np.real(V[:, i]) # Re(v)
-                V_real[:, i+1] = np.imag(V[:, i]) # Im(v)
+        # else: # complex conjugate pair
+        #     if i + 1 < len(Lambda):
+        #         Phi_real[:, i] = np.real(Phi[:, i]) # Re(Phi)
+        #         Phi_real[:, i+1] = np.imag(Phi[:, i]) # Im(Phi)
                 
-                a = np.real(eigvals[i,i])
-                b = np.imag(eigvals[i,i])
-                c = np.imag(eigvals[i+1,i+1])
-                d = np.real(eigvals[i+1,i+1])
+        #         a = np.real(Lambda[i,i])
+        #         b = np.imag(Lambda[i,i])
+        #         c = np.imag(Lambda[i+1,i+1])
+        #         d = np.real(Lambda[i+1,i+1])
                 
-                # <a, -b; b, a> since Lambda is transposed
-                Lambda_real[i, i] = a
-                Lambda_real[i, i+1] = c
-                Lambda_real[i+1, i] = b
-                Lambda_real[i+1, i+1] = d
-                i += 2
-            else:
-                V_real[:, i] = np.real(V[:, i])
-                Lambda_real[i, i] = np.real(eigvals[i, i])
-                i += 1
+        #         # <a, -b; b, a> since Lambda is transposed
+        #         Lambda_real[i, i] = a
+        #         Lambda_real[i, i+1] = c
+        #         Lambda_real[i+1, i] = b
+        #         Lambda_real[i+1, i+1] = d
+        #         i += 2
+        #     else:
+        #         Phi_real[:, i] = np.real(Phi[:, i])
+        #         Lambda_real[i, i] = np.real(Lambda[i, i])
+        #         i += 1
 
-    return V_real, Lambda_real
+    return Phi_real, Lambda_real
 
 
 def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None, model_type="regression_dmd"):
