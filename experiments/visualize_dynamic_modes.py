@@ -9,19 +9,6 @@ from src.eval.visualize_modes import *
 This script visualizes the dynamic modes and eigensystem of a trained Koopman model.
 
 python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_long_spec10 --data_path data\trajectories\nonlinear\closed_trig_large\long\test.npz
-
-python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_long_gen3_fix3 --data_path data/trajectories/linear/saddle_point/long
-
-python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_long_spec10_fix3 --data_path data/trajectories/nonlinear/closed_trig_large/long
-
-python -m experiments.visualize_dynamic_modes --model_name ml_dmd_band --custom_name band_short_spec10_fix3 --data_path data/trajectories/nonlinear/duffing/long
-
-python -m experiments.visualize_dynamic_modes --model_name hardcoded_dmd --custom_name numpy --decomp_method numpy --data_path data/trajectories/nonlinear/closed_large/long
-python -m experiments.visualize_dynamic_modes --model_name hardcoded_dmd --custom_name jordan --decomp_method jordan --data_path data/trajectories/nonlinear/closed_large/long
-python -m experiments.visualize_dynamic_modes --model_name hardcoded_dmd --custom_name schur --decomp_method schur --data_path data/trajectories/nonlinear/closed_large/long
-
-
-python -m experiments.visualize_dynamic_modes --model_name hardcoded_dmd --custom_name default --decomp_method numpy --data_path data/trajectories/linear/harmonic_oscillator/long
 """
 
 # --------------------------------------------------
@@ -35,16 +22,16 @@ parser.add_argument("--custom_name", type=str, default="default", help="Custom n
 parser.add_argument("--data_path", type=str, required=True, help="Path to the dataset directory")
 
 parser.add_argument("--decomp_method", type=str, default="schur", choices=["numpy","jordan", "schur"], help="Method to use for decomposition (Jordan or Schur)")
+parser.add_argument("--mode_order", type=str, default="magnitude", choices=["original", "magnitude", "phase", "mse", "init_energy", "time_int_energy"], help="Criterion to order modes by for visualization")
 args = parser.parse_args()
 
-# Settings
-n_top_modes = 12
-grid_res = 100
-order_modes_by = "original" # "original", "magnitude" (abs lambda), "quality", "power", "energy"
-detect_complex_modes = True
-complex_mode_threshold = 1e-3
+if args.model_name not in {"ml_dmd", "regression_dmd"}:
+    raise ValueError("Mode visualization is only supported for 'ml_dmd' and 'regression_dmd'.")
 
-debug_printing = False
+# Settings
+n_top_modes = 10
+grid_res = 100
+order_modes_by = args.mode_order # "original", "magnitude", "phase", "mse", "init_energy", "time_int_energy" || TODO: "quality", "power"
 
 # Load test trajectories to find true boundaries and system name dynamically
 test_data_path = resolve_split_npz_path(args.data_path, "test")
@@ -57,8 +44,6 @@ print(f"Visualizing for System: {system}")
 # Load model and eigensystem
 if "ml" in args.model_name:
     model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model_best.pt"
-elif "hardcoded_dmd" in args.model_name:
-    model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model.pt"
 else:
     model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model.npz"
 
@@ -80,19 +65,19 @@ os.makedirs(save_dir, exist_ok=True)
 K_c_analytic, K_d_analytic, Lambda_analytic, Phi_analytic, analytic_expansion_names = get_system_matrices(system, decomp_type=args.decomp_method)
 
 # Find both complex and rotation block formats
+complex_mode_threshold = 1e-3
 complex_pair_idx = find_complex_pairs(
     Lambda_model, 
     threshold_off_diag=complex_mode_threshold, 
-    threshold_diag=complex_mode_threshold,
-    print_info=debug_printing
+    threshold_diag=complex_mode_threshold
 )
-if model_param_type == "real" and detect_complex_modes:
+if model_param_type == "real":
     Lambda_model_complex, Phi_model_complex = rotation_blocks_to_complex(
         Lambda_model, 
         Phi_model, 
         complex_pair_idx
     )
-elif model_param_type == "complex" and detect_complex_modes:
+elif model_param_type == "complex":
     Lambda_model_complex, Phi_model_complex = Lambda_model, Phi_model
     Phi_model, Lambda_model = get_real_representation(
         Phi_model, 
@@ -148,42 +133,90 @@ if order_modes_by == "original":
         "indices_analytic": np.arange(len(Lambda_analytic))
     }
 
-elif order_modes_by == "magnitude":
-    # sort model modes learnt by the model
-    if detect_complex_modes:
-        # For complex modes, we can use the magnitude of the eigenvalue (which is the same for both modes in a pair)
-        scores_model = np.abs(Lambda_model_complex.diagonal()) # Use diagonal since Lambda is now complex and diagonalized
-    else:
-        scores_model = np.linalg.norm(Lambda_model_complex, axis=1) # by row, since row i in Lambda determines row i in b_next
-    sorted_idx_model = np.argsort(scores_model)[::-1] # Descending order
-    # sort analytic modes
-    scores_analytic = np.abs(Lambda_analytic)
-    sorted_idx_analytic = np.argsort(scores_analytic)[::-1] # Descending order
-    
-    sorting_info["magnitude"] = {
+elif order_modes_by in ["magnitude", "phase"]: # simple soring criterias (also sorts analytic modes)
+    if order_modes_by == "magnitude":
+        if model_param_type == "complex": # magnitude = abs(lambda)
+            scores_model = np.abs(Lambda_model_complex.diagonal())
+            scores_analytic = np.abs(Lambda_analytic)
+        elif model_param_type == "real": # magnitude = norm(lambda_row) ; (since Lambda determines how mode i contributes to all modes in next step)
+            scores_model = np.linalg.norm(Lambda_model, axis=1)
+            scores_analytic = np.linalg.norm(Lambda_analytic, axis=1)
+        sorted_idx_model = np.argsort(scores_model)[::-1] # Descending order
+        sorted_idx_analytic = np.argsort(scores_analytic)[::-1] # Descending order
+
+    elif order_modes_by == "phase":
+        if model_param_type == "complex": # phase = angle(lambda)
+            scores_model = np.abs(np.angle(Lambda_model_complex.diagonal()))
+            scores_analytic = np.abs(np.angle(Lambda_analytic))
+        elif model_param_type == "real": # idk
+            scores_model = np.abs(np.angle(Lambda_model_complex.diagonal())) # idk
+            scores_analytic = np.abs(np.angle(Lambda_analytic)) # idk
+        sorted_idx_model = np.argsort(scores_model)[::1] # Ascending order
+        sorted_idx_analytic = np.argsort(scores_analytic)[::1] # Ascending order
+
+    sorting_info[order_modes_by] = {
         "scores_model": scores_model,
         "scores_analytic": scores_analytic,
         "indices_model": sorted_idx_model,
         "indices_analytic": sorted_idx_analytic
     }
 
-elif order_modes_by == "quality":
-    print("Warning: This one is cheating!")
-    sorted_idx_model, scores_model, _ = modes_by_quality(
-        model=model,
-        W=W,
-        eigvals_analytic=Lambda_analytic,
-        state_bounds=state_bounds
-    )
+elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven sorting criterias (doesn't sort analytic modes)
+    if order_modes_by == "mse":
+        n_trajectories = 3
+        n_steps = trajectories.shape[0] # use all steps available
+        calculate_trajectories = trajectories[:n_steps, :n_trajectories, :] # (steps, id, state_dim)
 
-    sorting_info["quality"] = {
+        sorted_idx_model, mode_mses = modes_by_mse(
+            model=model,
+            Phi=Phi_model,
+            Lambda=Lambda_model,
+            real_traj=calculate_trajectories)
+        scores_model = mode_mses
+
+    elif order_modes_by == "init_energy":
+        # Energy of each mode in the initial conditions (higher energy modes are more important for reconstruction)
+        with torch.no_grad():
+            expanded_init_conditions = safe_expand(model, torch.as_tensor(trajectories[0,:,:], dtype=torch.float32)).cpu().numpy() # (n_trajs, lifted_dim)
+        init_mode_amplitudes = expanded_init_conditions @ Phi_model # (n_trajs, n_modes)
+        mode_energies = np.linalg.norm(init_mode_amplitudes, axis=0) # (n_modes,)
+        sorted_idx_model = np.argsort(mode_energies)[::-1] # Descending order
+        scores_model = mode_energies
+
+    elif order_modes_by == "time_int_energy":
+        # Time-integrated energy of each mode along the trajectories (higher energy modes are more important for reconstruction)
+        with torch.no_grad():
+            expanded_traj = safe_expand(model, torch.as_tensor(trajectories.reshape(-1, state_dim), dtype=torch.float32)).cpu().numpy() # (n_steps*n_trajs, lifted_dim)
+        mode_amplitudes = expanded_traj @ Phi_model # (n_steps*n_trajs, n_modes)
+        mode_energies = np.linalg.norm(mode_amplitudes, axis=0) # (n_modes,)
+        sorted_idx_model = np.argsort(mode_energies)[::-1] # Descending order
+        scores_model = mode_energies
+
+    sorting_info[order_modes_by] = {
         "scores_model": scores_model,
         "indices_model": sorted_idx_model,
-
-        # in this case, model = analytic
-        "scores_analytic": scores_model, 
-        "indices_analytic": sorted_idx_model
+        "scores_analytic": np.zeros(len(Lambda_analytic)), # dummy scores for plotting
+        "indices_analytic": np.arange(len(Lambda_analytic)) # keep original order for analytic modes
     }
+
+# # Deprecated : This one cheats
+# elif order_modes_by == "quality":
+#     print("Warning: This one is cheating!")
+#     sorted_idx_model, scores_model, _ = modes_by_quality_deprecated(
+#         model=model,
+#         W=W,
+#         eigvals_analytic=Lambda_analytic,
+#         state_bounds=state_bounds
+#     )
+
+#     sorting_info[order_modes_by] = {
+#         "scores_model": scores_model,
+#         "indices_model": sorted_idx_model,
+
+#         # in this case, model = analytic
+#         "scores_analytic": scores_model, 
+#         "indices_analytic": sorted_idx_model
+#     }
 
 else:
     raise ValueError(f"Invalid mode ordering method: {order_modes_by}")
@@ -192,13 +225,12 @@ else:
 sorting = sorting_info[order_modes_by]
 
 # update complex pair indices to reflect sorting
-if detect_complex_modes:
-    sorted_complex_pair_idx = []
-    for i, j in complex_pair_idx:
-        new_i = np.where(sorting["indices_model"] == i)[0][0]
-        new_j = np.where(sorting["indices_model"] == j)[0][0]
-        sorted_complex_pair_idx.append((new_i, new_j))
-    complex_pair_idx = sorted_complex_pair_idx
+sorted_complex_pair_idx = []
+for i, j in complex_pair_idx:
+    new_i = np.where(sorting["indices_model"] == i)[0][0]
+    new_j = np.where(sorting["indices_model"] == j)[0][0]
+    sorted_complex_pair_idx.append((new_i, new_j))
+complex_pair_idx = sorted_complex_pair_idx
 
 sorted_data = {
     "model": {
@@ -208,7 +240,7 @@ sorted_data = {
             "K": K_model[sorting["indices_model"]][:, sorting["indices_model"]],
             "scores": sorting["scores_model"][sorting["indices_model"]], # sorted
             "indeces": sorting["indices_model"],
-            "complex_pairs": complex_pair_idx if detect_complex_modes else None,
+            "complex_pairs": complex_pair_idx,
         },
         "real": {
             "Lambda": Lambda_model[sorting["indices_model"]][:, sorting["indices_model"]], # matrix
@@ -216,7 +248,7 @@ sorted_data = {
             "K": K_model[sorting["indices_model"]][:, sorting["indices_model"]],
             "scores": sorting["scores_model"][sorting["indices_model"]], # sorted
             "indeces": sorting["indices_model"],
-            "complex_pairs": complex_pair_idx if detect_complex_modes else None,
+            "complex_pairs": complex_pair_idx,
         }
     },
     "analytic": {
@@ -228,18 +260,8 @@ sorted_data = {
     }
 }
 
-if debug_printing:
-    print(f"Total modes: {num_modes}")
-    print(f"Top {n_top_modes} modes:")
-    print(f"  Model:")
-    print(f"    Indices: {sorted_data['model']['indeces'][:n_top_modes]}")
-    print(f"    Scores: {[f'{s:.4f}' for s in sorted_data['model']['scores'][:n_top_modes]]}")
-    print(f"  Analytic:")
-    print(f"    Indices: {sorted_data['analytic']['indeces'][:n_top_modes]}")
-    print(f"    Scores: {[f'{s:.4f}' for s in sorted_data['analytic']['scores'][:n_top_modes]]}")
-
 # --------------------------------------------------
-# Visualize mode trajectories (using real matrices to avoid hardcoded translation issues)
+# Visualize koopman mode rollouts
 # --------------------------------------------------
 # Parameters
 n_modes = 10
@@ -254,7 +276,6 @@ plot_koopman_mode_rollout(
     Phi=plot_Phi,
     Lambda=plot_Lambda,
     real_traj=plot_trajectories,
-    model_type=model_type,
     save_path=os.path.join(save_dir, "mode_trajectories_real.png")
 )
 
@@ -265,14 +286,12 @@ plot_koopman_mode_rollout(
     Phi=plot_Phi,
     Lambda=plot_Lambda,
     real_traj=plot_trajectories,
-    model_type=model_type,
     save_path=os.path.join(save_dir, "mode_trajectories_complex.png")
 )
 
 # --------------------------------------------------
 # Plot eigenfunctions (top N modes)
 # --------------------------------------------------
-# Plot
 plot_eigenfunctions(
     grid_points=grid_points, 
     grid_points_expanded=grid_points_expanded, 
@@ -282,6 +301,33 @@ plot_eigenfunctions(
     complex_pair_idx=sorted_data["model"]["complex"]["complex_pairs"],
     save_path=os.path.join(save_dir, "eigenfunctions.png")
 )
+
+# --------------------------------------------------
+# Plot truncated rollouts (using top N modes)
+# --------------------------------------------------
+# Parameters
+n_trajectories = 4
+n_modes = range(1, n_top_modes+1) # progressively include more modes to see how the reconstruction improves
+
+trunc_trajectories = trajectories[:, :n_trajectories, :] # (steps, id, state_dim)
+Phi = sorted_data["model"]["real"]["Phi"]
+Lambda = sorted_data["model"]["real"]["Lambda"]
+has_fitted_decoder = all(
+    hasattr(model, attr)
+    for attr in ("Phi_lift_fitted", "Lambda_fitted", "C_fitted", "psi_scale", "x_scale")
+)
+if has_fitted_decoder:
+    for n in n_modes:
+        truncated_rollout(
+            model=model,
+            # Phi=Phi,
+            # Lambda=Lambda,
+            real_traj=trunc_trajectories,
+            n_modes=n,
+            save_path=os.path.join(save_dir)
+        )
+else:
+    print("Skipping truncated rollout plot: model does not expose fitted decoder tensors.")
 
 # --------------------------------------------------
 # Spectrum plot with quality coloring

@@ -3,14 +3,24 @@ import torch
 
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.ml_dmd import ML_DMD
+from src.models.regression_dmd import Regression_DMD
 from src.models.mlp_baseline import MLP_BlackBox
+from src.models.sindy_baseline import SINDyBaseline
 
 def build_run_name(args, system_name, run_id=None):
     parts = [system_name, args.model]
     parts.append(f"lr{args.lr:.0e}")
     parts.append(f"bs{args.batch_size}")
 
-    if hasattr(args, "expansion_type"):
+    if args.model == "sindy_baseline":
+        parts.append(f"lib{getattr(args, 'sindy_library_type', 'polynomial')}")
+        parts.append(f"dt{getattr(args, 'sindy_discrete_time', 'false')}")
+        parts.append(f"p{getattr(args, 'sindy_poly_order', 3)}")
+        parts.append(f"th{getattr(args, 'sindy_threshold', 0.1):.0e}")
+        basis_size = getattr(args, "sindy_specific_basis_size", None)
+        if basis_size is not None:
+            parts.append(f"k{basis_size}")
+    elif hasattr(args, "expansion_type"):
         parts.append(args.expansion_type)
         parts.append(f"deg{args.expansion_degree}")
         parts.append(f"trig{args.sine_cosine_expansion}")
@@ -55,12 +65,48 @@ def build_model(args, state_dim, system_name, device):
             l1_weight=getattr(args, "l1_weight", 1e-6),
         ).to(device)
 
+    elif args.model == "regression_dmd":
+        model = Regression_DMD(
+            state_dim=state_dim,
+            expansion_degree=args.expansion_degree,
+            bias=args.bias == "true",
+            sine_cosine_expansion=args.sine_cosine_expansion == "true",
+            expansion_type=args.expansion_type,
+            system=system_name if args.expansion_type == "specific" else None,
+            delay_depth=getattr(args, "delay_depth", 1),
+            hankel_rank=getattr(args, "hankel_rank", None),
+            normalize_state=getattr(args, "normalize_state", "false") == "true",
+            normalize_lifted=getattr(args, "normalize_lifted", "true") == "true",
+            rollout_mode=getattr(args, "regression_rollout_mode", "DMD"),
+            ridge=getattr(args, "ridge", 0.0),
+            rank=getattr(args, "rank", None),
+            rbf_n_centers=getattr(args, "rbf_n_centers", 50),
+            rbf_center_selection=getattr(args, "rbf_center_selection", "farthest"),
+            rbf_bandwidth_mode=getattr(args, "rbf_bandwidth_mode", "knn"),
+            rbf_knn_k=getattr(args, "rbf_knn_k", 5),
+        ).to(device)
+
     elif args.model == "mlp_baseline":
         model = MLP_BlackBox(
             state_dim=state_dim,
-            hidden_dim=64,
-            num_layers=4,
+            hidden_dim=getattr(args, "hidden_dim", 64),
+            num_layers=getattr(args, "num_layers", 4),
         ).to(device)
+
+    elif args.model == "sindy_baseline":
+        model = SINDyBaseline(
+            discrete_time=getattr(args, "sindy_discrete_time", "false") == "true",
+            poly_order=getattr(args, "sindy_poly_order", 3),
+            include_bias=getattr(args, "sindy_include_bias", "true") == "true",
+            include_interaction=getattr(args, "sindy_include_interaction", "true") == "true",
+            threshold=getattr(args, "sindy_threshold", 0.1),
+            alpha=getattr(args, "sindy_alpha", 0.0),
+            differentiation_method=getattr(args, "sindy_diff_method", "finite_difference"),
+            library_type=getattr(args, "sindy_library_type", "polynomial"),
+            fourier_n_frequencies=getattr(args, "sindy_fourier_n_frequencies", 1),
+            specific_system=system_name if getattr(args, "sindy_library_type", "polynomial") == "specific" else None,
+            specific_basis_size=getattr(args, "sindy_specific_basis_size", None),
+        )
 
     else:
         raise ValueError(f"Unsupported model: {args.model}")
@@ -68,11 +114,26 @@ def build_model(args, state_dim, system_name, device):
     return model
 
 
+def _predict_next_batch(model, x, device):
+    if isinstance(model, torch.nn.Module):
+        return model(x)
+
+    if not hasattr(model, "rollout"):
+        raise TypeError(f"Model {type(model).__name__} does not support batched prediction")
+
+    preds = []
+    for xi in x:
+        rollout = model.rollout(xi.detach().cpu().numpy(), 1)
+        preds.append(torch.as_tensor(rollout[1], device=device, dtype=x.dtype))
+    return torch.stack(preds, dim=0)
+
+
 def compute_loader_metrics(model, loader, device):
     if loader is None or len(loader.dataset) == 0:
         return None, None
 
-    model.eval()
+    if isinstance(model, torch.nn.Module):
+        model.eval()
 
     total_loss = 0.0
     total_sq_err = 0.0
@@ -95,7 +156,7 @@ def compute_loader_metrics(model, loader, device):
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
 
-            y_hat = model(x)
+            y_hat = _predict_next_batch(model, x, device)
             diff = y_hat - y
             loss = torch.mean(diff ** 2)
 
@@ -113,8 +174,9 @@ def compute_loader_metrics(model, loader, device):
 
 
 def _build_rollout_initial_state(model, X):
-    delay_depth = int(getattr(model.expander, "delay_depth", 1))
-    state_dim = int(model.state_dim)
+    expander = getattr(model, "expander", None)
+    delay_depth = int(getattr(expander, "delay_depth", 1)) if expander is not None else 1
+    state_dim = int(getattr(model, "state_dim", X.shape[-1]))
 
     if delay_depth <= 1:
         return X[0], 0
@@ -155,7 +217,6 @@ def compute_rollout_metrics(
     if max_h < 1:
         return None
 
-    model.eval()
     results = {"rollout_failed": 0.0}
 
     with torch.no_grad():
@@ -165,23 +226,62 @@ def compute_rollout_metrics(
         if max_h < 1:
             return None
 
-        rollout_pred = model.rollout(x0, max_h)
+        if isinstance(model, torch.nn.Module):
+            model.eval()
+            rollout_pred = model.rollout(x0, max_h)
+        else:
+            rollout_pred = None
 
-        if not torch.isfinite(rollout_pred).all():
-            results["rollout_failed"] = 1.0
-            for hh in eval_horizons:
-                results[f"rollout_mse_h{hh}"] = np.nan
+        if rollout_pred is not None:
+            if not torch.isfinite(rollout_pred).all():
+                results["rollout_failed"] = 1.0
+                for hh in eval_horizons:
+                    results[f"rollout_mse_h{hh}"] = np.nan
+                return results
+
+            # Compute cumulative MSE for each horizon (matching training loss computation), then take RMSE
+            for h in eval_horizons:
+                if h <= max_h:
+                    cumulative_mse = torch.tensor(0.0, device=device)
+                    for k in range(1, h + 1):
+                        diff = rollout_pred[k] - X[start_idx + k]
+                        cumulative_mse += torch.mean(diff ** 2)
+                    avg_mse = cumulative_mse / h
+                    avg_rmse = torch.sqrt(avg_mse)
+                    results[f"rollout_rmse_h{h}"] = float(avg_rmse.item())
+
             return results
 
-        # Compute cumulative MSE for each horizon (matching training loss computation), then take RMSE
+        # Non-torch baselines like SINDy only support single-trajectory rollouts,
+        # so evaluate trajectory-by-trajectory.
+        n_traj = X.shape[1]
         for h in eval_horizons:
-            if h <= max_h:
+            if h > max_h:
+                continue
+
+            cumulative_rmse = 0.0
+            counted = 0
+
+            for traj_idx in range(n_traj):
+                x0_single = X[start_idx, traj_idx].detach().cpu().numpy()
+                rollout_pred_single = model.rollout(x0_single, h)
+                rollout_pred_single = torch.as_tensor(rollout_pred_single, device=device, dtype=X.dtype)
+
+                if not torch.isfinite(rollout_pred_single).all():
+                    results["rollout_failed"] = 1.0
+                    results[f"rollout_rmse_h{h}"] = np.nan
+                    break
+
                 cumulative_mse = torch.tensor(0.0, device=device)
                 for k in range(1, h + 1):
-                    diff = rollout_pred[k] - X[start_idx + k]
+                    diff = rollout_pred_single[k] - X[start_idx + k, traj_idx]
                     cumulative_mse += torch.mean(diff ** 2)
+
                 avg_mse = cumulative_mse / h
-                avg_rmse = torch.sqrt(avg_mse)
-                results[f"rollout_rmse_h{h}"] = float(avg_rmse.item())
+                cumulative_rmse += float(torch.sqrt(avg_mse).item())
+                counted += 1
+
+            if counted > 0 and results.get(f"rollout_rmse_h{h}") is None:
+                results[f"rollout_rmse_h{h}"] = cumulative_rmse / counted
 
     return results

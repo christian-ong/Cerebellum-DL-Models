@@ -15,6 +15,9 @@ from src.eval.sweep_utils import (
     compute_rollout_metrics,
 )
 from src.train.train_onestep_sweep import train_onestep_sweep
+from src.models.regression_dmd import Regression_DMD
+from src.models.linear_baseline import fit_linear_map, rollout_linear_map
+from src.models.dmd_baseline import fit_dmd, rollout_dmd_eig
 
 def prepare_ml_expander_and_lift_stats(
     *,
@@ -85,10 +88,20 @@ def update_best_metrics(best_metrics, current_metrics, current_epoch):
         if key not in best_metrics or value < best_metrics[key]["value"]:
             best_metrics[key] = {"value": float(value), "epoch": int(current_epoch)}
 
+
+def dataloader_to_numpy(loader):
+    """Collect all (x, y) pairs from a DataLoader into NumPy arrays."""
+    xs, ys = [], []
+    for batch in loader:
+        x, y = batch[0], batch[1]
+        xs.append(x.numpy())
+        ys.append(y.numpy())
+    return np.vstack(xs), np.vstack(ys)
+
 def main():
     parser = argparse.ArgumentParser(description="Fast W&B sweep training for Koopman models")
 
-    parser.add_argument("--model", type=str, required=True, choices=["ml_linear_dynamics", "ml_lineardynamics", "ml_dmd", "mlp_baseline"])
+    parser.add_argument("--model", type=str, required=True, choices=["ml_linear_dynamics", "ml_lineardynamics", "ml_dmd", "regression_dmd", "mlp_baseline", "sindy_baseline", "linear_baseline", "dmd_baseline"])
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--name", type=str, default="run")
 
@@ -97,11 +110,18 @@ def main():
     parser.add_argument("--batch_size", type=int, default=2048)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-6)
+    parser.add_argument("--hidden_dim", type=int, default=64, help="Hidden layer width for mlp_baseline.")
+    parser.add_argument("--num_layers", type=int, default=4, help="Number of layers for mlp_baseline.")
 
     parser.add_argument("--bias", type=str.lower, choices=["true", "false"], default="true")
     parser.add_argument("--expansion_type", type=str, choices=["general", "specific", "rbf", "delay", "hankel_svd"], default="general")
     parser.add_argument("--expansion_degree", type=int, default=3)
     parser.add_argument("--sine_cosine_expansion", type=str.lower, choices=["true", "false"], default="false")
+    parser.add_argument("--normalize_state", type=str.lower, choices=["true", "false"], default="false")
+    parser.add_argument("--normalize_lifted", type=str.lower, choices=["true", "false"], default="true")
+    parser.add_argument("--rank", type=int, default=None)
+    parser.add_argument("--ridge", type=float, default=0.0)
+    parser.add_argument("--regression_rollout_mode", type=str, default="DMD", choices=["linear_dynamics", "DMD", "projected_DMD"], help="Default rollout mode for regression_dmd checkpoints.")
     parser.add_argument("--delay_depth", type=int, default=1, help="Number of stacked delay coordinates to use when expansion_type='delay'.")
     parser.add_argument("--hankel_rank", type=int, default=None, help="Number of SVD delay coordinates when expansion_type='hankel_svd'.")
     parser.add_argument("--expander_fit_samples", type=int, default=0, help="Max training samples used to fit data-dependent ML expanders. Use 0 for all available.")
@@ -111,6 +131,32 @@ def main():
     parser.add_argument("--rbf_knn_k", type=int, default=5, help="k for k-nearest-center bandwidth when expansion_type='rbf'.")
     parser.add_argument("--load_rbf_from", type=str, default=None, help="Path to a model file to load fixed RBF centers from.")
     parser.add_argument("--l1_weight", type=float, default=1e-6, help="L1 regularization weight for regression DMD")
+
+    parser.add_argument("--sindy_discrete_time", type=str.lower, choices=["true", "false"], default="false")
+    parser.add_argument("--sindy_poly_order", type=int, default=3)
+    parser.add_argument("--sindy_threshold", type=float, default=0.1)
+    parser.add_argument("--sindy_alpha", type=float, default=0.0)
+    parser.add_argument("--sindy_include_bias", type=str.lower, choices=["true", "false"], default="true")
+    parser.add_argument("--sindy_include_interaction", type=str.lower, choices=["true", "false"], default="true")
+    parser.add_argument(
+        "--sindy_diff_method",
+        type=str,
+        default="finite_difference",
+        choices=["finite_difference", "smoothed_finite_difference"],
+    )
+    parser.add_argument(
+        "--sindy_library_type",
+        type=str,
+        default="polynomial",
+        choices=["polynomial", "fourier", "poly_fourier", "specific"],
+    )
+    parser.add_argument("--sindy_fourier_n_frequencies", type=int, default=1)
+    parser.add_argument(
+        "--sindy_specific_basis_size",
+        type=int,
+        default=None,
+        help="If using sindy_library_type='specific', use the first k basis terms for that system.",
+    )
 
     parser.add_argument("--eval_every", type=int, default=1)
     parser.add_argument("--max_val_rollout_trajs", type=int, default=None)
@@ -159,7 +205,11 @@ def main():
         project="koopman-operator-learning",
         config=vars(args),
         group=f"{system_name}_{args.model}",
-        tags=[system_name, args.model, args.expansion_type],
+        tags=[
+            system_name,
+            args.model,
+            args.sindy_library_type if args.model == "sindy_baseline" else args.expansion_type,
+        ],
     )
 
     config = wandb.config
@@ -230,8 +280,309 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=pin_memory)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, pin_memory=pin_memory) if len(val_ds) > 0 else None
 
+    # Track best metrics for the final W&B summary.
+    best_metrics = {}
+
+    # Handle simple non-ML baselines that are fit-once and use NumPy rollouts
+    if args.model == "linear_baseline":
+        print("Fitting linear baseline...")
+        X_train, Y_train = dataloader_to_numpy(train_loader)
+        M = fit_linear_map(X_train, Y_train)
+
+        class LinearWrap:
+            def __init__(self, M):
+                self.M = M
+                self.state_dim = M.shape[0]
+
+            def rollout(self, x0, steps):
+                return rollout_linear_map(self.M, x0, steps)
+
+        model = LinearWrap(M)
+
+        train_loss, train_rmse = compute_loader_metrics(model, train_loader, device)
+        val_loss, val_rmse = compute_loader_metrics(model, val_loader, device) if val_loader is not None else (None, None)
+
+        metrics = {
+            "train_loss": train_loss,
+            "train_onestep_rmse": train_rmse,
+            "val_loss": val_loss,
+            "val_onestep_rmse": val_rmse,
+        }
+
+        rollout_metrics = compute_rollout_metrics(
+            model=model,
+            X=val_X,
+            device=device,
+            eval_horizons=eval_horizons,
+            max_trajs=args.max_val_rollout_trajs,
+        )
+        if rollout_metrics is not None:
+            for k, v in rollout_metrics.items():
+                metrics[f"val_{k}"] = v
+
+        wandb.log(metrics, step=0)
+        update_best_metrics(best_metrics, metrics, 0)
+
+        save_kwargs = dict(
+            train_args=vars(args),
+            model="linear_baseline",
+            system=system_name,
+            M=M,
+        )
+
+        save_path = os.path.join(save_dir, "model.npz")
+        np.savez(save_path, **save_kwargs)
+        print(f"Saved linear baseline checkpoint to: {save_path}")
+
+        for metric_name, data in best_metrics.items():
+            wandb.summary[f"best_{metric_name}"] = data["value"]
+            wandb.summary[f"best_{metric_name}_epoch"] = data["epoch"]
+
+        wandb.finish()
+        return
+
+    if args.model == "dmd_baseline":
+        print("Fitting DMD baseline...")
+        X_train, Y_train = dataloader_to_numpy(train_loader)
+        Lambda, Phi = fit_dmd(X_train, Y_train, rank=getattr(args, "rank", None), ridge=getattr(args, "ridge", 0.0))
+
+        class DMDWrap:
+            def __init__(self, Lambda, Phi):
+                self.Lambda = Lambda
+                self.Phi = Phi
+                self.state_dim = Phi.shape[0]
+
+            def rollout(self, x0, steps):
+                return rollout_dmd_eig(self.Lambda, self.Phi, x0, steps)
+
+        model = DMDWrap(Lambda, Phi)
+
+        train_loss, train_rmse = compute_loader_metrics(model, train_loader, device)
+        val_loss, val_rmse = compute_loader_metrics(model, val_loader, device) if val_loader is not None else (None, None)
+
+        metrics = {
+            "train_loss": train_loss,
+            "train_onestep_rmse": train_rmse,
+            "val_loss": val_loss,
+            "val_onestep_rmse": val_rmse,
+        }
+
+        rollout_metrics = compute_rollout_metrics(
+            model=model,
+            X=val_X,
+            device=device,
+            eval_horizons=eval_horizons,
+            max_trajs=args.max_val_rollout_trajs,
+        )
+        if rollout_metrics is not None:
+            for k, v in rollout_metrics.items():
+                metrics[f"val_{k}"] = v
+
+        wandb.log(metrics, step=0)
+        update_best_metrics(best_metrics, metrics, 0)
+
+        save_kwargs = dict(
+            train_args=vars(args),
+            model="dmd_baseline",
+            system=system_name,
+            Lambda=Lambda,
+            Phi=Phi,
+        )
+
+        save_path = os.path.join(save_dir, "model.npz")
+        np.savez(save_path, **save_kwargs)
+        print(f"Saved DMD baseline checkpoint to: {save_path}")
+
+        for metric_name, data in best_metrics.items():
+            wandb.summary[f"best_{metric_name}"] = data["value"]
+            wandb.summary[f"best_{metric_name}_epoch"] = data["epoch"]
+
+        wandb.finish()
+        return
+
     # Model
     model = build_model(args, state_dim, system_name, device)
+
+    if args.model == "sindy_baseline":
+        print("Fitting SINDy baseline...")
+
+        sindy_discrete_time = args.sindy_discrete_time == "true"
+
+        if sindy_discrete_time:
+            X_train, Y_train = dataloader_to_numpy(train_loader)
+            model.fit_discrete_pairs(X_train, Y_train)
+        else:
+            train_split_path = resolve_split_npz_path(args.data_path, "train")
+            meta_data = np.load(train_split_path)
+            X_traj = meta_data["X"]
+            dt = float(meta_data["dt"])
+            if X_traj.ndim != 3:
+                raise ValueError("Continuous SINDy expects X with shape (T, n_traj, d)")
+            model.fit_continuous_trajectories(X_traj, dt=dt)
+
+        train_loss, train_rmse = compute_loader_metrics(model, train_loader, device)
+        val_loss, val_rmse = compute_loader_metrics(model, val_loader, device) if val_loader is not None else (None, None)
+
+        metrics = {
+            "train_loss": train_loss,
+            "train_onestep_rmse": train_rmse,
+            "val_loss": val_loss,
+            "val_onestep_rmse": val_rmse,
+        }
+
+        rollout_metrics = compute_rollout_metrics(
+            model=model,
+            X=val_X,
+            device=device,
+            eval_horizons=eval_horizons,
+            max_trajs=args.max_val_rollout_trajs,
+        )
+        if rollout_metrics is not None:
+            for k, v in rollout_metrics.items():
+                metrics[f"val_{k}"] = v
+
+        wandb.log(metrics, step=0)
+        update_best_metrics(best_metrics, metrics, 0)
+
+        save_kwargs = dict(
+            train_args=vars(args),
+            model="sindy_baseline",
+            system=system_name,
+            data_path=args.data_path,
+            discrete_time=sindy_discrete_time,
+            poly_order=args.sindy_poly_order,
+            threshold=args.sindy_threshold,
+            alpha=args.sindy_alpha,
+            include_bias=args.sindy_include_bias == "true",
+            include_interaction=args.sindy_include_interaction == "true",
+            diff_method=args.sindy_diff_method,
+            library_type=args.sindy_library_type,
+            fourier_n_frequencies=args.sindy_fourier_n_frequencies,
+            specific_system=system_name if args.sindy_library_type == "specific" else "",
+            specific_basis_size=-1 if args.sindy_specific_basis_size is None else args.sindy_specific_basis_size,
+            coefficients=model.get_coefficients(),
+            equations=np.array(model.equations(), dtype=object),
+        )
+
+        save_path = os.path.join(save_dir, "model.npz")
+        np.savez(save_path, **save_kwargs)
+
+        with open(os.path.join(save_dir, "equations.txt"), "w", encoding="utf-8") as handle:
+            for equation in model.equations():
+                handle.write(equation + "\n")
+
+        print(f"Saved SINDy checkpoint to: {save_path}")
+
+        for metric_name, data in best_metrics.items():
+            wandb.summary[f"best_{metric_name}"] = data["value"]
+            wandb.summary[f"best_{metric_name}_epoch"] = data["epoch"]
+
+        wandb.finish()
+        return
+
+    # Regression DMD is fit once, then evaluated and saved using the same
+    # data flow as scripts/train.py.
+    if args.model == "regression_dmd":
+        if hasattr(args, "load_rbf_from") and args.load_rbf_from:
+            print(f"Loading fixed RBF centers and sigmas from: {args.load_rbf_from}")
+            try:
+                loaded_data = np.load(args.load_rbf_from)
+                c_tensor = torch.as_tensor(loaded_data["rbf_centers"], dtype=torch.float32, device=device)
+                s_tensor = torch.as_tensor(loaded_data["rbf_sigmas"], dtype=torch.float32, device=device)
+
+                model.expander.centers.copy_(c_tensor)
+                model.expander.sigmas.copy_(s_tensor)
+                model.expander.is_fitted = True
+                model.expander.freeze_centers = True
+            except Exception as e:
+                print(f"Warning: Failed to load RBF from {args.load_rbf_from}: {e}")
+
+        X_train, Y_train = dataloader_to_numpy(train_loader)
+        print("Fitting regression_dmd...")
+        model.fit(X_train, Y_train)
+
+        train_loss, train_rmse = compute_loader_metrics(model, train_loader, device)
+        val_loss, val_rmse = compute_loader_metrics(model, val_loader, device) if val_loader is not None else (None, None)
+
+        metrics = {
+            "train_loss": train_loss,
+            "train_onestep_rmse": train_rmse,
+            "val_loss": val_loss,
+            "val_onestep_rmse": val_rmse,
+        }
+
+        rollout_metrics = compute_rollout_metrics(
+            model=model,
+            X=val_X,
+            device=device,
+            eval_horizons=eval_horizons,
+            max_trajs=args.max_val_rollout_trajs,
+        )
+        if rollout_metrics is not None:
+            for k, v in rollout_metrics.items():
+                metrics[f"val_{k}"] = v
+
+        wandb.log(metrics, step=0)
+        update_best_metrics(best_metrics, metrics, 0)
+
+        save_kwargs = dict(
+            train_args=vars(args),
+            model="regression_dmd",
+            system=system_name,
+            state_dim=state_dim,
+            expansion_degree=args.expansion_degree,
+            bias=args.bias == "true",
+            sine_cosine_expansion=args.sine_cosine_expansion == "true",
+            expansion_type=args.expansion_type,
+            expand_names=model.expand_names,
+            system_basis=system_name if args.expansion_type == "specific" else "",
+            rollout_mode=args.regression_rollout_mode,
+            ridge=args.ridge,
+            rank=-1 if args.rank is None else args.rank,
+            normalize_state=args.normalize_state == "true",
+            normalize_lifted=args.normalize_lifted == "true",
+            delay_depth=args.delay_depth,
+            hankel_rank=-1 if args.hankel_rank is None else args.hankel_rank,
+            rbf_n_centers=args.rbf_n_centers,
+            rbf_center_selection=args.rbf_center_selection,
+            rbf_bandwidth_mode=args.rbf_bandwidth_mode,
+            rbf_knn_k=args.rbf_knn_k,
+            x_mean=model.x_mean.detach().cpu().numpy(),
+            x_scale=model.x_scale.detach().cpu().numpy(),
+            psi_scale=model.psi_scale.detach().cpu().numpy(),
+            K=model.K_fitted.detach().cpu().numpy(),
+            C=model.C_fitted.detach().cpu().numpy(),
+            K_tilde=model.K_tilde_fitted.detach().cpu().numpy(),
+            U_r=model.U_r_fitted.detach().cpu().numpy(),
+            W_reduced=model.W_reduced_fitted.detach().cpu().numpy(),
+            Lambda=model.Lambda_fitted.detach().cpu().numpy(),
+            Phi_lift=model.Phi_lift_fitted.detach().cpu().numpy(),
+            Phi_state=model.Phi_state_fitted.detach().cpu().numpy(),
+        )
+
+        if args.expansion_type == "rbf":
+            save_kwargs["rbf_centers"] = model.expander.centers.detach().cpu().numpy()
+            save_kwargs["rbf_sigmas"] = model.expander.sigmas.detach().cpu().numpy()
+
+        if args.expansion_type == "hankel_svd":
+            save_kwargs["hankel_mean"] = model.expander.mean.detach().cpu().numpy()
+            save_kwargs["hankel_components"] = model.expander.components.detach().cpu().numpy()
+            save_kwargs["hankel_singular_values"] = model.expander.singular_values.detach().cpu().numpy()
+
+        if model.Lambda_fitted is not None:
+            save_kwargs["Lambda"] = model.Lambda_fitted.detach().cpu().numpy()
+            save_kwargs["Phi"] = model.Phi_fitted.detach().cpu().numpy()
+
+        save_path = os.path.join(save_dir, "model.npz")
+        np.savez(save_path, **save_kwargs)
+        print(f"Saved regression_dmd checkpoint to: {save_path}")
+
+        for metric_name, data in best_metrics.items():
+            wandb.summary[f"best_{metric_name}"] = data["value"]
+            wandb.summary[f"best_{metric_name}_epoch"] = data["epoch"]
+
+        wandb.finish()
+        return
 
     # Fit RBF/Hankel/other data-dependent expanders if needed
     if args.model in {"ml_linear_dynamics", "ml_lineardynamics", "ml_dmd"}:
@@ -249,18 +600,13 @@ def main():
             loaded_data = np.load(args.load_rbf_from)
             c_tensor = torch.as_tensor(loaded_data["rbf_centers"], dtype=torch.float32, device=device)
             s_tensor = torch.as_tensor(loaded_data["rbf_sigmas"], dtype=torch.float32, device=device)
-            
+
             model.expander.centers.copy_(c_tensor)
             model.expander.sigmas.copy_(s_tensor)
             model.expander.is_fitted = True
             model.expander.freeze_centers = True
         except Exception as e:
             print(f"Warning: Failed to load RBF from {args.load_rbf_from}: {e}")
-
-    # --------------------------------------------------
-    # Evaluation Callback setup
-    # --------------------------------------------------
-    best_metrics = {}
 
     # Inside main() of train_sweep.py
     def run_eval_callback(epoch, train_loss, val_loss):

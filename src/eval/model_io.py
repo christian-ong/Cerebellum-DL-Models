@@ -14,6 +14,15 @@ from src.models.mlp_baseline import MLP_BlackBox
 from src.models.sindy_baseline import SINDyBaseline
 from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
 
+
+def _canonical_model_name(model_name: str) -> str:
+    alias_map = {
+        "ml_linear_dynamics": "ml_lineardynamics",
+        "ml_dmd_free": "ml_dmd",
+        "ml_dmd_band": "ml_dmd",
+    }
+    return alias_map.get(model_name, model_name)
+
 def _finalize_loaded_expander(model, train_args):
     exp_type = str(train_args.get("expansion_type", "general"))
 
@@ -127,6 +136,7 @@ def load_model(
     """
     model = None
     extras: Dict[str, Any] = {}
+    model_name = _canonical_model_name(model_name)
 
     if model_name == "linear_baseline":
         model_data = np.load(model_path)
@@ -240,7 +250,7 @@ def load_model(
         model.eval()
         return model, extras
 
-    if model_name == "ml_lineardynamics":
+    if model_name == "ml_lineardynamics" or model_name == "ml_linear_dynamics":
         ckpt = torch.load(model_path, map_location=device)
         train_args = ckpt["train_args"]
 
@@ -339,15 +349,16 @@ def load_model(
 
 
 def supports_mode_subset_rollout(model_name: str, model, extras: Dict[str, Any]) -> bool:
+    model_name = _canonical_model_name(model_name)
     if model_name == "regression_dmd":
         rollout_mode = extras.get("rollout_mode", "DMD")
         return rollout_mode in {"DMD", "projected_DMD"}
-    # Updated to match your actual model choice strings
-    if model_name in {"ml_dmd", "ml_dmd_free", "ml_dmd_band"}:
+    if model_name == "ml_dmd":
         return True
     return False
 
 def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indices=None):
+    model_name = _canonical_model_name(model_name)
     if model_name == "linear_baseline":
         return rollout_linear_map(extras["M"], x0=x0, steps=steps)
 
@@ -372,7 +383,7 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
     with torch.inference_mode():
         # --- Native Mode Subsetting for ML-DMD Models ---
         # Fixed logic to use your new _normalize and _get_modal_coords pipeline
-        if model_name in {"ml_dmd", "ml_dmd_free", "ml_dmd_band"} and mode_indices is not None:
+        if model_name == "ml_dmd" and mode_indices is not None:
             x0_t = torch.as_tensor(x0, dtype=next(model.parameters()).dtype, device=next(model.parameters()).device)
             
             is_1d = x0_t.ndim == 1

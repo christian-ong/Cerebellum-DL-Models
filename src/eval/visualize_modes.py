@@ -5,7 +5,7 @@ import sympy
 from scipy.linalg import expm, schur
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
-from src.models.deprecated.ml_dmd_free import ML_DMD
+from src.models.ml_dmd import ML_DMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.regression_dmd import Regression_DMD
 
@@ -108,12 +108,18 @@ def build_model_from_checkpoint(model_path, device="cpu"):
         "bias": str(train_args.get("bias", "true")).lower() == "true",
         "sine_cosine_expansion": str(train_args.get("sine_cosine_expansion", "false")).lower() == "true",
         "expansion_type": train_args["expansion_type"],
-        "system": ckpt["system"],
+        "system": ckpt["system"] if train_args["expansion_type"] == "specific" else None,
+        "delay_depth": int(train_args.get("delay_depth", 1)),
+        "hankel_rank": train_args.get("hankel_rank", None),
+        "rbf_n_centers": int(train_args.get("rbf_n_centers", 50)),
+        "rbf_center_selection": str(train_args.get("rbf_center_selection", "farthest")),
+        "rbf_bandwidth_mode": str(train_args.get("rbf_bandwidth_mode", "knn")),
+        "rbf_knn_k": int(train_args.get("rbf_knn_k", 5)),
     }
 
-    if model_name == "ml_dmd" or model_name == "hardcoded_dmd":
+    if model_name in {"ml_dmd", "hardcoded_dmd", "ml_dmd_free", "ml_dmd_band"}:
         model = ML_DMD(**kwargs)
-    elif model_name == "ml_lineardynamics":
+    elif model_name in {"ml_lineardynamics", "ml_linear_dynamics"}:
         model = ML_LinearDynamics(**kwargs)
     else:
         raise ValueError(f"Unsupported: {model_name}")
@@ -316,7 +322,6 @@ def get_koopman_eigensystem(model):
 
     else:
         raise ValueError("Model format not recognized for eigensystem extraction.")
-
 
 
 def get_system_matrices(system="saddle_point", decomp_type="schur", truncate_dim=None):
@@ -591,8 +596,7 @@ def get_sorted_jordan_form(K_d_analytic, block_tol=1e-12):
 def find_complex_pairs(
         Lambda, 
         threshold_off_diag=1e-3, 
-        threshold_diag=1e-3,
-        print_info=False):
+        threshold_diag=1e-3):
     """
     Detects pairs of complex conjugate modes in the Lambda matrix.
     Looks for significant (> threshold) off-diagonal values in 2x2 blocks.
@@ -846,6 +850,10 @@ def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None, mod
     """
     Plot data projected onto one mode at a time to compare real vs. model evolution.
     """
+    # # Normalize columns so arbitrary eigenvector scaling does not suppress modal amplitudes.
+    # phi_col_norms = np.linalg.norm(Phi, axis=0, keepdims=True)
+    # Phi = Phi / (phi_col_norms + 1e-12)
+
     # Measure dimensions
     n_steps = real_traj.shape[0]
     n_trajs = real_traj.shape[1]
@@ -883,10 +891,7 @@ def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None, mod
     # Evolve with Lambda
     for t in range(1, n_steps):
         z = mode_evolution[t-1, :, :]
-        if "regression" in model_type: # For regression models, we can directly apply Lambda
-            z_next = z @ Lambda.T
-        else:
-            z_next = z @ Lambda.T
+        z_next = z @ Lambda.T
         mode_evolution[t, :, :] = z_next
     mode_evolution = mode_evolution.real
 
@@ -932,7 +937,8 @@ def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None, mod
             else:
                 y_lower_bound_final = min(y_lower_bound_real, y_lower_bound_other)
                 y_upper_bound_final = max(y_upper_bound_real, y_upper_bound_other)
-                axes[traj_idx,i].set_ylim([y_lower_bound_final, y_upper_bound_final])
+                if not 0.9 < abs(y_lower_bound_final / y_upper_bound_final) < 1.1:
+                    axes[traj_idx,i].set_ylim([y_lower_bound_final, y_upper_bound_final])
 
             # Legend info
             if i == 0 and traj_idx == 0:
@@ -1013,78 +1019,228 @@ def plot_eigenfunctions(
         plt.show()
 
 
-def modes_by_quality(
-    model, 
-    W, 
-    eigvals_analytic, 
-    state_bounds, 
-    n_modes_to_keep=8
-    ):
+def modes_by_mse(model, Phi, Lambda, real_traj):
+    """
+    Rank modes by rollout error while avoiding a bias toward near-zero modes.
+    """
+    # # Normalize columns so ranking is not dominated by arbitrary eigenvector scaling.
+    # phi_col_norms = np.linalg.norm(Phi, axis=0, keepdims=True)
+    # Phi = Phi / (phi_col_norms + 1e-12)
 
-    n_eval_traj = 14
-    eval_steps = 90
+    # Measure dimensions
+    n_steps = real_traj.shape[0]
+    n_trajs = real_traj.shape[1]
+    state_dim = real_traj.shape[2]
+    n_modes = Phi.shape[1]
+    lifted_dim = Phi.shape[0]
     
-    rng = np.random.default_rng(0)
-    num_modes = W.shape[1]
-    residual_accum = np.zeros(num_modes, dtype=np.float64)
-
-    for _ in range(n_eval_traj):
-        x0 = np.zeros((1, model.state_dim), dtype=np.float32)
-        for dim in range(model.state_dim):
-            x0[0, dim] = rng.uniform(state_bounds[dim][0], state_bounds[dim][1])
-            
-        xt = torch.tensor(x0, dtype=torch.float32)
-        traj = [x0.flatten()]
-        with torch.no_grad():
-            for _ in range(eval_steps):
-                xt = model(xt)
-                traj.append(xt.cpu().numpy().flatten())
-
-        traj = np.asarray(traj, dtype=np.float32)
-        with torch.no_grad():
-            z_roll = safe_expand(model, torch.tensor(traj)).cpu().numpy()
-            phi_roll = z_roll @ W
-
-        lhs = phi_roll[1:, :] 
-        rhs = phi_roll[:-1, :] * eigvals_analytic[None, :] 
-
-        num = np.linalg.norm(lhs - rhs, axis=0) 
-        den = np.linalg.norm(phi_roll[:-1, :], axis=0) + 1e-12 
-        residual_accum += num / den
-
-    residual_mean = residual_accum / max(1, n_eval_traj)
-
-    # Calculate Spatial Score (Taking a 2D slice if state_dim > 2)
-    x_range = np.linspace(state_bounds[0][0], state_bounds[0][1], 50)
-    y_range = np.linspace(state_bounds[1][0], state_bounds[1][1], 50)
-    X_grid, Y_grid = np.meshgrid(x_range, y_range)
+    # Lift real trajectory
+    real_traj_flattened = real_traj.reshape(-1, state_dim) # (n_steps * n_trajs, state_dim)
+    expanded_traj_flattened = safe_expand(model, torch.tensor(real_traj_flattened, dtype=torch.float32)).cpu().numpy() # (n_steps * n_trajs, lifted_dim)
+    expanded_traj = expanded_traj_flattened.reshape(n_steps, n_trajs, lifted_dim)
     
-    grid_cols = [X_grid.ravel(), Y_grid.ravel()]
-    # Pad higher dimensions with their median values
-    for dim in range(2, model.state_dim):
-        dim_mean = (state_bounds[dim][0] + state_bounds[dim][1]) / 2.0
-        grid_cols.append(np.full_like(X_grid.ravel(), dim_mean))
-        
-    pts = np.column_stack(grid_cols)
+    # Grab initial conditions
+    init_conditions = torch.as_tensor(real_traj[0, :, :], dtype=torch.float32) # (n_trajs, state_dim)
+    expanded_init_conditions = expanded_traj[0, :, :] 
+
+    ### 1. Real trajectory projected onto modes ###
+    real_proj = expanded_traj @ Phi
+    real_proj = real_proj.real
+
+    ### 2. Mode evolution under Lambda ###
+    # Initialize mode amplitudes from initial conditions
+    z0 = expanded_init_conditions @ Phi # Initial mode amplitudes
+    mode_evolution = np.zeros((n_steps, n_trajs, n_modes), dtype=complex)
+    mode_evolution[0, :, :] = z0
+
+    # Evolve with Lambda
+    for t in range(1, n_steps):
+        z = mode_evolution[t-1, :, :]
+        z_next = z @ Lambda.T
+        mode_evolution[t, :, :] = z_next
+    mode_evolution = mode_evolution.real
+
+    ### 3. Calculate mode score: relative rollout error + low-energy penalty ###
+    mode_abs_errors = np.linalg.norm(mode_evolution - real_proj, axis=(0, 1))
+    # mode_energy = np.linalg.norm(real_proj, axis=(0, 1))
+    # mode_relative_errors = mode_abs_errors / (mode_energy + 1e-12)
+
+    # # Penalize modes that are almost inactive so tiny-amplitude modes are not ranked first.
+    # mode_energy_norm = mode_energy / (mode_energy.max() + 1e-12)
+    # mode_scores = mode_relative_errors + 0.05 * (1.0 - mode_energy_norm)
+    # ranked_indices = np.argsort(mode_scores)[::1] # Ascending order (lower is better)
+    ranked_indices = np.argsort(mode_abs_errors)[::1] # Ascending order (lower is better)
+
+    # return ranked_indices, mode_scores
+    return ranked_indices, mode_abs_errors
+
+
+def truncated_rollout(model, real_traj, n_modes=2, save_path=None):
+    # 1. Extract spectral objects directly from the model to avoid get_koopman_eigensystem's pinv
+    Phi_lift = model.Phi_lift_fitted.detach().cpu().numpy()       # (p, r)
+    Lambda_diag = model.Lambda_fitted.detach().cpu().numpy()
+    Lambda = np.diag(Lambda_diag)                                 # (r, r)
+    C = model.C_fitted.detach().cpu().numpy()                     # (state_dim, p)
+    psi_scale = model.psi_scale.detach().cpu().numpy()             # (p,)
+    x_scale = model.x_scale.detach().cpu().numpy()                 # (state_dim or full delay width)
+
+    n_steps = real_traj.shape[0]
+    n_trajs = real_traj.shape[1]
+    state_dim = model.state_dim
+
+    if n_modes > Phi_lift.shape[1] or n_modes <= 0:
+        n_modes = Phi_lift.shape[1]
+
+    # 2. Truncate operators to the top n_modes
+    Phi_truncated = Phi_lift[:, :n_modes]                         # (p, n_modes)
+    Lambda_truncated = Lambda[:n_modes, :n_modes]                 # (n_modes, n_modes)
+
+    # 3. Grab initial conditions and properly normalize them
+    x0 = real_traj[0, :, :]                                       # (n_trajs, width)
+    x0_n = x0 / x_scale[:x0.shape[1]]
     
+    # Lift to normalized coordinate space Z_x
     with torch.no_grad():
-        z_grid = safe_expand(model, torch.as_tensor(pts, dtype=torch.float32)).cpu().numpy()
-        phi_grid = z_grid @ W
+        psi_x0 = model.expand(torch.tensor(x0_n, dtype=torch.float64)).cpu().numpy()
+    z0_normalized = psi_x0 / psi_scale                            # (n_trajs, p)
     
-    spatial_std = np.std(np.real(phi_grid), axis=0)
-
-    def to_unit(x):
-        return (x - x.min()) / (x.max() - x.min() + 1e-12)
-
-    res_score = 1.0 - to_unit(residual_mean)
-    spat_score = to_unit(spatial_std)
+    # 4. Project onto the truncated modes: z0_normalized ≈ Phi_truncated @ b0
+    b0 = (np.linalg.pinv(Phi_truncated) @ z0_normalized.T).T       # (n_trajs, n_modes)
     
-    mode_score = 0.8 * res_score + 0.2 * spat_score
-    ranked_indices = np.argsort(mode_score)[::-1]
+    # 5. Evolve the truncated modes over time
+    mode_evolution = np.zeros((n_steps, n_trajs, n_modes), dtype=complex)
+    mode_evolution[0, :, :] = b0
+    for t in range(1, n_steps):
+        mode_evolution[t, :, :] = mode_evolution[t-1, :, :] @ Lambda_truncated.T
 
-    best_ids = ranked_indices[:n_modes_to_keep]
+    # 6. Reconstruct normalized lifted states and decode via C_fitted
+    truncated_trajectory = np.zeros((n_steps, n_trajs, state_dim))
+    for t in range(n_steps):
+        # Reconstruct normalized lifted coordinate: z_n = b @ Phi_truncated^T
+        z_n_t = mode_evolution[t, :, :] @ Phi_truncated.T
+        z_n_t = z_n_t.real
+        
+        # Decode using the model's fitted linear decoder instead of safe_de_expand
+        x_n_t = z_n_t @ C.T                                       # (n_trajs, state_dim)
+        
+        # Denormalize back to the physical state space
+        truncated_trajectory[t, :, :] = x_n_t * x_scale[:state_dim]
+
+    # 7. Calculate errors (RMSE)
+    mse = np.mean((truncated_trajectory - real_traj[:, :, :state_dim]) ** 2, axis=(0, 2))
+    rmse = np.sqrt(mse)
+    # print(f"Min max real: {real_traj.real.min():.3e} to {real_traj.real.max():.3e}")
+    # print(f"Min max truncated: {truncated_trajectory.real.min():.3e} to {truncated_trajectory.real.max():.3e}")
+
+    # 9. Plot each trajectory in state space
+    n_rows = 2
+    c_cols = 2
+    fig, axes = plt.subplots(n_rows, c_cols, figsize=(12,12))
+
+    for traj_idx in range(n_trajs):
+        ax = axes[traj_idx // c_cols, traj_idx % c_cols]
+
+        # Plot Ground Truth vs Truncated Rollout
+        ax.plot(real_traj[:, traj_idx, 0], real_traj[:, traj_idx, 1], 'k-', label='True Trajectory', alpha=0.7)
+        ax.plot(truncated_trajectory[:, traj_idx, 0], truncated_trajectory[:, traj_idx, 1], 'b--', label=f'Mode rollout (n={n_modes})')
+
+        # Subplot layout decoration
+        ax.grid(True, linestyle=':', alpha=0.5)
+        # ax.axes.set_aspect('equal')
+        ax.set_title(f"Traj {traj_idx + 1}\n(RMSE: {rmse[traj_idx]:.1e})", fontsize=10)
+            
+        # Add axis labels
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+
+    # Clean up legend and layout
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.suptitle(f"State Space Rollout Comparison (Top {n_modes} Koopman Modes)", fontsize=14, y=1.02)
+    fig.legend(handles, labels, loc='upper center', ncol=2, bbox_to_anchor=(0.5, 0.98), frameon=True)
     
-    return best_ids, mode_score, residual_mean
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(f"{save_path}/truncated_rollout_{n_modes}_modes.png", bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
+
+    return truncated_trajectory
+
+
+# def modes_by_quality_deprecated(
+#     model, 
+#     W, 
+#     eigvals_analytic, 
+#     state_bounds, 
+#     n_modes_to_keep=8
+#     ):
+
+#     n_eval_traj = 14
+#     eval_steps = 90
+    
+#     rng = np.random.default_rng(0)
+#     num_modes = W.shape[1]
+#     residual_accum = np.zeros(num_modes, dtype=np.float64)
+
+#     for _ in range(n_eval_traj):
+#         x0 = np.zeros((1, model.state_dim), dtype=np.float32)
+#         for dim in range(model.state_dim):
+#             x0[0, dim] = rng.uniform(state_bounds[dim][0], state_bounds[dim][1])
+            
+#         xt = torch.tensor(x0, dtype=torch.float32)
+#         traj = [x0.flatten()]
+#         with torch.no_grad():
+#             for _ in range(eval_steps):
+#                 xt = model(xt)
+#                 traj.append(xt.cpu().numpy().flatten())
+
+#         traj = np.asarray(traj, dtype=np.float32)
+#         with torch.no_grad():
+#             z_roll = safe_expand(model, torch.tensor(traj)).cpu().numpy()
+#             phi_roll = z_roll @ W
+
+#         lhs = phi_roll[1:, :] 
+#         rhs = phi_roll[:-1, :] * eigvals_analytic[None, :] 
+
+#         num = np.linalg.norm(lhs - rhs, axis=0) 
+#         den = np.linalg.norm(phi_roll[:-1, :], axis=0) + 1e-12 
+#         residual_accum += num / den
+
+#     residual_mean = residual_accum / max(1, n_eval_traj)
+
+#     # Calculate Spatial Score (Taking a 2D slice if state_dim > 2)
+#     x_range = np.linspace(state_bounds[0][0], state_bounds[0][1], 50)
+#     y_range = np.linspace(state_bounds[1][0], state_bounds[1][1], 50)
+#     X_grid, Y_grid = np.meshgrid(x_range, y_range)
+    
+#     grid_cols = [X_grid.ravel(), Y_grid.ravel()]
+#     # Pad higher dimensions with their median values
+#     for dim in range(2, model.state_dim):
+#         dim_mean = (state_bounds[dim][0] + state_bounds[dim][1]) / 2.0
+#         grid_cols.append(np.full_like(X_grid.ravel(), dim_mean))
+        
+#     pts = np.column_stack(grid_cols)
+    
+#     with torch.no_grad():
+#         z_grid = safe_expand(model, torch.as_tensor(pts, dtype=torch.float32)).cpu().numpy()
+#         phi_grid = z_grid @ W
+    
+#     spatial_std = np.std(np.real(phi_grid), axis=0)
+
+#     def to_unit(x):
+#         return (x - x.min()) / (x.max() - x.min() + 1e-12)
+
+#     res_score = 1.0 - to_unit(residual_mean)
+#     spat_score = to_unit(spatial_std)
+    
+#     mode_score = 0.8 * res_score + 0.2 * spat_score
+#     ranked_indices = np.argsort(mode_score)[::-1]
+
+#     best_ids = ranked_indices[:n_modes_to_keep]
+    
+#     return best_ids, mode_score, residual_mean
 
 
 def plot_eigenvalue_spectrum(eigvals, mode_scores, score_metric, save_path=None):

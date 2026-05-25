@@ -279,6 +279,8 @@ def main():
     parser.add_argument("--batch_size", type=int, default=2048)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=0.0)
+    parser.add_argument("--hidden_dim", type=int, default=64, help="Hidden layer width for mlp_baseline.")
+    parser.add_argument("--num_layers", type=int, default=4, help="Number of layers for mlp_baseline.")
     parser.add_argument(
         "--rollout_horizon",
         type=int,
@@ -724,8 +726,8 @@ def main():
     elif args.model == "mlp_baseline":
         model = MLP_BlackBox(
             state_dim=state_dim,
-            hidden_dim=64,
-            num_layers=4
+            hidden_dim=args.hidden_dim,
+            num_layers=args.num_layers
         ).to(device)
 
     else:

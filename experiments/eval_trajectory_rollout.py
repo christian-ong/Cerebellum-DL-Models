@@ -38,7 +38,7 @@ args = parser.parse_args()
 if __name__ == "__main__":
 
     # Parameters
-    error_th = 2
+    error_th = 5
 
     # 1. Load data first so we can dynamically extract the system name!
     test_data_path = resolve_split_npz_path(args.data_path, "test")
