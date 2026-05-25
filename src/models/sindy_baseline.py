@@ -149,9 +149,13 @@ class SINDyBaseline:
             var_dict = {}
             for i in range(X.shape[1]):
                 if i < len(self.VAR_NAMES):
-                    var_dict[self.VAR_NAMES[i]] = X[:, i]
+                    name = self.VAR_NAMES[i]
+                    var_dict[name] = X[:, i]
+                    var_dict[f"{name}r"] = X[:, i]
                 else:
-                    var_dict[f"x{i+1}"] = X[:, i]
+                    name = f"x{i+1}"
+                    var_dict[name] = X[:, i]
+                    var_dict[f"{name}r"] = X[:, i]
 
             out = eval(expr_py, {"__builtins__": {}}, {**allowed_names, **var_dict})
             if np.isscalar(out):
