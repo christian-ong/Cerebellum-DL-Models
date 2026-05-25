@@ -154,8 +154,8 @@ def rollout_dmd_eig(
         Rollout trajectory
     """
     d = x0.shape[0]
-    out = np.empty((steps + 1, d), dtype=float)
-    out[0] = x0
+    out = np.empty((steps + 1, d), dtype=np.complex128)
+    out[0] = np.asarray(x0, dtype=np.complex128)
 
     # Compute initial coefficients: b_0 = Φ^(-1) x_0
     Phi_pinv = np.linalg.pinv(Phi)
@@ -167,7 +167,16 @@ def rollout_dmd_eig(
         x_k = Phi @ Lambda_k @ b0
         out[k] = x_k
 
-    return out
+    out_real = np.real_if_close(out, tol=1e9)
+    if np.iscomplexobj(out_real):
+        max_imag = float(np.max(np.abs(out_real.imag)))
+        if max_imag > 1e-6:
+            print(
+                f"Warning: DMD rollout produced complex values (max imag {max_imag:.3e}); taking real part."
+            )
+        out_real = out_real.real
+
+    return np.asarray(out_real, dtype=float)
 
 
 import numpy as np

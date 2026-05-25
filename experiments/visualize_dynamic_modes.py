@@ -25,6 +25,9 @@ parser.add_argument("--decomp_method", type=str, default="schur", choices=["nump
 parser.add_argument("--mode_order", type=str, default="magnitude", choices=["original", "magnitude", "phase", "mse", "init_energy", "time_int_energy"], help="Criterion to order modes by for visualization")
 args = parser.parse_args()
 
+if args.model_name not in {"ml_dmd", "regression_dmd"}:
+    raise ValueError("Mode visualization is only supported for 'ml_dmd' and 'regression_dmd'.")
+
 # Settings
 n_top_modes = 10
 grid_res = 100
@@ -41,8 +44,6 @@ print(f"Visualizing for System: {system}")
 # Load model and eigensystem
 if "ml" in args.model_name:
     model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model_best.pt"
-elif "hardcoded_dmd" in args.model_name:
-    model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model.pt"
 else:
     model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model.npz"
 
@@ -311,15 +312,22 @@ n_modes = range(1, n_top_modes+1) # progressively include more modes to see how 
 trunc_trajectories = trajectories[:, :n_trajectories, :] # (steps, id, state_dim)
 Phi = sorted_data["model"]["real"]["Phi"]
 Lambda = sorted_data["model"]["real"]["Lambda"]
-for n in n_modes:
-    truncated_rollout(
-        model=model,
-        # Phi=Phi,
-        # Lambda=Lambda,
-        real_traj=trunc_trajectories,
-        n_modes=n,
-        save_path=os.path.join(save_dir)
-    )
+has_fitted_decoder = all(
+    hasattr(model, attr)
+    for attr in ("Phi_lift_fitted", "Lambda_fitted", "C_fitted", "psi_scale", "x_scale")
+)
+if has_fitted_decoder:
+    for n in n_modes:
+        truncated_rollout(
+            model=model,
+            # Phi=Phi,
+            # Lambda=Lambda,
+            real_traj=trunc_trajectories,
+            n_modes=n,
+            save_path=os.path.join(save_dir)
+        )
+else:
+    print("Skipping truncated rollout plot: model does not expose fitted decoder tensors.")
 
 # --------------------------------------------------
 # Spectrum plot with quality coloring

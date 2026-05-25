@@ -16,6 +16,8 @@ from src.eval.sweep_utils import (
 )
 from src.train.train_onestep_sweep import train_onestep_sweep
 from src.models.regression_dmd import Regression_DMD
+from src.models.linear_baseline import fit_linear_map, rollout_linear_map
+from src.models.dmd_baseline import fit_dmd, rollout_dmd_eig
 
 def prepare_ml_expander_and_lift_stats(
     *,
@@ -99,7 +101,7 @@ def dataloader_to_numpy(loader):
 def main():
     parser = argparse.ArgumentParser(description="Fast W&B sweep training for Koopman models")
 
-    parser.add_argument("--model", type=str, required=True, choices=["ml_linear_dynamics", "ml_lineardynamics", "ml_dmd", "regression_dmd", "mlp_baseline"])
+    parser.add_argument("--model", type=str, required=True, choices=["ml_linear_dynamics", "ml_lineardynamics", "ml_dmd", "regression_dmd", "mlp_baseline", "sindy_baseline", "linear_baseline", "dmd_baseline"])
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--name", type=str, default="run")
 
@@ -129,6 +131,32 @@ def main():
     parser.add_argument("--rbf_knn_k", type=int, default=5, help="k for k-nearest-center bandwidth when expansion_type='rbf'.")
     parser.add_argument("--load_rbf_from", type=str, default=None, help="Path to a model file to load fixed RBF centers from.")
     parser.add_argument("--l1_weight", type=float, default=1e-6, help="L1 regularization weight for regression DMD")
+
+    parser.add_argument("--sindy_discrete_time", type=str.lower, choices=["true", "false"], default="false")
+    parser.add_argument("--sindy_poly_order", type=int, default=3)
+    parser.add_argument("--sindy_threshold", type=float, default=0.1)
+    parser.add_argument("--sindy_alpha", type=float, default=0.0)
+    parser.add_argument("--sindy_include_bias", type=str.lower, choices=["true", "false"], default="true")
+    parser.add_argument("--sindy_include_interaction", type=str.lower, choices=["true", "false"], default="true")
+    parser.add_argument(
+        "--sindy_diff_method",
+        type=str,
+        default="finite_difference",
+        choices=["finite_difference", "smoothed_finite_difference"],
+    )
+    parser.add_argument(
+        "--sindy_library_type",
+        type=str,
+        default="polynomial",
+        choices=["polynomial", "fourier", "poly_fourier", "specific"],
+    )
+    parser.add_argument("--sindy_fourier_n_frequencies", type=int, default=1)
+    parser.add_argument(
+        "--sindy_specific_basis_size",
+        type=int,
+        default=None,
+        help="If using sindy_library_type='specific', use the first k basis terms for that system.",
+    )
 
     parser.add_argument("--eval_every", type=int, default=1)
     parser.add_argument("--max_val_rollout_trajs", type=int, default=None)
@@ -177,7 +205,11 @@ def main():
         project="koopman-operator-learning",
         config=vars(args),
         group=f"{system_name}_{args.model}",
-        tags=[system_name, args.model, args.expansion_type],
+        tags=[
+            system_name,
+            args.model,
+            args.sindy_library_type if args.model == "sindy_baseline" else args.expansion_type,
+        ],
     )
 
     config = wandb.config
@@ -251,8 +283,202 @@ def main():
     # Track best metrics for the final W&B summary.
     best_metrics = {}
 
+    # Handle simple non-ML baselines that are fit-once and use NumPy rollouts
+    if args.model == "linear_baseline":
+        print("Fitting linear baseline...")
+        X_train, Y_train = dataloader_to_numpy(train_loader)
+        M = fit_linear_map(X_train, Y_train)
+
+        class LinearWrap:
+            def __init__(self, M):
+                self.M = M
+                self.state_dim = M.shape[0]
+
+            def rollout(self, x0, steps):
+                return rollout_linear_map(self.M, x0, steps)
+
+        model = LinearWrap(M)
+
+        train_loss, train_rmse = compute_loader_metrics(model, train_loader, device)
+        val_loss, val_rmse = compute_loader_metrics(model, val_loader, device) if val_loader is not None else (None, None)
+
+        metrics = {
+            "train_loss": train_loss,
+            "train_onestep_rmse": train_rmse,
+            "val_loss": val_loss,
+            "val_onestep_rmse": val_rmse,
+        }
+
+        rollout_metrics = compute_rollout_metrics(
+            model=model,
+            X=val_X,
+            device=device,
+            eval_horizons=eval_horizons,
+            max_trajs=args.max_val_rollout_trajs,
+        )
+        if rollout_metrics is not None:
+            for k, v in rollout_metrics.items():
+                metrics[f"val_{k}"] = v
+
+        wandb.log(metrics, step=0)
+        update_best_metrics(best_metrics, metrics, 0)
+
+        save_kwargs = dict(
+            train_args=vars(args),
+            model="linear_baseline",
+            system=system_name,
+            M=M,
+        )
+
+        save_path = os.path.join(save_dir, "model.npz")
+        np.savez(save_path, **save_kwargs)
+        print(f"Saved linear baseline checkpoint to: {save_path}")
+
+        for metric_name, data in best_metrics.items():
+            wandb.summary[f"best_{metric_name}"] = data["value"]
+            wandb.summary[f"best_{metric_name}_epoch"] = data["epoch"]
+
+        wandb.finish()
+        return
+
+    if args.model == "dmd_baseline":
+        print("Fitting DMD baseline...")
+        X_train, Y_train = dataloader_to_numpy(train_loader)
+        Lambda, Phi = fit_dmd(X_train, Y_train, rank=getattr(args, "rank", None), ridge=getattr(args, "ridge", 0.0))
+
+        class DMDWrap:
+            def __init__(self, Lambda, Phi):
+                self.Lambda = Lambda
+                self.Phi = Phi
+                self.state_dim = Phi.shape[0]
+
+            def rollout(self, x0, steps):
+                return rollout_dmd_eig(self.Lambda, self.Phi, x0, steps)
+
+        model = DMDWrap(Lambda, Phi)
+
+        train_loss, train_rmse = compute_loader_metrics(model, train_loader, device)
+        val_loss, val_rmse = compute_loader_metrics(model, val_loader, device) if val_loader is not None else (None, None)
+
+        metrics = {
+            "train_loss": train_loss,
+            "train_onestep_rmse": train_rmse,
+            "val_loss": val_loss,
+            "val_onestep_rmse": val_rmse,
+        }
+
+        rollout_metrics = compute_rollout_metrics(
+            model=model,
+            X=val_X,
+            device=device,
+            eval_horizons=eval_horizons,
+            max_trajs=args.max_val_rollout_trajs,
+        )
+        if rollout_metrics is not None:
+            for k, v in rollout_metrics.items():
+                metrics[f"val_{k}"] = v
+
+        wandb.log(metrics, step=0)
+        update_best_metrics(best_metrics, metrics, 0)
+
+        save_kwargs = dict(
+            train_args=vars(args),
+            model="dmd_baseline",
+            system=system_name,
+            Lambda=Lambda,
+            Phi=Phi,
+        )
+
+        save_path = os.path.join(save_dir, "model.npz")
+        np.savez(save_path, **save_kwargs)
+        print(f"Saved DMD baseline checkpoint to: {save_path}")
+
+        for metric_name, data in best_metrics.items():
+            wandb.summary[f"best_{metric_name}"] = data["value"]
+            wandb.summary[f"best_{metric_name}_epoch"] = data["epoch"]
+
+        wandb.finish()
+        return
+
     # Model
     model = build_model(args, state_dim, system_name, device)
+
+    if args.model == "sindy_baseline":
+        print("Fitting SINDy baseline...")
+
+        sindy_discrete_time = args.sindy_discrete_time == "true"
+
+        if sindy_discrete_time:
+            X_train, Y_train = dataloader_to_numpy(train_loader)
+            model.fit_discrete_pairs(X_train, Y_train)
+        else:
+            train_split_path = resolve_split_npz_path(args.data_path, "train")
+            meta_data = np.load(train_split_path)
+            X_traj = meta_data["X"]
+            dt = float(meta_data["dt"])
+            if X_traj.ndim != 3:
+                raise ValueError("Continuous SINDy expects X with shape (T, n_traj, d)")
+            model.fit_continuous_trajectories(X_traj, dt=dt)
+
+        train_loss, train_rmse = compute_loader_metrics(model, train_loader, device)
+        val_loss, val_rmse = compute_loader_metrics(model, val_loader, device) if val_loader is not None else (None, None)
+
+        metrics = {
+            "train_loss": train_loss,
+            "train_onestep_rmse": train_rmse,
+            "val_loss": val_loss,
+            "val_onestep_rmse": val_rmse,
+        }
+
+        rollout_metrics = compute_rollout_metrics(
+            model=model,
+            X=val_X,
+            device=device,
+            eval_horizons=eval_horizons,
+            max_trajs=args.max_val_rollout_trajs,
+        )
+        if rollout_metrics is not None:
+            for k, v in rollout_metrics.items():
+                metrics[f"val_{k}"] = v
+
+        wandb.log(metrics, step=0)
+        update_best_metrics(best_metrics, metrics, 0)
+
+        save_kwargs = dict(
+            train_args=vars(args),
+            model="sindy_baseline",
+            system=system_name,
+            data_path=args.data_path,
+            discrete_time=sindy_discrete_time,
+            poly_order=args.sindy_poly_order,
+            threshold=args.sindy_threshold,
+            alpha=args.sindy_alpha,
+            include_bias=args.sindy_include_bias == "true",
+            include_interaction=args.sindy_include_interaction == "true",
+            diff_method=args.sindy_diff_method,
+            library_type=args.sindy_library_type,
+            fourier_n_frequencies=args.sindy_fourier_n_frequencies,
+            specific_system=system_name if args.sindy_library_type == "specific" else "",
+            specific_basis_size=-1 if args.sindy_specific_basis_size is None else args.sindy_specific_basis_size,
+            coefficients=model.get_coefficients(),
+            equations=np.array(model.equations(), dtype=object),
+        )
+
+        save_path = os.path.join(save_dir, "model.npz")
+        np.savez(save_path, **save_kwargs)
+
+        with open(os.path.join(save_dir, "equations.txt"), "w", encoding="utf-8") as handle:
+            for equation in model.equations():
+                handle.write(equation + "\n")
+
+        print(f"Saved SINDy checkpoint to: {save_path}")
+
+        for metric_name, data in best_metrics.items():
+            wandb.summary[f"best_{metric_name}"] = data["value"]
+            wandb.summary[f"best_{metric_name}_epoch"] = data["epoch"]
+
+        wandb.finish()
+        return
 
     # Regression DMD is fit once, then evaluated and saved using the same
     # data flow as scripts/train.py.

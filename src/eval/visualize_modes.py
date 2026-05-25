@@ -108,12 +108,18 @@ def build_model_from_checkpoint(model_path, device="cpu"):
         "bias": str(train_args.get("bias", "true")).lower() == "true",
         "sine_cosine_expansion": str(train_args.get("sine_cosine_expansion", "false")).lower() == "true",
         "expansion_type": train_args["expansion_type"],
-        "system": ckpt["system"],
+        "system": ckpt["system"] if train_args["expansion_type"] == "specific" else None,
+        "delay_depth": int(train_args.get("delay_depth", 1)),
+        "hankel_rank": train_args.get("hankel_rank", None),
+        "rbf_n_centers": int(train_args.get("rbf_n_centers", 50)),
+        "rbf_center_selection": str(train_args.get("rbf_center_selection", "farthest")),
+        "rbf_bandwidth_mode": str(train_args.get("rbf_bandwidth_mode", "knn")),
+        "rbf_knn_k": int(train_args.get("rbf_knn_k", 5)),
     }
 
-    if model_name == "ml_dmd" or model_name == "hardcoded_dmd":
+    if model_name in {"ml_dmd", "hardcoded_dmd", "ml_dmd_free", "ml_dmd_band"}:
         model = ML_DMD(**kwargs)
-    elif model_name == "ml_lineardynamics":
+    elif model_name in {"ml_lineardynamics", "ml_linear_dynamics"}:
         model = ML_LinearDynamics(**kwargs)
     else:
         raise ValueError(f"Unsupported: {model_name}")

@@ -49,6 +49,7 @@ class SINDyBaseline:
         self.saved_coefficients = None
         self.powers = None
         self.dt = 1.0
+        self.state_dim = None
 
         self.feature_library = None
         self.feature_names_list = None
@@ -194,6 +195,7 @@ class SINDyBaseline:
         self.feature_library = None
         self.saved_coefficients = np.asarray(opt.coef_, dtype=float)
         self.powers = None
+        self.state_dim = int(np.asarray(X).shape[1])
         return self
 
     def _fit_specific_continuous_trajectories(self, X_traj, dt):
@@ -219,6 +221,7 @@ class SINDyBaseline:
         self.feature_library = None
         self.saved_coefficients = np.asarray(opt.coef_, dtype=float)
         self.powers = None
+        self.state_dim = int(np.asarray(X_traj).shape[-1])
         return self
 
     # --------------------------------------------------
@@ -258,6 +261,7 @@ class SINDyBaseline:
         if self.library_type == "specific":
             return self._fit_specific_discrete_pairs(X, Y)
 
+        self.state_dim = int(np.asarray(X).shape[1])
         self.model = self._build_model(state_dim=X.shape[1])
         self.model.fit(X, t=1.0, x_next=Y)
         self._finalize_fit(X.shape[1])
@@ -268,6 +272,7 @@ class SINDyBaseline:
             return self._fit_specific_continuous_trajectories(X_traj, dt)
 
         self.dt = dt
+        self.state_dim = int(np.asarray(X_traj).shape[-1])
         trajectories = [X_traj[:, i, :] for i in range(X_traj.shape[1])]
         self.model = self._build_model(state_dim=X_traj.shape[-1])
         self.model.fit(trajectories, t=dt)
@@ -288,6 +293,7 @@ class SINDyBaseline:
 
     def load_model(self, coefficients: np.ndarray, state_dim: int):
         self.saved_coefficients = coefficients
+        self.state_dim = int(state_dim)
 
         if self.library_type == "specific":
             self._ensure_specific_basis()
