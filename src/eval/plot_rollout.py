@@ -113,3 +113,75 @@ def plot_phase_space(X_true, X_hat, system, figdir, model_name, traj_index):
 
         plt.savefig(f"{figdir}/rollout_idx{traj_index}.png")
         plt.close()
+
+def plot_time_series_with_reference(
+    X_true,
+    X_hat,
+    X_ref,
+    figdir,
+    traj_index,
+    true_label="True / observed",
+    ref_label="Clean reference",
+):
+    """
+    Plot time series with optional clean/reference trajectory overlay.
+    """
+    state_dim = X_true.shape[1]
+
+    plt.figure(figsize=(6 * state_dim, 4))
+
+    for i in range(state_dim):
+        plt.subplot(1, state_dim, i + 1)
+
+        if X_ref is not None:
+            plt.plot(X_ref[:, i], label=f"{ref_label} x{i+1}", linewidth=2)
+
+        plt.plot(X_true[:, i], label=f"{true_label} x{i+1}", alpha=0.6)
+        plt.plot(X_hat[:, i], "--", label=f"Pred x{i+1}", linewidth=2)
+
+        plt.xlabel("Time step")
+        plt.ylabel(f"x{i+1}")
+        plt.title(f"x{i+1} over time")
+        plt.legend()
+
+    plt.tight_layout()
+    plt.savefig(f"{figdir}/time_series_overlay_idx{traj_index}.png", dpi=200)
+    plt.close()
+
+
+def plot_phase_space_with_reference(
+    X_true,
+    X_hat,
+    X_ref,
+    system,
+    figdir,
+    model_name,
+    traj_index,
+    true_label="True / observed",
+    ref_label="Clean reference",
+):
+    """
+    Plot phase space with optional clean/reference trajectory overlay.
+    Currently intended mainly for 2D systems.
+    """
+    state_dim = X_true.shape[1]
+
+    if state_dim < 2:
+        return
+
+    plt.figure(figsize=(6, 6))
+
+    if X_ref is not None:
+        plt.plot(X_ref[:, 0], X_ref[:, 1], label=ref_label, linewidth=2)
+
+    plt.plot(X_true[:, 0], X_true[:, 1], label=true_label, alpha=0.6)
+    plt.plot(X_hat[:, 0], X_hat[:, 1], "--", label="Prediction", linewidth=2)
+
+    plt.xlabel("x1")
+    plt.ylabel("x2")
+    plt.title(f"Phase space rollout ({model_name}_{system})")
+    plt.legend()
+    plt.tight_layout()
+
+    plt.savefig(f"{figdir}/rollout_overlay_idx{traj_index}.png", dpi=200)
+    plt.close()

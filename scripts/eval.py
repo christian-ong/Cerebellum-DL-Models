@@ -34,8 +34,12 @@ from src.eval.eval_runner import (
     save_metadata_json,
 )
 from src.eval.rollout_eval import compute_single_rollout
-from src.eval.plot_rollout import plot_time_series, plot_phase_space
-from src.eval.diagnostics import plot_rollout_error_spectrum
+from src.eval.plot_rollout import (
+    plot_time_series,
+    plot_phase_space,
+    plot_time_series_with_reference,
+    plot_phase_space_with_reference,
+)
 
 def print_core_summary(one_step_metrics, horizon_metrics, rollout_metrics, composite_score):
     print("\n--- Test metric summary ---")
@@ -59,9 +63,19 @@ def print_core_summary(one_step_metrics, horizon_metrics, rollout_metrics, compo
     print(f"Composite test score      : {composite_score:.6e}")
 
 
-def save_rollout_example_npz(out_path, *, X_true, X_hat, traj_index, steps, model_name, system):
-    np.savez(
-        out_path,
+def save_rollout_example_npz(
+    out_path,
+    *,
+    X_true,
+    X_hat,
+    traj_index,
+    steps,
+    model_name,
+    system,
+    X_reference=None,
+    reference_label=None,
+):
+    payload = dict(
         X_true=X_true,
         X_hat=X_hat,
         traj_index=np.array(traj_index),
@@ -70,6 +84,11 @@ def save_rollout_example_npz(out_path, *, X_true, X_hat, traj_index, steps, mode
         system=np.array(system),
     )
 
+    if X_reference is not None:
+        payload["X_reference"] = X_reference
+        payload["reference_label"] = np.array(reference_label or "reference")
+
+    np.savez(out_path, **payload)
 
 def save_optional_cache_npz(out_path, rollout_cache):
     if rollout_cache is None:
@@ -90,6 +109,35 @@ def save_optional_cache_npz(out_path, rollout_cache):
     payload["rollouts"] = rollouts_obj
     np.savez(out_path, **payload)
 
+def load_reference_segment(reference_data_path, split, traj_id, n_points):
+    """
+    Load matching clean/reference trajectory for overlay plots.
+    Assumes same seed, dt, split, and trajectory ordering.
+    """
+    ref_path = os.path.join(reference_data_path, f"{split}.npz")
+
+    if not os.path.exists(ref_path):
+        raise FileNotFoundError(f"Reference split not found: {ref_path}")
+
+    data = np.load(ref_path, allow_pickle=True)
+    X_ref = data["X"]
+
+    if X_ref.ndim == 2:
+        X_ref = X_ref[:, None, :]
+    elif X_ref.ndim != 3:
+        raise ValueError(f"Expected reference X to be 2D or 3D, got shape {X_ref.shape}")
+
+    if traj_id >= X_ref.shape[1]:
+        raise IndexError(
+            f"traj_id={traj_id}, but reference data only has {X_ref.shape[1]} trajectories."
+        )
+
+    if n_points > X_ref.shape[0]:
+        raise ValueError(
+            f"Reference trajectory too short: need {n_points}, has {X_ref.shape[0]}"
+        )
+
+    return X_ref[:n_points, traj_id, :]
 
 def main():
     parser = argparse.ArgumentParser(description="Core evaluation for trained models.")
@@ -103,14 +151,12 @@ def main():
     parser.add_argument("--rollout_horizons", type=str, default="10,50", help="Comma-separated rollout horizons.")
     parser.add_argument("--steps", type=int, default=200, help="Steps for the standard rollout plot.")
     parser.add_argument("--traj_index", type=int, default=0, help="Which trajectory to plot.")
-
+    parser.add_argument("--reference_data_path",type=str,default=None,help="Optional clean/reference dataset path for overlaying rollout plots.")
 
     parser.add_argument("--metric_cap",type=int,default=64,help="Cap on sampled start points per trajectory for metrics. Use 0 for all.")
     parser.add_argument("--use_cache",action="store_true",help="Reuse rollout cache across metric computations in memory.",)
     parser.add_argument("--save_rollout_cache",action="store_true",help="Optionally save rollout cache to disk for debugging or reuse.")
     parser.add_argument("--save_rollout_arrays",action="store_true",help="Save example rollout arrays as NPZ in addition to the plots.")
-    parser.add_argument("--run_error_spectrum", action="store_true", help="Plot PSD of the single-rollout error signal.")
-    parser.add_argument("--spectrum_state_dim", type=int, default=0, help="State dimension to use for the rollout error spectrum plot.")
     args = parser.parse_args()
 
     horizons = parse_int_list(args.horizons)
@@ -183,19 +229,40 @@ def main():
         extras=ctx.extras,
     )
 
-    plot_time_series(X_true, X_hat, ctx.figdir, args.traj_index)
-    plot_phase_space(X_true, X_hat, ctx.system, ctx.figdir, args.model, args.traj_index)
+    X_ref = None
 
-    if args.run_error_spectrum:
-        split_data = np.load(ctx.split_data_path, allow_pickle=True)
-        dt = float(np.asarray(split_data["dt"]).item())
+    if args.reference_data_path is None:
+        plot_time_series(X_true, X_hat, ctx.figdir, args.traj_index)
+        plot_phase_space(X_true, X_hat, ctx.system, ctx.figdir, args.model, args.traj_index)
 
-        plot_rollout_error_spectrum(
-            true_rollout=X_true,
-            pred_rollout=X_hat,
-            dt=dt,
-            figdir=ctx.figdir,
-            title_prefix=f"{ctx.system} | ",
+    else:
+        X_ref = load_reference_segment(
+            reference_data_path=args.reference_data_path,
+            split=args.split,
+            traj_id=traj_id,
+            n_points=X_true.shape[0],
+        )
+
+        plot_time_series_with_reference(
+            X_true,
+            X_hat,
+            X_ref,
+            ctx.figdir,
+            args.traj_index,
+            true_label="Noisy observed",
+            ref_label="Clean true",
+        )
+
+        plot_phase_space_with_reference(
+            X_true,
+            X_hat,
+            X_ref,
+            ctx.system,
+            ctx.figdir,
+            args.model,
+            args.traj_index,
+            true_label="Noisy observed",
+            ref_label="Clean true",
         )
 
     if args.save_rollout_arrays:
@@ -204,6 +271,8 @@ def main():
             rollout_npz_path,
             X_true=X_true,
             X_hat=X_hat,
+            X_reference=X_ref,
+            reference_label="Clean true" if X_ref is not None else None,
             traj_index=args.traj_index,
             steps=args.steps,
             model_name=args.model,
