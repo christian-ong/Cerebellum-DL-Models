@@ -1,13 +1,13 @@
 # LSBATCH: User input
 #!/bin/bash
-#BSUB -J knn
+#BSUB -J dmd_drop
 
 # Output files
 #BSUB -o hpc/runs/%J.out
 #BSUB -e hpc/runs/%J.err
 
 # GPU
-#BSUB -q gpua10
+#BSUB -q gpuv100
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -R "rusage[mem=32GB] span[hosts=1]"
 #BSUB -n 4
@@ -28,7 +28,7 @@ source .venv/bin/activate
 # SWEEP
 # ----------------------------------
 
-SWEEP_ID=DeepLearningP4Destruction/koopman-operator-learning/nwpdqvx6
+SWEEP_ID=DeepLearningP4Destruction/koopman-operator-learning/8gxhvluk
 
 # ----------------------------------
 # RUN (ONLY ONE AGENT!)

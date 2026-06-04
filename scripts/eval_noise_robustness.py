@@ -15,6 +15,12 @@ def parse_int_list_maybe(s):
     return [int(x.strip()) for x in str(s).split(",") if x.strip()]
 
 
+def parse_float_list_maybe(s):
+    if s is None or str(s).strip() == "":
+        return None
+    return [float(x.strip()) for x in str(s).split(",") if x.strip()]
+
+
 def append_rows_to_csv(csv_path, rows, extra):
     os.makedirs(os.path.dirname(csv_path), exist_ok=True)
 
@@ -62,11 +68,16 @@ def main():
     )
 
     parser.add_argument("--max_pairs", type=int, default=5000)
-    parser.add_argument("--mode_subset_ks", type=str, default="")
+    parser.add_argument(
+        "--mode_subset_thresholds",
+        type=str,
+        default="1,5,10,25,50,100",
+        help="Fractions of the sorted mode list (percent) for noise-robustness subset plots.",
+    )
     parser.add_argument(
         "--plot_mode_subsets",
         action="store_true",
-        help="If set, also save A/B/C/D plots for amplitude/contribution-selected mode subsets.",
+        help="If set, also save A/B/C/D plots for contribution-selected mode subsets.",
     )
     parser.add_argument("--name", type=str, default=None)
     parser.add_argument("--seed", type=int, default=0)
@@ -74,8 +85,8 @@ def main():
 
     args = parser.parse_args()
 
-    if args.model != "regression_dmd":
-        raise ValueError("This script is currently intended for regression_dmd only.")
+    # Allow baseline and learned models alike; modal subset plots are skipped automatically
+    # when the model does not expose Phi/Lambda-style coordinates.
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -111,10 +122,12 @@ def main():
     )
 
     plot_traj_indices = parse_int_list_maybe(args.plot_traj_indices)
-    mode_subset_ks = parse_int_list_maybe(args.mode_subset_ks)
+    mode_subset_thresholds = parse_float_list_maybe(args.mode_subset_thresholds)
 
     primary_metrics, rows = run_noise_robustness_suite(
         model=model,
+        model_name=args.model,
+        extras=extras,
         clean_data_path=args.clean_data_path,
         noisy_data_path=args.noisy_data_path,
         outdir=outdir,
@@ -125,7 +138,7 @@ def main():
         noise_std_for_feedback=args.feedback_noise_std,
         feedback_rollout_mode=args.feedback_rollout_mode,
         max_pairs=args.max_pairs,
-        mode_subset_ks=mode_subset_ks,
+        mode_subset_thresholds=mode_subset_thresholds,
         plot_mode_subsets=args.plot_mode_subsets,
         seed=args.seed,
     )

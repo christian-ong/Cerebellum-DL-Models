@@ -3,9 +3,11 @@ import torch
 
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.ml_dmd import ML_DMD
+from src.models.ml_dmd_drop import ML_DMD_DROP
 from src.models.regression_dmd import Regression_DMD
 from src.models.mlp_baseline import MLP_BlackBox
 from src.models.sindy_baseline import SINDyBaseline
+from src.models.regression_dmd import Regression_DMD
 
 def build_run_name(args, system_name, run_id=None):
     parts = [system_name, args.model]
@@ -65,6 +67,23 @@ def build_model(args, state_dim, system_name, device):
             l1_weight=getattr(args, "l1_weight", 1e-6),
         ).to(device)
 
+    elif args.model in {"ml_dmd_drop"}:
+        model = ML_DMD_DROP(
+            state_dim=state_dim,
+            expansion_degree=args.expansion_degree,
+            bias=args.bias == "true",
+            sine_cosine_expansion=args.sine_cosine_expansion == "true",
+            expansion_type=args.expansion_type,
+            system=system_name if args.expansion_type == "specific" else None,
+            delay_depth=getattr(args, "delay_depth", 1),
+            hankel_rank=getattr(args, "hankel_rank", None),
+            rbf_n_centers=getattr(args, "rbf_n_centers", 50),
+            rbf_center_selection=getattr(args, "rbf_center_selection", "farthest"),
+            rbf_bandwidth_mode=getattr(args, "rbf_bandwidth_mode", "knn"),
+            rbf_knn_k=getattr(args, "rbf_knn_k", 5),
+            l1_weight=getattr(args, "l1_weight", 1e-6),
+        ).to(device)        
+
     elif args.model == "regression_dmd":
         model = Regression_DMD(
             state_dim=state_dim,
@@ -115,6 +134,18 @@ def build_model(args, state_dim, system_name, device):
 
 
 def _predict_next_batch(model, x, device):
+    if isinstance(model, Regression_DMD):
+        try:
+            return model(x)
+        except Exception:
+            # Best-effort fallback for edge cases where batched prediction
+            # is unavailable for a loaded checkpoint.
+            preds = []
+            for xi in x:
+                rollout = model.rollout(xi.detach().cpu().numpy(), 1)
+                preds.append(torch.as_tensor(rollout[1], device=device, dtype=x.dtype))
+            return torch.stack(preds, dim=0)
+
     if isinstance(model, torch.nn.Module):
         return model(x)
 
@@ -219,6 +250,13 @@ def compute_rollout_metrics(
 
     results = {"rollout_failed": 0.0}
 
+    # If no model provided, mark rollouts as failed and return NaNs to avoid calling None.rollout
+    if model is None:
+        results["rollout_failed"] = 1.0
+        for h in eval_horizons:
+            results[f"rollout_rmse_h{h}"] = np.nan
+        return results
+
     with torch.no_grad():
         x0, start_idx = _build_rollout_initial_state(model, X)
         max_h = min(max_h, T - 1 - start_idx)
@@ -230,6 +268,7 @@ def compute_rollout_metrics(
             model.eval()
             rollout_pred = model.rollout(x0, max_h)
         else:
+            # non-torch models may implement single-trajectory rollout; leave rollout_pred None
             rollout_pred = None
 
         if rollout_pred is not None:

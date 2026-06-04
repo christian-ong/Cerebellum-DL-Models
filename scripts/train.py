@@ -14,6 +14,7 @@ from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.regression_dmd import Regression_DMD
 from src.models.mlp_baseline import MLP_BlackBox
 from src.models.ml_dmd import ML_DMD
+from src.models.ml_dmd_drop import ML_DMD_DROP
 from src.models.sindy_baseline import SINDyBaseline
 
 """
@@ -263,6 +264,7 @@ def main():
             "regression_dmd",
             "ml_lineardynamics",
             "ml_dmd",
+            "ml_dmd_drop",
             "sindy_baseline",
             "mlp_baseline"
         ],
@@ -398,7 +400,7 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
 
     # Load datasets
-    is_ml_model = args.model in {"ml_lineardynamics", "ml_dmd"}
+    is_ml_model = args.model in {"ml_lineardynamics", "ml_dmd", "ml_dmd_drop", "mlp_baseline"}
 
     # Determine rollout horizon used to RESERVE future steps when constructing the dataset.
     # This is separate from `--rollout_horizon` which is used only in the loss computation.
@@ -613,6 +615,11 @@ def main():
             svd_energy_cumulative=model.svd_energy_fitted.detach().cpu().numpy(),
         )
 
+        if hasattr(model.expander, "state_scale"):
+            save_kwargs["expander_state_scale"] = model.expander.state_scale.detach().cpu().numpy()
+        if hasattr(model.expander, "history_scale"):
+            save_kwargs["expander_history_scale"] = model.expander.history_scale.detach().cpu().numpy()
+
         if args.expansion_type == "rbf":
             save_kwargs["rbf_centers"] = model.expander.centers.detach().cpu().numpy()
             save_kwargs["rbf_sigmas"] = model.expander.sigmas.detach().cpu().numpy()
@@ -723,6 +730,23 @@ def main():
             l1_weight=args.l1_weight,
         ).to(device)
 
+    elif args.model == "ml_dmd_drop":
+        model = ML_DMD_DROP(
+            state_dim=state_dim,
+            expansion_degree=args.expansion_degree,
+            bias=args.bias == "true",
+            sine_cosine_expansion=args.sine_cosine_expansion == "true",
+            expansion_type=args.expansion_type,
+            system=system_name if args.expansion_type == "specific" else None,
+            delay_depth=args.delay_depth,
+            rbf_n_centers=args.rbf_n_centers,
+            rbf_center_selection=args.rbf_center_selection,
+            rbf_bandwidth_mode=args.rbf_bandwidth_mode,
+            rbf_knn_k=args.rbf_knn_k,
+            hankel_rank=args.hankel_rank,
+            l1_weight=args.l1_weight,
+        ).to(device)
+
     elif args.model == "mlp_baseline":
         model = MLP_BlackBox(
             state_dim=state_dim,
@@ -740,7 +764,7 @@ def main():
     if hasattr(model, "expansion_type"):
         print(f"Expand names: {model.expand_names}")
     
-    if args.model in {"ml_lineardynamics", "ml_dmd"}:
+    if args.model in {"ml_lineardynamics", "ml_dmd", "ml_dmd_drop"}:
         prepare_ml_expander_and_lift_stats(
             model=model,
             train_ds=train_ds,

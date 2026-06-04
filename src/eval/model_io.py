@@ -3,16 +3,17 @@ from typing import Dict, Tuple, Any
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+import warnings
 
 from src.models.linear_baseline import rollout_linear_map
 from src.models.dmd_baseline import rollout_dmd_eig
 from src.models.regression_dmd import Regression_DMD
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.ml_dmd import ML_DMD
+from src.models.ml_dmd_drop import ML_DMD_DROP
 from src.models.mlp_baseline import MLP_BlackBox
 from src.models.sindy_baseline import SINDyBaseline
-from src.data_generation.load_data import OneStepTrajectoryDataset, resolve_split_npz_path
+from src.data_generation.load_data import resolve_split_npz_path
 
 
 def _canonical_model_name(model_name: str) -> str:
@@ -37,6 +38,20 @@ def _finalize_loaded_expander(model, train_args):
         if hasattr(model.expander, "expanded_dim"):
             model.expanded_dim = model.expander.expanded_dim
             model.latent_dim = model.expander.expanded_dim
+
+def _ensure_device_marker(model, device: str):
+    if not isinstance(model, torch.nn.Module):
+        return
+
+    try:
+        if len(list(model.buffers())) == 0:
+            model.register_buffer(
+                "_device_marker",
+                torch.empty(0, dtype=torch.float32, device=torch.device(device)),
+                persistent=False,
+            )
+    except Exception:
+        pass
 
 def infer_system_name_from_data_path(data_path: str) -> str:
     base = os.path.basename(data_path)
@@ -74,6 +89,46 @@ def _to_optional_str(value: Any):
         s = str(value)
 
     return None if s == "" else s
+
+
+def _to_optional_int(value: Any):
+    if value is None:
+        return None
+
+    arr = np.asarray(value)
+    item = arr.item() if arr.shape == () else value
+
+    if item is None:
+        return None
+
+    try:
+        int_value = int(item)
+    except (TypeError, ValueError):
+        return None
+
+    return None if int_value < 0 else int_value
+
+
+def _unwrap_train_args(value: Any) -> Dict[str, Any]:
+    if value is None:
+        return {}
+
+    if isinstance(value, dict):
+        return value
+
+    if hasattr(value, "item"):
+        try:
+            value = value.item()
+        except Exception:
+            pass
+
+    if isinstance(value, dict):
+        return value
+
+    try:
+        return dict(value)
+    except Exception:
+        return {}
 
 def _load_sindy_from_saved_config(model_path: str, data_path: str, state_dim: int) -> SINDyBaseline:
     model_data = np.load(model_path, allow_pickle=True)
@@ -137,6 +192,7 @@ def load_model(
     model = None
     extras: Dict[str, Any] = {}
     model_name = _canonical_model_name(model_name)
+    rollout_mode_override = os.environ.get("EVAL_REGRESSION_ROLLOUT_MODE")
 
     if model_name == "linear_baseline":
         model_data = np.load(model_path)
@@ -152,37 +208,60 @@ def load_model(
     if model_name == "regression_dmd":
         model_data = np.load(model_path, allow_pickle=True)
 
-        rollout_mode = str(model_data["rollout_mode"]) if "rollout_mode" in model_data else "DMD"
+        train_args = _unwrap_train_args(model_data["train_args"] if "train_args" in model_data else {})
+
+        rollout_mode = rollout_mode_override or (
+            str(train_args.get("regression_rollout_mode", train_args.get("rollout_mode", model_data["rollout_mode"])))
+            if ("rollout_mode" in model_data or "regression_rollout_mode" in train_args or "rollout_mode" in train_args)
+            else "DMD"
+        )
         extras["rollout_mode"] = rollout_mode
 
-        rank_val = int(np.asarray(model_data["rank"]).item()) if "rank" in model_data else -1
-        rank = None if rank_val < 0 else rank_val
-        hankel_rank_val = int(np.asarray(model_data["hankel_rank"]).item()) if "hankel_rank" in model_data else -1
-        hankel_rank = None if hankel_rank_val < 0 else hankel_rank_val
+        rank_source = train_args.get("rank", model_data["rank"] if "rank" in model_data else None) if ("rank" in model_data or "rank" in train_args) else None
+        rank = _to_optional_int(rank_source)
+        hankel_rank_source = train_args.get("hankel_rank", model_data["hankel_rank"] if "hankel_rank" in model_data else None) if ("hankel_rank" in model_data or "hankel_rank" in train_args) else None
+        hankel_rank = _to_optional_int(hankel_rank_source)
 
         model = Regression_DMD(
             state_dim=state_dim,
-            expansion_degree=int(model_data["expansion_degree"]),
-            bias=_to_bool(model_data["bias"], default=True),
-            sine_cosine_expansion=_to_bool(model_data["sine_cosine_expansion"], default=False),
-            expansion_type=str(model_data["expansion_type"]),
+            expansion_degree=int(train_args.get("expansion_degree", model_data["expansion_degree"])),
+            bias=_to_bool(train_args.get("bias", model_data["bias"]), default=True),
+            sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", model_data["sine_cosine_expansion"]), default=False),
+            expansion_type=str(train_args.get("expansion_type", model_data["expansion_type"])),
             system=_to_optional_str(model_data["system_basis"]),
-            delay_depth=int(np.asarray(model_data["delay_depth"]).item()) if "delay_depth" in model_data else 1,
+            delay_depth=int(train_args.get("delay_depth", np.asarray(model_data["delay_depth"]).item())) if "delay_depth" in model_data or "delay_depth" in train_args else 1,
             hankel_rank=hankel_rank,
-            normalize_state=_to_bool(model_data["normalize_state"], default=False),
-            normalize_lifted=_to_bool(model_data["normalize_lifted"], default=True),
+            normalize_state=_to_bool(train_args.get("normalize_state", model_data["normalize_state"]), default=False),
+            normalize_lifted=_to_bool(train_args.get("normalize_lifted", model_data["normalize_lifted"]), default=True),
             rollout_mode=rollout_mode,
-            ridge=float(np.asarray(model_data["ridge"]).item()) if "ridge" in model_data else 0.0,
+            ridge=float(train_args.get("ridge", np.asarray(model_data["ridge"]).item())) if "ridge" in model_data or "ridge" in train_args else 0.0,
             rank=rank,
-            rbf_n_centers=int(np.asarray(model_data["rbf_n_centers"]).item()) if "rbf_n_centers" in model_data else 50,
-            rbf_center_selection=str(np.asarray(model_data["rbf_center_selection"]).item()) if "rbf_center_selection" in model_data else "farthest",
-            rbf_bandwidth_mode=str(np.asarray(model_data["rbf_bandwidth_mode"]).item()) if "rbf_bandwidth_mode" in model_data else "knn",
-            rbf_knn_k=int(np.asarray(model_data["rbf_knn_k"]).item()) if "rbf_knn_k" in model_data else 5,
+            rbf_n_centers=int(train_args.get("rbf_n_centers", np.asarray(model_data["rbf_n_centers"]).item())) if "rbf_n_centers" in model_data or "rbf_n_centers" in train_args else 50,
+            rbf_center_selection=str(train_args.get("rbf_center_selection", np.asarray(model_data["rbf_center_selection"]).item())) if "rbf_center_selection" in model_data or "rbf_center_selection" in train_args else "farthest",
+            rbf_bandwidth_mode=str(train_args.get("rbf_bandwidth_mode", np.asarray(model_data["rbf_bandwidth_mode"]).item())) if "rbf_bandwidth_mode" in model_data or "rbf_bandwidth_mode" in train_args else "knn",
+            rbf_knn_k=int(train_args.get("rbf_knn_k", np.asarray(model_data["rbf_knn_k"]).item())) if "rbf_knn_k" in model_data or "rbf_knn_k" in train_args else 5,
         ).to(device)
 
-        model.x_mean = torch.tensor(model_data["x_mean"], dtype=torch.float64)
-        model.x_scale = torch.tensor(model_data["x_scale"], dtype=torch.float64)
-        model.psi_scale = torch.tensor(model_data["psi_scale"], dtype=torch.float64)
+        _ensure_device_marker(model, device)
+
+        if rollout_mode_override:
+            model.rollout_mode = rollout_mode_override
+
+        dev = torch.device(device)
+
+        model.x_mean = torch.tensor(model_data["x_mean"], dtype=torch.float64, device=dev)
+        model.x_scale = torch.tensor(model_data["x_scale"], dtype=torch.float64, device=dev)
+        model.psi_scale = torch.tensor(model_data["psi_scale"], dtype=torch.float64, device=dev)
+
+        if hasattr(model.expander, "state_scale") and "expander_state_scale" in model_data:
+            model.expander.state_scale.copy_(
+                torch.as_tensor(model_data["expander_state_scale"], dtype=model.expander.state_scale.dtype, device=dev)
+            )
+        if hasattr(model.expander, "history_scale") and "expander_history_scale" in model_data:
+            model.expander.history_scale.copy_(
+                torch.as_tensor(model_data["expander_history_scale"], dtype=model.expander.history_scale.dtype, device=dev)
+            )
+
         if str(model_data["expansion_type"]) == "rbf":
             if "rbf_centers" not in model_data or "rbf_sigmas" not in model_data:
                 raise ValueError(
@@ -190,8 +269,8 @@ def load_model(
                     "Please retrain and resave the model with the updated train.py."
                 )
 
-            model.expander.centers = torch.tensor(model_data["rbf_centers"], dtype=torch.float32)
-            model.expander.sigmas = torch.tensor(model_data["rbf_sigmas"], dtype=torch.float32)
+            model.expander.centers = torch.tensor(model_data["rbf_centers"], dtype=torch.float32, device=dev)
+            model.expander.sigmas = torch.tensor(model_data["rbf_sigmas"], dtype=torch.float32, device=dev)
             model.expander.is_fitted = True
 
             model.expand_names = model.expander.expand_names
@@ -225,23 +304,23 @@ def load_model(
             model.state_indices = model.expander.state_indices
             model.expanded_dim = model.expander.expanded_dim
 
-        model.K_fitted = torch.tensor(model_data["K"], dtype=torch.float64)
-        model.C_fitted = torch.tensor(model_data["C"], dtype=torch.float64)
+        model.K_fitted = torch.tensor(model_data["K"], dtype=torch.float64, device=dev)
+        model.C_fitted = torch.tensor(model_data["C"], dtype=torch.float64, device=dev)
 
         if "K_tilde" in model_data:
-            model.K_tilde_fitted = torch.tensor(model_data["K_tilde"], dtype=torch.float64)
+            model.K_tilde_fitted = torch.tensor(model_data["K_tilde"], dtype=torch.float64, device=dev)
         if "U_r" in model_data:
-            model.U_r_fitted = torch.tensor(model_data["U_r"], dtype=torch.float64)
+            model.U_r_fitted = torch.tensor(model_data["U_r"], dtype=torch.float64, device=dev)
         if "W_reduced" in model_data:
-            model.W_reduced_fitted = torch.tensor(model_data["W_reduced"], dtype=torch.complex128)
+            model.W_reduced_fitted = torch.tensor(model_data["W_reduced"], dtype=torch.complex128, device=dev)
         if "Lambda" in model_data:
-            model.Lambda_fitted = torch.tensor(model_data["Lambda"], dtype=torch.complex128)
+            model.Lambda_fitted = torch.tensor(model_data["Lambda"], dtype=torch.complex128, device=dev)
         if "Phi_lift" in model_data:
-            model.Phi_lift_fitted = torch.tensor(model_data["Phi_lift"], dtype=torch.complex128)
+            model.Phi_lift_fitted = torch.tensor(model_data["Phi_lift"], dtype=torch.complex128, device=dev)
             model.Phi_fitted = model.Phi_lift_fitted
             model.Phi_pinv_fitted = torch.linalg.pinv(model.Phi_lift_fitted)
         if "Phi_state" in model_data:
-            model.Phi_state_fitted = torch.tensor(model_data["Phi_state"], dtype=torch.complex128)
+            model.Phi_state_fitted = torch.tensor(model_data["Phi_state"], dtype=torch.complex128, device=dev)
 
         extras["K"] = model_data["K"]
         if "Lambda" in model_data:
@@ -274,27 +353,71 @@ def load_model(
         extras["ckpt"] = ckpt
         return model, extras
 
-    if model_name == "ml_dmd" or model_name =="hardcoded_dmd":
+    if model_name == "ml_dmd" or model_name =="hardcoded_dmd" or model_name == "ml_dmd_drop":
         ckpt = torch.load(model_path, map_location=device)
         train_args = ckpt["train_args"]
 
-        model = ML_DMD(
-            state_dim=ckpt["state_dim"],
-            expansion_degree=train_args["expansion_degree"],
-            expansion_type=train_args["expansion_type"],
-            bias=_to_bool(train_args.get("bias", "true"), default=True),
-            sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", "false"), default=False),
-            system=ckpt["system"] if train_args["expansion_type"] == "specific" else None,
-            delay_depth=int(train_args.get("delay_depth", 1)),
-            rbf_n_centers=int(train_args.get("rbf_n_centers", 50)),
-            rbf_center_selection=str(train_args.get("rbf_center_selection", "farthest")),
-            rbf_bandwidth_mode=str(train_args.get("rbf_bandwidth_mode", "knn")),
-            rbf_knn_k=int(train_args.get("rbf_knn_k", 5)),
-            hankel_rank=train_args.get("hankel_rank", None),
-            l1_weight=float(train_args.get("l1_weight", 1e-3)),
-        ).to(device)
+        kwargs = {
+            "state_dim": ckpt["state_dim"],
+            "expansion_degree": train_args["expansion_degree"],
+            "expansion_type": train_args["expansion_type"],
+            "bias": _to_bool(train_args.get("bias", "true"), default=True),
+            "sine_cosine_expansion": _to_bool(train_args.get("sine_cosine_expansion", "false"), default=False),
+            "system": ckpt["system"] if train_args["expansion_type"] == "specific" else None,
+            "delay_depth": int(train_args.get("delay_depth", 1)),
+            "rbf_n_centers": int(train_args.get("rbf_n_centers", 50)),
+            "rbf_center_selection": str(train_args.get("rbf_center_selection", "farthest")),
+            "rbf_bandwidth_mode": str(train_args.get("rbf_bandwidth_mode", "knn")),
+            "rbf_knn_k": int(train_args.get("rbf_knn_k", 5)),
+            "hankel_rank": train_args.get("hankel_rank", None),
+            "l1_weight": float(train_args.get("l1_weight", 1e-3)),
+        }
+
+        # --- FIX: Instantiate the correct class ---
+        if model_name == "ml_dmd_drop":
+            model = ML_DMD_DROP(**kwargs).to(device)
+        else:
+            model = ML_DMD(**kwargs).to(device)
+
         model.load_state_dict(ckpt["model_state_dict"])
         _finalize_loaded_expander(model, train_args)
+        # Ensure expander/buffer tensors are on the same device as the model
+        dev = torch.device(device)
+        try:
+            # common scale/buffer names that may exist
+            if hasattr(model, "x_mean"):
+                model.x_mean = model.x_mean.to(dev)
+            if hasattr(model, "x_scale"):
+                model.x_scale = model.x_scale.to(dev)
+            if hasattr(model, "lift_scale"):
+                model.lift_scale = model.lift_scale.to(dev)
+            if hasattr(model, "psi_scale"):
+                model.psi_scale = model.psi_scale.to(dev)
+        except Exception:
+            pass
+
+        # Place expander internals onto device if present
+        if hasattr(model, "expander"):
+            for attr in ("centers", "sigmas", "mean", "components", "singular_values"):
+                if hasattr(model.expander, attr):
+                    try:
+                        val = getattr(model.expander, attr)
+                        if isinstance(val, torch.Tensor):
+                            setattr(model.expander, attr, val.to(dev))
+                    except Exception:
+                        pass
+
+        # Minimal ML_DMD compatibility aliases used by older diagnostic code
+        try:
+            if not hasattr(model, "_normalize_x") and hasattr(model, "_normalize"):
+                model._normalize_x = lambda x: model._normalize(x)
+            if not hasattr(model, "_denormalize_x") and hasattr(model, "_unnormalize"):
+                model._denormalize_x = lambda x: model._unnormalize(x)
+            if not hasattr(model, "psi_scale") and hasattr(model, "lift_scale"):
+                model.psi_scale = getattr(model, "lift_scale")
+        except Exception:
+            pass
+
         model.eval()
         extras["ckpt"] = ckpt
         return model, extras
@@ -353,38 +476,78 @@ def supports_mode_subset_rollout(model_name: str, model, extras: Dict[str, Any])
     if model_name == "regression_dmd":
         rollout_mode = extras.get("rollout_mode", "DMD")
         return rollout_mode in {"DMD", "projected_DMD"}
-    if model_name == "ml_dmd":
+    
+    # --- FIX: Add ml_dmd_drop ---
+    if model_name in {"ml_dmd", "ml_dmd_drop"}:
         return True
+        
     return False
 
 def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indices=None):
     model_name = _canonical_model_name(model_name)
+    # Safety cap to avoid extremely long blocking rollouts during large sweeps
+    MAX_SAFE_ROLLOUT = 5000
+    if steps is not None and steps > MAX_SAFE_ROLLOUT:
+        warnings.warn(f"Requested rollout steps={steps} exceeds MAX_SAFE_ROLLOUT={MAX_SAFE_ROLLOUT}; capping.", RuntimeWarning)
+        steps = MAX_SAFE_ROLLOUT
     if model_name == "linear_baseline":
         return rollout_linear_map(extras["M"], x0=x0, steps=steps)
 
     if model_name == "dmd_baseline":
         return rollout_dmd_eig(extras["Lambda"], extras["Phi"], x0=x0, steps=steps)
-
+    
     if model_name == "regression_dmd":
         rollout_mode = extras.get("rollout_mode", "DMD")
+        
+        # --- FIX: PROTECT COMPLEX PAIRS FOR REGRESSION DMD ---
+        if mode_indices is not None and hasattr(model, "Lambda_fitted") and torch.is_complex(model.Lambda_fitted):
+            idx_list = list(mode_indices)
+            L = model.Lambda_fitted.diag() if model.Lambda_fitted.ndim == 2 else model.Lambda_fitted
+            for i in mode_indices:
+                if abs(L[i].imag) > 1e-6:
+                    diffs = torch.abs(L - L[i].conj())
+                    diffs[i] = float('inf')  # Prevent self-matching
+                    conj_idx = torch.argmin(diffs).item()
+                    if diffs[conj_idx] < 1e-4 and conj_idx not in idx_list:
+                        idx_list.append(conj_idx)
+            mode_indices = idx_list
+        # -----------------------------------------------------
+
         rollout = model.rollout(
             x0=x0,
             steps=steps,
             mode=rollout_mode,
             mode_indices=mode_indices,
         )
-        if torch.is_tensor(rollout):
-            return rollout.detach().cpu().numpy()
-        return rollout
+        return rollout.detach().cpu().numpy()
 
     if model_name == "sindy_baseline":
-        return model.rollout(x0, steps=steps)
+        x0_arr = np.asarray(x0)
+        if x0_arr.ndim == 2 and x0_arr.shape[0] == 1:
+            x0_arr = x0_arr[0]
+        if x0_arr.ndim == 1:
+            return model.rollout(x0_arr, steps=steps)
+
+        # SINDy rollout is implemented for single trajectories; batch the grid
+        # points explicitly so dense-grid diagnostics can stay vectorized.
+        trajs = [np.asarray(model.rollout(x0_arr[i], steps=steps)) for i in range(x0_arr.shape[0])]
+        trajs = [traj[:, None, :] if traj.ndim == 2 else traj for traj in trajs]
+        return np.concatenate(trajs, axis=1)
 
     with torch.inference_mode():
         # --- Native Mode Subsetting for ML-DMD Models ---
-        # Fixed logic to use your new _normalize and _get_modal_coords pipeline
-        if model_name == "ml_dmd" and mode_indices is not None:
-            x0_t = torch.as_tensor(x0, dtype=next(model.parameters()).dtype, device=next(model.parameters()).device)
+        # --- FIX: Include ml_dmd_drop in this condition ---
+        if model_name in {"ml_dmd", "ml_dmd_drop"} and mode_indices is not None:
+            # Safely infer dtype/device from model parameters when possible
+            try:
+                p = next(model.parameters())
+                param_dtype = p.dtype
+                param_device = p.device
+            except Exception:
+                param_dtype = torch.float32
+                param_device = torch.device("cpu")
+
+            x0_t = torch.as_tensor(x0, dtype=param_dtype, device=param_device)
             
             is_1d = x0_t.ndim == 1
             if is_1d:
@@ -408,26 +571,61 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
 
             # 1. Expand and scale using the NEW standardization methods
             z = model.expander.expand(x)
-            z_norm = model._normalize(z, update_stats=False)
+            z_norm = model._normalize(z)
             
             # 2. Project into modal coordinates (b)
             b = model._get_modal_coords(z_norm)
-            
+
             # 3. Mask unwanted modes
-            mask = torch.zeros_like(b)
-            mask[:, mode_indices] = 1.0
+            if mode_indices is None:
+                mask = torch.ones_like(b)
+            else:
+                idx_np = np.asarray(mode_indices, dtype=np.int64)
+                mask = torch.zeros_like(b)
+                mask[:, idx_np] = 1.0
+                
+                # --- NEW: Protect complex conjugate pairs! ---
+                lambdas = None
+                if hasattr(model, "get_eigenvalues") and callable(model.get_eigenvalues):
+                    try:
+                        lambdas = model.get_eigenvalues()
+                    except Exception:
+                        pass
+                elif hasattr(model, "Lambda"):
+                    lambdas = model.Lambda.diag() if model.Lambda.ndim == 2 else model.Lambda
+
+                if lambdas is not None and torch.is_complex(lambdas):
+                    for idx in idx_np:
+                        if abs(lambdas[idx].imag) > 1e-6:
+                            diffs = torch.abs(lambdas - lambdas[idx].conj())
+                            diffs[idx] = float('inf') # Prevent self-matching
+                            conj_idx = torch.argmin(diffs).item()
+                            if diffs[conj_idx] < 1e-4:
+                                mask[:, conj_idx] = 1.0
+                # ---------------------------------------------
+            
             b = b * mask
             
             # 4. Rollout entirely in the latent space
             trajectory = [x[:, :model.state_dim].squeeze(0).cpu().numpy()]
             
             for _ in range(steps):
+                # step in modal coords; guard if missing
+                if not hasattr(model, "_step_modal"):
+                    warnings.warn("ML-DMD model missing _step_modal(); falling back to model.rollout()", RuntimeWarning)
+                    # fallback to standard rollout
+                    return model.rollout(x0=x0, steps=steps).detach().cpu().numpy()
+
                 b = model._step_modal(b)
                 b = b * mask  # Keep masked modes exactly at 0
                 
                 # 5. Reconstruct back to physical space using updated pipeline
                 z_norm_next = model._modal_to_latent(b)
                 z_next_phys = model._unnormalize(z_norm_next)
+                # ensure real/float tensors for de_expand
+                if torch.is_complex(z_next_phys):
+                    z_next_phys = z_next_phys.real
+                z_next_phys = z_next_phys.to(dtype=torch.float32)
                 x_next_head = model.expander.de_expand(z_next_phys)
                 
                 trajectory.append(x_next_head.squeeze(0).cpu().numpy())

@@ -42,6 +42,7 @@ class Regression_DMD(nn.Module):
         super().__init__()
 
         self.expansion_type = expansion_type
+        self.expansion_degree = expansion_degree
         self.state_dim = state_dim
         self.delay_depth = delay_depth
         self.normalize_state = normalize_state
@@ -118,11 +119,44 @@ class Regression_DMD(nn.Module):
             raise ValueError(f"Unknown rollout mode: {mode}")
         return aliases[mode]
 
+    def _infer_device(self):
+        for tensor in self.parameters(recurse=True):
+            return tensor.device
+
+        for tensor in self.buffers(recurse=True):
+            return tensor.device
+
+        for attr_name in (
+            "x_mean",
+            "x_scale",
+            "psi_scale",
+            "K_fitted",
+            "C_fitted",
+            "K_tilde_fitted",
+            "U_r_fitted",
+            "W_reduced_fitted",
+            "Lambda_fitted",
+            "Phi_lift_fitted",
+            "Phi_state_fitted",
+            "Phi_pinv_fitted",
+        ):
+            value = getattr(self, attr_name, None)
+            if torch.is_tensor(value):
+                return value.device
+
+        expander = getattr(self, "expander", None)
+        if expander is not None:
+            for tensor in expander.buffers(recurse=True):
+                return tensor.device
+            for attr_name in ("centers", "sigmas", "state_scale", "mean", "components", "singular_values"):
+                value = getattr(expander, attr_name, None)
+                if torch.is_tensor(value):
+                    return value.device
+
+        return torch.device("cpu")
+
     def _to_tensor(self, x):
-        try:
-            device = next(self.buffers()).device
-        except StopIteration:
-            device = torch.device("cpu")
+        device = self._infer_device()
 
         if isinstance(x, np.ndarray):
             return torch.tensor(x, dtype=torch.float64, device=device)
@@ -303,8 +337,11 @@ class Regression_DMD(nn.Module):
         else:
             x_next_n = self._normalize_x(x_next)
 
-        if hasattr(self.expander, "fit_state_scaler"):
-            self.expander.fit_state_scaler(x_n)
+        with torch.no_grad():
+            if hasattr(self.expander, "state_scale"):
+                self.expander.state_scale.fill_(1.0)
+            if hasattr(self.expander, "history_scale"):
+                self.expander.history_scale.fill_(1.0)
 
         if self.expansion_type in {"rbf", "hankel_svd"}:
             fit_device = x_n.device
@@ -401,8 +438,11 @@ class Regression_DMD(nn.Module):
 
         x_n = self._normalize_x(x)
         z = self.expand(x_n) / self.psi_scale
-        z_next = z @ self.K_fitted.T
-        C = self.C_fitted.to(device=z_next.device, dtype=z_next.dtype)
+        lifted_dtype = torch.promote_types(z.dtype, self.K_fitted.dtype)
+        z = z.to(dtype=lifted_dtype)
+        K = self.K_fitted.to(device=z.device, dtype=lifted_dtype)
+        z_next = z @ K.T
+        C = self.C_fitted.to(device=z_next.device, dtype=lifted_dtype)
         x_next_n = z_next @ C.T
         
         # C_fitted outputs ONLY the head (state_dim). We must shift it for delay!
@@ -451,14 +491,17 @@ class Regression_DMD(nn.Module):
 
         x0_n = self._normalize_x(x0)
         z = self.expand(x0_n) / self.psi_scale
+        lifted_dtype = torch.promote_types(z.dtype, self.K_fitted.dtype)
+        z = z.to(dtype=lifted_dtype)
+        K = self.K_fitted.to(device=z.device, dtype=lifted_dtype)
 
         traj = [x0[:, :self.state_dim].clone()]
 
         has_bias_coord = len(self.expand_names) > 0 and self.expand_names[0] == "1"
-        C = self.C_fitted.to(device=z.device, dtype=z.dtype)
+        C = self.C_fitted.to(device=z.device, dtype=lifted_dtype)
 
         for _ in range(steps):
-            z = z @ self.K_fitted.T
+            z = z @ K.T
 
             # If the Hankel expansion includes a constant coordinate, keep it exactly constant.
             if has_bias_coord:

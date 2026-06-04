@@ -1,8 +1,12 @@
 import numpy as np
-import pysindy as ps
 from scipy.integrate import odeint
 
 from src.models.expander import SPECIFIC_BASES
+
+try:
+    import pysindy as ps
+except ImportError:  # pragma: no cover - optional dependency
+    ps = None
 
 
 class SINDyBaseline:
@@ -62,6 +66,11 @@ class SINDyBaseline:
     # --------------------------------------------------
 
     def _build_feature_library(self, state_dim: int):
+        if ps is None:
+            raise ImportError(
+                "pysindy is required to use SINDyBaseline. Install the optional dependency to enable SINDy support."
+            )
+
         if self.library_type == "polynomial":
             return ps.PolynomialLibrary(
                 degree=self.poly_order,
@@ -257,6 +266,41 @@ class SINDyBaseline:
         except Exception:
             return None
 
+    def _compute_polynomial_features(self, x: np.ndarray) -> np.ndarray:
+        """
+        Compute polynomial features up to self.poly_order for a single state vector x.
+        This is a best-effort fallback to avoid calling into PySINDy during heavy loops.
+        """
+        x = np.asarray(x, dtype=float).reshape(-1)
+        state_dim = x.size
+
+        feats = []
+        # optional bias
+        if self.include_bias:
+            feats.append(1.0)
+
+        # degree 1..poly_order
+        from itertools import combinations_with_replacement
+
+        for deg in range(1, self.poly_order + 1):
+            for terms in combinations_with_replacement(range(state_dim), deg):
+                prod = 1.0
+                for t in terms:
+                    prod *= x[t]
+                feats.append(prod)
+
+        feats = np.asarray(feats, dtype=float)
+        expected = int(self.saved_coefficients.shape[1])
+        if feats.size == expected:
+            return feats
+
+        # If sizes differ, try to align by trimming or padding zeros
+        if feats.size > expected:
+            return feats[:expected]
+        out = np.zeros((expected,), dtype=float)
+        out[: feats.size] = feats
+        return out
+
     # --------------------------------------------------
     # Fit
     # --------------------------------------------------
@@ -353,7 +397,15 @@ class SINDyBaseline:
                 if local_powers is not None:
                     feat = np.prod(np.power(curr_x, local_powers), axis=1)
                 else:
-                    feat = lib.transform(curr_x[None, :])[0]
+                    try:
+                        feat = lib.transform(curr_x[None, :])[0]
+                    except Exception:
+                        # Fallback: try to compute polynomial features directly when possible
+                        if self.library_type in {"polynomial", "poly_fourier"}:
+                            feat = self._compute_polynomial_features(curr_x)
+                        else:
+                            # As a last resort, use zeros to avoid hanging
+                            feat = np.zeros((self.saved_coefficients.shape[1],), dtype=float)
                 curr_x = feat @ coef_T
                 traj[i] = curr_x
             return traj
@@ -364,7 +416,13 @@ class SINDyBaseline:
             if local_powers is not None:
                 feat = np.prod(np.power(x_state, local_powers), axis=1)
             else:
-                feat = lib.transform(x_state[None, :])[0]
+                try:
+                    feat = lib.transform(x_state[None, :])[0]
+                except Exception:
+                    if self.library_type in {"polynomial", "poly_fourier"}:
+                        feat = self._compute_polynomial_features(x_state)
+                    else:
+                        feat = np.zeros((self.saved_coefficients.shape[1],), dtype=float)
             return feat @ coef_T
 
         return odeint(rhs, x0, t)

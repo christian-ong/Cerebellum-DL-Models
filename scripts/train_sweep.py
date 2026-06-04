@@ -14,6 +14,7 @@ from src.eval.sweep_utils import (
     compute_loader_metrics,
     compute_rollout_metrics,
 )
+from src.eval.model_io import load_model as load_saved_model
 from src.train.train_onestep_sweep import train_onestep_sweep
 from src.models.regression_dmd import Regression_DMD
 from src.models.linear_baseline import fit_linear_map, rollout_linear_map
@@ -101,7 +102,7 @@ def dataloader_to_numpy(loader):
 def main():
     parser = argparse.ArgumentParser(description="Fast W&B sweep training for Koopman models")
 
-    parser.add_argument("--model", type=str, required=True, choices=["ml_linear_dynamics", "ml_lineardynamics", "ml_dmd", "regression_dmd", "mlp_baseline", "sindy_baseline", "linear_baseline", "dmd_baseline"])
+    parser.add_argument("--model", type=str, required=True, choices=["ml_linear_dynamics", "ml_lineardynamics", "ml_dmd", "ml_dmd_drop", "regression_dmd", "mlp_baseline", "sindy_baseline", "linear_baseline", "dmd_baseline"])
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--name", type=str, default="run")
 
@@ -254,7 +255,7 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
 
     # Data
-    is_ml_model = args.model in {"ml_linear_dynamics", "ml_lineardynamics", "ml_dmd"}
+    is_ml_model = args.model in {"ml_linear_dynamics", "ml_lineardynamics", "ml_dmd", "ml_dmd_drop"}
 
     if args.dataset_rollout_reserve is not None:
         dataset_rollout_horizon = args.dataset_rollout_reserve
@@ -403,6 +404,16 @@ def main():
     # Model
     model = build_model(args, state_dim, system_name, device)
 
+    # Ensure models without buffers (e.g. Regression_DMD) expose a device-valued
+    # buffer so Regression_DMD._to_tensor can detect the correct device at runtime.
+    # This avoids moving inputs to CPU incorrectly when calling model(x).
+    try:
+        if isinstance(model, torch.nn.Module) and len(list(model.buffers())) == 0:
+            model.register_buffer("_device_marker", torch.zeros(1, device=device))
+    except Exception:
+        # Best-effort; if registration fails, continue — training may still work.
+        pass
+
     if args.model == "sindy_baseline":
         print("Fitting SINDy baseline...")
 
@@ -504,27 +515,6 @@ def main():
         train_loss, train_rmse = compute_loader_metrics(model, train_loader, device)
         val_loss, val_rmse = compute_loader_metrics(model, val_loader, device) if val_loader is not None else (None, None)
 
-        metrics = {
-            "train_loss": train_loss,
-            "train_onestep_rmse": train_rmse,
-            "val_loss": val_loss,
-            "val_onestep_rmse": val_rmse,
-        }
-
-        rollout_metrics = compute_rollout_metrics(
-            model=model,
-            X=val_X,
-            device=device,
-            eval_horizons=eval_horizons,
-            max_trajs=args.max_val_rollout_trajs,
-        )
-        if rollout_metrics is not None:
-            for k, v in rollout_metrics.items():
-                metrics[f"val_{k}"] = v
-
-        wandb.log(metrics, step=0)
-        update_best_metrics(best_metrics, metrics, 0)
-
         save_kwargs = dict(
             train_args=vars(args),
             model="regression_dmd",
@@ -560,6 +550,11 @@ def main():
             Phi_state=model.Phi_state_fitted.detach().cpu().numpy(),
         )
 
+        if hasattr(model.expander, "state_scale"):
+            save_kwargs["expander_state_scale"] = model.expander.state_scale.detach().cpu().numpy()
+        if hasattr(model.expander, "history_scale"):
+            save_kwargs["expander_history_scale"] = model.expander.history_scale.detach().cpu().numpy()
+
         if args.expansion_type == "rbf":
             save_kwargs["rbf_centers"] = model.expander.centers.detach().cpu().numpy()
             save_kwargs["rbf_sigmas"] = model.expander.sigmas.detach().cpu().numpy()
@@ -577,6 +572,63 @@ def main():
         np.savez(save_path, **save_kwargs)
         print(f"Saved regression_dmd checkpoint to: {save_path}")
 
+        metrics = {
+            "train_loss": train_loss,
+            "train_onestep_rmse": train_rmse,
+            "val_loss": val_loss,
+            "val_onestep_rmse": val_rmse,
+        }
+
+        # --- Post-save sanity check ---
+        # Re-load the saved checkpoint and recompute eval metrics to ensure
+        # what we logged matches the saved model (helps detect logging-order bugs).
+        try:
+            _model_r, _load_extras = load_saved_model(
+                model_name="regression_dmd",
+                model_path=save_path,
+                data_path=args.data_path,
+                state_dim=state_dim,
+                system=system_name,
+                device=device,
+            )
+            _model_r = _model_r.to(device)
+
+            # Recompute per-step RMSE using the same DataLoader used above
+            try:
+                from src.eval.sweep_utils import compute_loader_metrics as _clm, compute_rollout_metrics as _crm
+                _train_loss_re, _train_rmse_re = _clm(_model_r, train_loader, device)
+                _val_loss_re, _val_rmse_re = _clm(_model_r, val_loader, device)
+                _re_rollout_metrics = _crm(model=_model_r, X=val_X, device=device, eval_horizons=eval_horizons, max_trajs=args.max_val_rollout_trajs)
+
+                print(f"Recomputed (post-save) val_onestep_rmse: {_val_rmse_re}")
+                if _re_rollout_metrics is not None:
+                    for kk, vv in _re_rollout_metrics.items():
+                        print(f"Recomputed post-save {kk}: {vv}")
+
+                # Replace the primary metrics with recomputed values.
+                metrics["train_loss"] = _train_loss_re
+                metrics["train_onestep_rmse"] = _train_rmse_re
+                metrics["val_loss"] = _val_loss_re
+                metrics["val_onestep_rmse"] = _val_rmse_re
+                if _re_rollout_metrics is not None:
+                    for kk, vv in _re_rollout_metrics.items():
+                        metrics[f"val_{kk}"] = vv
+
+            except Exception as _exc:
+                print(f"Post-save recompute failed: {_exc}")
+                try:
+                    _fallback_rollout_metrics = _crm(model=model, X=val_X, device=device, eval_horizons=eval_horizons, max_trajs=args.max_val_rollout_trajs)
+                    if _fallback_rollout_metrics is not None:
+                        for kk, vv in _fallback_rollout_metrics.items():
+                            metrics[f"val_{kk}"] = vv
+                except Exception as _fallback_exc:
+                    print(f"Fallback rollout eval failed: {_fallback_exc}")
+        except Exception as _exc2:
+            print(f"Failed to reload checkpoint for post-save sanity check: {_exc2}")
+
+        wandb.log(metrics, step=0)
+        update_best_metrics(best_metrics, metrics, 0)
+
         for metric_name, data in best_metrics.items():
             wandb.summary[f"best_{metric_name}"] = data["value"]
             wandb.summary[f"best_{metric_name}_epoch"] = data["epoch"]
@@ -585,7 +637,7 @@ def main():
         return
 
     # Fit RBF/Hankel/other data-dependent expanders if needed
-    if args.model in {"ml_linear_dynamics", "ml_lineardynamics", "ml_dmd"}:
+    if args.model in {"ml_linear_dynamics", "ml_lineardynamics", "ml_dmd", "ml_dmd_drop"}:
         prepare_ml_expander_and_lift_stats(
             model=model,
             train_ds=train_ds,

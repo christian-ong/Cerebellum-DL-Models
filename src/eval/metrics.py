@@ -2,6 +2,7 @@ import os
 from typing import Dict, List, Optional
 
 import numpy as np
+import warnings
 from src.data_generation.load_data import resolve_split_npz_path
 
 from src.eval.model_io import predict_rollout_from_x0
@@ -79,13 +80,31 @@ def _mse_rmse_nrmse_from_errors(errors: np.ndarray, scale: np.ndarray) -> Dict[s
     scale shape: (d,)
     """
     sq = errors ** 2
-    mse_per_dim = np.mean(sq, axis=0)
+    if sq.size == 0:
+        d = scale.shape[0]
+        mse_per_dim = np.full((d,), np.nan)
+        rmse_per_dim = np.full((d,), np.nan)
+        nrmse_per_dim = np.full((d,), np.nan)
+        mse = float(np.nan)
+        rmse = float(np.nan)
+        nrmse = float(np.nan)
+        return {
+            "mse": mse,
+            "rmse": rmse,
+            "nrmse": nrmse,
+            "mse_per_dim": mse_per_dim,
+            "rmse_per_dim": rmse_per_dim,
+            "nrmse_per_dim": nrmse_per_dim,
+        }
+
+    # Use nan-safe means to avoid warnings when slices are empty
+    mse_per_dim = np.nanmean(sq, axis=0)
     rmse_per_dim = np.sqrt(mse_per_dim)
     nrmse_per_dim = rmse_per_dim / np.maximum(scale, EPS)
 
-    mse = float(np.mean(mse_per_dim))
+    mse = float(np.nanmean(mse_per_dim))
     rmse = float(np.sqrt(mse))
-    nrmse = float(np.sqrt(np.mean((rmse_per_dim / np.maximum(scale, EPS)) ** 2)))
+    nrmse = float(np.sqrt(np.nanmean((rmse_per_dim / np.maximum(scale, EPS)) ** 2)))
 
     return {
         "mse": mse,
@@ -156,6 +175,14 @@ def build_rollout_cache(
                 model=model,
                 extras=extras,
             )
+
+            # Skip rollouts that produce NaN/Inf values to avoid downstream overflows
+            if not np.all(np.isfinite(rollout)):
+                warnings.warn(
+                    f"Skipping rollout starting at t0={t0} for traj_id={traj_id} due to NaN/Inf in predictions",
+                    RuntimeWarning,
+                )
+                continue
 
             rollouts.append(rollout)
 
@@ -228,6 +255,14 @@ def compute_one_step_metrics(
                     model=model,
                     extras=extras,
                 )
+
+                # Skip one-step rollouts that produce NaN/Inf
+                if not np.all(np.isfinite(rollout)):
+                    warnings.warn(
+                        f"Skipping one-step rollout at t0={t0} for traj_id={traj_id} due to NaN/Inf in predictions",
+                        RuntimeWarning,
+                    )
+                    continue
 
                 err = rollout[1] - X_traj[t0 + 1]
                 err_list.append(err)
@@ -326,6 +361,14 @@ def compute_horizon_metrics(
                     model=model,
                     extras=extras,
                 )
+
+                # Skip rollouts that produce NaN/Inf values to avoid downstream overflows
+                if not np.all(np.isfinite(rollout)):
+                    warnings.warn(
+                        f"Skipping rollout starting at t0={t0} for traj_id={traj_id} due to NaN/Inf in predictions",
+                        RuntimeWarning,
+                    )
+                    continue
 
                 for h in horizons:
                     err = rollout[h] - X_traj[t0 + h]
@@ -446,6 +489,14 @@ def compute_full_rollout_metrics(
                     model=model,
                     extras=extras,
                 )
+
+            # Skip rollouts that produce NaN/Inf values
+            if not np.all(np.isfinite(rollout)):
+                warnings.warn(
+                    f"Skipping full-rollout for traj_id={traj_id} horizon={h} due to NaN/Inf in predictions",
+                    RuntimeWarning,
+                )
+                continue
 
             X_true = X_traj[start0 : start0 + h + 1]
 

@@ -262,6 +262,7 @@ def main():
     )
 
     parser.add_argument("--linthresh", type=float, default=1.0)
+    parser.add_argument("--subtitle", type=str, default=None, help="Optional subtitle shown below the main title.")
     parser.add_argument("--show", action="store_true")
 
     args = parser.parse_args()
@@ -291,13 +292,13 @@ def main():
     n_rows = len(plane_pairs)
 
     fig_width = max(5.5 * n_panels_per_row, 12.0)
-    fig_height = max(4.8 * n_rows, 5.0)
+    fig_height = max(4.9 * n_rows + 0.5, 5.4)
 
     fig, axes = plt.subplots(
         n_rows,
         n_panels_per_row,
         figsize=(fig_width, fig_height),
-        constrained_layout=True,
+        constrained_layout=False,
         squeeze=False,
     )
 
@@ -411,7 +412,20 @@ def main():
     fig.suptitle(
         f"{system}: true vector-field diagnostics ({plane_note}){slice_note}",
         fontsize=16,
+        y=0.965,
     )
+
+    if args.subtitle:
+        fig.text(
+            0.5,
+            0.925,
+            args.subtitle,
+            ha="center",
+            va="top",
+            fontsize=12,
+        )
+
+    fig.subplots_adjust(top=0.80)
 
     outdir = args.outdir or os.path.join("data", "figures", "vector_fields", system)
     os.makedirs(outdir, exist_ok=True)

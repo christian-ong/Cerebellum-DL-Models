@@ -6,8 +6,45 @@ from scipy.linalg import expm, schur
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 from src.models.ml_dmd import ML_DMD
+from src.models.ml_dmd_drop import ML_DMD_DROP
 from src.models.ml_linear_dynamics import ML_LinearDynamics
 from src.models.regression_dmd import Regression_DMD
+
+
+def _with_subtitle(title, subtitle=None):
+    return f"{title}\n{subtitle}" if subtitle else title
+
+
+def _set_nonzero_ylim(ax, y_lower, y_upper, *, min_pad=1e-6):
+    y_lower = float(y_lower)
+    y_upper = float(y_upper)
+
+    if not np.isfinite(y_lower) or not np.isfinite(y_upper):
+        y_lower, y_upper = -1.0, 1.0
+    elif np.isclose(y_lower, y_upper):
+        center = 0.5 * (y_lower + y_upper)
+        pad = max(min_pad, 0.1 * max(abs(center), 1.0))
+        y_lower, y_upper = center - pad, center + pad
+
+    ax.set_ylim(y_lower, y_upper)
+
+
+def _as_train_args(value):
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "item"):
+        try:
+            value = value.item()
+        except Exception:
+            pass
+    if isinstance(value, dict):
+        return value
+    try:
+        return dict(value)
+    except Exception:
+        return {}
 
 
 
@@ -21,6 +58,37 @@ def safe_expand(model, x):
     if hasattr(model, "expand"):
         return model.expand(t)
     raise AttributeError("Model does not expose an expander or expand() method.")
+
+
+def _safe_matmul(A, B, clip_abs=1e30):
+    """Numeric-safe matrix multiply: replaces NaN/Inf, clips extreme values, and multiplies.
+
+    Returns an array with same dtype as numpy.matmul would produce.
+    """
+    A = np.asarray(A)
+    B = np.asarray(B)
+
+    def sanitize(x):
+        if np.iscomplexobj(x):
+            real = np.nan_to_num(x.real, posinf=clip_abs, neginf=-clip_abs)
+            imag = np.nan_to_num(x.imag, posinf=clip_abs, neginf=-clip_abs)
+            # clip magnitudes
+            real = np.clip(real, -clip_abs, clip_abs)
+            imag = np.clip(imag, -clip_abs, clip_abs)
+            return real + 1j * imag
+        else:
+            y = np.nan_to_num(x, posinf=clip_abs, neginf=-clip_abs)
+            return np.clip(y, -clip_abs, clip_abs)
+
+    A_s = sanitize(A)
+    B_s = sanitize(B)
+
+    try:
+        return A_s @ B_s
+    except Exception:
+        # On any failure, return zeros of expected shape
+        out_shape = (A_s.shape[0], B_s.shape[1]) if A_s.ndim == 2 and B_s.ndim == 2 else np.zeros((0,))
+        return np.zeros(out_shape, dtype=complex if np.iscomplexobj(A_s) or np.iscomplexobj(B_s) else float)
 
 
 def safe_de_expand(model, x):
@@ -38,6 +106,8 @@ def safe_de_expand(model, x):
 
 
 def build_model_from_checkpoint(model_path, device="cpu"):
+
+    rollout_mode_override = os.environ.get("EVAL_REGRESSION_ROLLOUT_MODE")
 
     # ---------------------------------------------------------
     # Regression DMD models
@@ -69,7 +139,7 @@ def build_model_from_checkpoint(model_path, device="cpu"):
             hankel_rank=None if get_scalar("hankel_rank") == -1 else int(get_scalar("hankel_rank")),
             normalize_state=bool(get_scalar("normalize_state")),
             normalize_lifted=bool(get_scalar("normalize_lifted")),
-            rollout_mode=str(get_scalar("rollout_mode")),
+            rollout_mode=rollout_mode_override or str(get_scalar("rollout_mode")),
             ridge=float(get_scalar("ridge")),
             rank=None if get_scalar("rank") == -1 else int(get_scalar("rank")),
             rbf_n_centers=int(get_scalar("rbf_n_centers")),
@@ -78,21 +148,93 @@ def build_model_from_checkpoint(model_path, device="cpu"):
             rbf_knn_k=int(get_scalar("rbf_knn_k")),
         ).to(device)
 
-        # 2. Re-hydrate arrays back to model attributes
-        matrix_mappings = {
-            "x_mean": "x_mean", "x_scale": "x_scale", "psi_scale": "psi_scale",
-            "K_fitted": "K", "C_fitted": "C", "K_tilde_fitted": "K_tilde",
-            "U_r_fitted": "U_r", "W_reduced_fitted": "W_reduced",
-            "Lambda_fitted": "Lambda", "Phi_lift_fitted": "Phi_lift", "Phi_state_fitted": "Phi_state"
+        if rollout_mode_override:
+            model.rollout_mode = rollout_mode_override
+
+        # 2. Re-hydrate arrays back to model attributes safely
+        real_mappings = {
+            "x_mean": "x_mean", 
+            "x_scale": "x_scale", 
+            "psi_scale": "psi_scale",
+            "K_fitted": "K", 
+            "C_fitted": "C", 
+            "K_tilde_fitted": "K_tilde",
+            "U_r_fitted": "U_r",
+            # --- FIX: Load the SVD energy statistics ---
+            "singular_values_fitted": "svd_singular_values",
+            "svd_energy_fitted": "svd_energy_cumulative"
         }
         
-        for attr, np_key in matrix_mappings.items():
+        complex_mappings = {
+            "W_reduced_fitted": "W_reduced",
+            "Lambda_fitted": "Lambda", 
+            "Phi_lift_fitted": "Phi_lift", 
+            "Phi_state_fitted": "Phi_state"
+        }
+        
+        # Load real-valued parameters as float64 (matching fit precision)
+        for attr, np_key in real_mappings.items():
             if np_key in ckpt:
-                tensor_val = torch.as_tensor(ckpt[np_key], dtype=torch.complex64, device=device)
+                tensor_val = torch.as_tensor(ckpt[np_key], dtype=torch.float64, device=device)
+                setattr(model, attr, tensor_val)
+                
+        # Load spectral operators as complex128 (matching fit precision)
+        for attr, np_key in complex_mappings.items():
+            if np_key in ckpt:
+                tensor_val = torch.as_tensor(ckpt[np_key], dtype=torch.complex128, device=device)
                 setattr(model, attr, tensor_val)
 
+        # --- FIX: Reconstruct missing inversion matrices and aliases ---
+        if hasattr(model, "Phi_lift_fitted") and model.Phi_lift_fitted is not None:
+            phi_lift = model.Phi_lift_fitted
+            model.Phi_fitted = phi_lift # Map the alias used in visualization
+            
+            # Reconstruct the pseudo-inverse needed for projected rollouts
+            if phi_lift.ndim > 1:
+                model.Phi_pinv_fitted = torch.linalg.pinv(phi_lift)
+            else:
+                model.Phi_pinv_fitted = torch.linalg.pinv(phi_lift.unsqueeze(1))
+
+        # Restore RBF / Hankel expander buffers and fitted flag so expand()/de_expand() work
+        exp_type = str(ckpt.get("expansion_type", "general"))
+        if exp_type == "rbf" and hasattr(model, "expander"):
+            if "rbf_centers" in ckpt and "rbf_sigmas" in ckpt:
+                model.expander.centers = torch.as_tensor(ckpt["rbf_centers"], dtype=torch.float32, device=device)
+                model.expander.sigmas = torch.as_tensor(ckpt["rbf_sigmas"], dtype=torch.float32, device=device)
+                model.expander.is_fitted = True
+
+                if hasattr(model.expander, "expand_names"):
+                    model.expand_names = model.expander.expand_names
+                if hasattr(model.expander, "state_indices"):
+                    model.state_indices = model.expander.state_indices
+                if "expander_state_scale" in ckpt and hasattr(model.expander, "state_scale"):
+                    model.expander.state_scale.copy_(torch.as_tensor(ckpt["expander_state_scale"], dtype=model.expander.state_scale.dtype, device=device))
+                if "expander_history_scale" in ckpt and hasattr(model.expander, "history_scale"):
+                    model.expander.history_scale.copy_(torch.as_tensor(ckpt["expander_history_scale"], dtype=model.expander.history_scale.dtype, device=device))
+                if hasattr(model.expander, "expanded_dim"):
+                    model.expanded_dim = model.expander.expanded_dim
+                    model.latent_dim = model.expander.expanded_dim
+
+        if exp_type == "hankel_svd" and hasattr(model, "expander"):
+            required = ["hankel_mean", "hankel_components", "hankel_singular_values"]
+            missing = [k for k in required if k not in ckpt]
+            if not missing:
+                h_device = model.expander.mean.device
+                model.expander.mean.copy_(torch.as_tensor(ckpt["hankel_mean"], dtype=torch.float64, device=h_device))
+                model.expander.components.copy_(torch.as_tensor(ckpt["hankel_components"], dtype=torch.float64, device=h_device))
+                model.expander.singular_values.copy_(torch.as_tensor(ckpt["hankel_singular_values"], dtype=torch.float64, device=h_device))
+                model.expander.is_fitted = True
+
+                if hasattr(model.expander, "expand_names"):
+                    model.expand_names = model.expander.expand_names
+                if hasattr(model.expander, "state_indices"):
+                    model.state_indices = model.expander.state_indices
+                if hasattr(model.expander, "expanded_dim"):
+                    model.expanded_dim = model.expander.expanded_dim
+                    model.latent_dim = model.expander.expanded_dim
+
         model.is_fitted = True
-        return model, model_name
+        return model, model_name, _as_train_args(ckpt.get("train_args", {}))
 
     # ---------------------------------------------------------
     # ML models
@@ -100,7 +242,7 @@ def build_model_from_checkpoint(model_path, device="cpu"):
 
     ckpt = torch.load(model_path, map_location="cpu")
     model_name = ckpt.get("model", "ml_dmd_free")
-    train_args = ckpt["train_args"]
+    train_args = _as_train_args(ckpt["train_args"])
     
     kwargs = {
         "state_dim": ckpt["state_dim"],
@@ -115,21 +257,41 @@ def build_model_from_checkpoint(model_path, device="cpu"):
         "rbf_center_selection": str(train_args.get("rbf_center_selection", "farthest")),
         "rbf_bandwidth_mode": str(train_args.get("rbf_bandwidth_mode", "knn")),
         "rbf_knn_k": int(train_args.get("rbf_knn_k", 5)),
+        "l1_weight": float(train_args.get("l1_weight", 1e-6)),
     }
 
     if model_name in {"ml_dmd", "hardcoded_dmd", "ml_dmd_free", "ml_dmd_band"}:
         model = ML_DMD(**kwargs)
+    elif model_name == "ml_dmd_drop":
+        model = ML_DMD_DROP(**kwargs)
     elif model_name in {"ml_lineardynamics", "ml_linear_dynamics"}:
         model = ML_LinearDynamics(**kwargs)
     else:
         raise ValueError(f"Unsupported: {model_name}")
 
+    # Because ALL your ML parameters and scalers are registered buffers, 
+    # load_state_dict captures them automatically and perfectly.
     if "model_state_dict" in ckpt:
         state_dict = ckpt["model_state_dict"]
         model.load_state_dict(state_dict)
 
+    # RBF and Hankel-SVD expanders store fitted buffers in the checkpoint's
+    # state_dict, but the runtime flag still needs to be restored explicitly.
+    exp_type = str(train_args.get("expansion_type", "general"))
+    if exp_type in {"rbf", "hankel_svd"} and hasattr(model, "expander"):
+        model.expander.is_fitted = True
+
+    if hasattr(model, "expander"):
+        if hasattr(model.expander, "expand_names"):
+            model.expand_names = model.expander.expand_names
+        if hasattr(model.expander, "state_indices"):
+            model.state_indices = model.expander.state_indices
+        if hasattr(model.expander, "expanded_dim"):
+            model.expanded_dim = model.expander.expanded_dim
+            model.latent_dim = model.expander.expanded_dim
+
     model.eval()
-    return model, model_name
+    return model, model_name, dict(train_args)
 
 
 def get_koopman_eigensystem(model):
@@ -607,18 +769,38 @@ def find_complex_pairs(
 
         block_indices = []
         block_scores = []
+        paired = set()
+        
+        # Safely extract diagonal if Lambda is a 2D matrix
+        L_diag = np.diag(Lambda) if Lambda.ndim == 2 else Lambda
 
-        for i in range(Lambda.shape[0]):
-            if (np.iscomplex(Lambda[i, i]) and 
-                i < Lambda.shape[0] - 1):
+        for i in range(len(L_diag)):
+            if i in paired:
+                continue
+            
+            # 1. Use abs() to correctly identify both positive and negative imaginary parts
+            if abs(L_diag[i].imag) > 1e-6:
                 
-                if (Lambda[i,i].real - Lambda[i+1,i+1].real < threshold_diag and
-                    Lambda[i,i].imag - (-Lambda[i+1,i+1].imag) < threshold_diag):
-
-                    block_indices.append((i, i+1))
-                    score = (Lambda[i,i].real - Lambda[i+1,i+1].real + 
-                             Lambda[i,i].imag - (-Lambda[i+1,i+1].imag))
+                # 2. Calculate the distance from mode i's EXACT conjugate to ALL other modes
+                diffs = np.abs(L_diag - L_diag[i].conj())
+                
+                # Prevent it from matching with itself or already-paired modes
+                diffs[i] = np.inf
+                for p in paired:
+                    diffs[p] = np.inf
+                    
+                best_match = int(np.argmin(diffs))
+                
+                # 3. STRICT absolute tolerance: only pair if they are mathematically identical
+                if diffs[best_match] < threshold_diag:
+                    block_indices.append((i, best_match))
+                    
+                    # Score inversely to the error (perfect matches get the highest score)
+                    score = 1.0 / (diffs[best_match] + 1e-12)
                     block_scores.append(score)
+                    
+                    paired.add(i)
+                    paired.add(best_match)
 
     elif np.isrealobj(Lambda):
 
@@ -663,58 +845,47 @@ def find_complex_pairs(
     return final_blocks_idx
     
 
-def rotation_blocks_to_complex(Lambda, Phi, complex_pair_idx):
-    """
-    Converts detected 2x2 rotation blocks in Lambda and corresponding columns in Phi into complex conjugate pairs.
-    """
-
+def rotation_blocks_to_complex(Lambda, Phi, complex_pair_idx, W=None):
     Lambda_complex = Lambda.copy().astype(np.complex128)
     Phi_complex = Phi.copy().astype(np.complex128)
+    if W is not None:
+        W_complex = W.copy().astype(np.complex128)
 
-    # Loop through complex blocks
     for idx in complex_pair_idx:
         i, j = idx
+        a, c = Lambda[i, i], Lambda[i, j] 
+        b, d = Lambda[j, i], Lambda[j, j]
 
-        # Get 2x2 block <a,b; c,d>
-        a = Lambda[i, i]
-        c = Lambda[i, j] 
-        b = Lambda[j, i] 
-        d = Lambda[j, j]
+        Lambda_complex[i, i], Lambda_complex[j, j] = a + 1j*b, d + 1j*c 
+        Lambda_complex[i, j], Lambda_complex[j, i] = 0, 0
 
-        # find complex value
-        complex_val_1 = a + 1j*b
-        complex_val_2 = d + 1j*c
+        real_part, imag_part = Phi[:, i], Phi[:, j]
+        Phi_complex[:, i], Phi_complex[:, j] = real_part + 1j*imag_part, real_part - 1j*imag_part
+        
+        if W is not None:
+            real_w, imag_w = W[:, i], W[:, j]
+            W_complex[:, i], W_complex[:, j] = real_w + 1j*imag_w, real_w - 1j*imag_w
 
-        # In Lambda: replace block with complex values on diagonal
-        Lambda_complex[i, i] = complex_val_1 
-        Lambda_complex[j, j] = complex_val_2 # should be conjugate of complex_val_1, but allow assymetric imperfections
-        Lambda_complex[i, j] = 0
-        Lambda_complex[j, i] = 0
-
-        # In Phi: v1 = re(mode), v2 = im(mode)
-        real_part = Phi[:, i]
-        imag_part = Phi[:, j]
-        Phi_complex[:, i] = real_part + 1j*imag_part
-        Phi_complex[:, j] = real_part - 1j*imag_part
-
+    if W is not None:
+        return Lambda_complex, Phi_complex, W_complex
     return Lambda_complex, Phi_complex
 
 
-def plot_transition_matrices(matrices, title, model_expansion_names, analytic_expansion_names, threshold_include_val = 1e-3, save_path=None):
-    fig = plt.figure(figsize=(18, 10))
+def plot_transition_matrices(matrices, title, model_expansion_names, analytic_expansion_names, threshold_include_val = 1e-3, save_path=None, subtitle=None):
+    fig = plt.figure(figsize=(21.5, 11.2))
     # Create a 2x3 grid
     num_rows = int(np.ceil(len(matrices) / 3))
-    gs = gridspec.GridSpec(num_rows, 3, width_ratios=[1, 1, 1])
+    gs = gridspec.GridSpec(num_rows, 3, width_ratios=[1, 1, 1], wspace=0.02, hspace=0.30)
     axes = [fig.add_subplot(gs[i,j]) for i in range(num_rows) for j in range(3)]
 
-    fig.suptitle(title, fontsize=22)
-    
+    fig.suptitle(_with_subtitle(title, subtitle), fontsize=21, y=0.985, x=0.5, ha="center")
+
     for i, (M, subtitle) in enumerate(matrices):
         ax = axes[i]
         M_mag = np.abs(M)
         im = ax.imshow(M_mag, vmin=0) # color by magnitude, but show values as real/imaginary parts
-        ax.set_title(subtitle, fontsize=14)
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        ax.set_title(subtitle, fontsize=13)
+        fig.colorbar(im, ax=ax, fraction=0.038, pad=0.018)
         
         # Model or analytic expansion names (for x/y ticks)
         expansion_names = model_expansion_names if "model" in subtitle.lower() else analytic_expansion_names
@@ -723,7 +894,7 @@ def plot_transition_matrices(matrices, title, model_expansion_names, analytic_ex
         if "K" in subtitle:
             # K maps basis functions to basis functions (Square Matrix)
             ax.set_xticks(range(len(expansion_names)))
-            ax.set_xticklabels(expansion_names, rotation=60, fontsize=9)
+            ax.set_xticklabels(expansion_names, rotation=60, fontsize=8)
         else:
             # Remove x-labels for Phi (modes) and Lambda (modes)
             ax.set_xticks([])
@@ -732,14 +903,14 @@ def plot_transition_matrices(matrices, title, model_expansion_names, analytic_ex
         if "K" in subtitle or "Phi" in subtitle:
             # Both K and Phi rows index the basis functions (Observables)
             ax.set_yticks(range(len(expansion_names)))
-            ax.set_yticklabels(expansion_names, fontsize=9)
+            ax.set_yticklabels(expansion_names, fontsize=8)
         else:
             # Remove y-labels for Lambda (modes)
             ax.set_yticks([])
 
         # Dynamically scale font size based on matrix dimension
         n_cols = M.shape[1]
-        f_size = 10 if n_cols <= 5 else (8 if n_cols <= 8 else 6)
+        f_size = 8
 
         for (row, col), v in np.ndenumerate(M):
             if abs(v) > threshold_include_val:
@@ -763,8 +934,7 @@ def plot_transition_matrices(matrices, title, model_expansion_names, analytic_ex
     #     for i in range(len(matrices), len(axes)):
     #         axes[i].axis("off")
 
-    plt.tight_layout()
-    # plt.subplots_adjust(bottom=0.1, top=0.92, hspace=0.4, wspace=0.2)
+    fig.subplots_adjust(left=0.055, right=0.985, top=0.88, bottom=0.08)
         
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')
@@ -796,164 +966,182 @@ def get_data_bounds_and_grid_points(trajectories, grid_res=100, state_dim=2):
     return state_bounds, grid_points
 
 
-def get_real_representation(V, eigvals, jordan_value=1.0, threshold_imag=1e-5, threshold_jordan=1):
-    """
-    Converts complex Koopman modes and eigenvalues into their 
-    real-valued block-diagonal form.
-    """
-    
-    # Initialize real-valued V and Lambda
+def get_real_representation(V, eigvals, jordan_value=1.0, threshold_imag=1e-5, threshold_jordan=1, W=None):
     V_real = np.copy(np.real(V).astype(np.float64))
     Lambda_real = np.copy(np.real(eigvals).astype(np.float64))
+    if W is not None:
+        W_real = np.copy(np.real(W).astype(np.float64))
 
     i = 0
     while i < len(eigvals):
-        if abs(np.imag(eigvals[i,i])) < threshold_imag: # real eigenvalue
-            V_real[:, i] = np.real(V[:, i])
-            Lambda_real[i, i] = np.real(eigvals[i, i])
+        if abs(np.imag(eigvals[i,i])) < threshold_imag: 
+            V_real[:, i], Lambda_real[i, i] = np.real(V[:, i]), np.real(eigvals[i, i])
+            if W is not None: W_real[:, i] = np.real(W[:, i])
             
-            if jordan_value != 0:
-                # Check for Jordan block
-                if (i + 2 <= len(eigvals) and (
-                    abs(eigvals[i+1,i]) > threshold_jordan or
-                    abs(eigvals[i,i+1]) > threshold_jordan
-                )): 
-                    Lambda_real[i, i+1] = jordan_value # Jordan block off-diagonal
-        
+            if jordan_value != 0 and (i + 2 <= len(eigvals) and (abs(eigvals[i+1,i]) > threshold_jordan or abs(eigvals[i,i+1]) > threshold_jordan)): 
+                Lambda_real[i, i+1] = jordan_value 
             i += 1
-
-        else: # complex conjugate pair
+        else: 
             if i + 1 < len(eigvals):
-                V_real[:, i] = np.real(V[:, i]) # Re(v)
-                V_real[:, i+1] = np.imag(V[:, i]) # Im(v)
+                V_real[:, i], V_real[:, i+1] = np.real(V[:, i]), np.imag(V[:, i]) 
+                if W is not None: W_real[:, i], W_real[:, i+1] = np.real(W[:, i]), np.imag(W[:, i]) 
                 
-                a = np.real(eigvals[i,i])
-                b = np.imag(eigvals[i,i])
-                c = np.imag(eigvals[i+1,i+1])
-                d = np.real(eigvals[i+1,i+1])
-                
-                # <a, -b; b, a> since Lambda is transposed
-                Lambda_real[i, i] = a
-                Lambda_real[i, i+1] = c
-                Lambda_real[i+1, i] = b
-                Lambda_real[i+1, i+1] = d
+                a, b, c, d = np.real(eigvals[i,i]), np.imag(eigvals[i,i]), np.imag(eigvals[i+1,i+1]), np.real(eigvals[i+1,i+1])
+                Lambda_real[i, i], Lambda_real[i, i+1] = a, c
+                Lambda_real[i+1, i], Lambda_real[i+1, i+1] = b, d
                 i += 2
             else:
-                V_real[:, i] = np.real(V[:, i])
-                Lambda_real[i, i] = np.real(eigvals[i, i])
+                V_real[:, i], Lambda_real[i, i] = np.real(V[:, i]), np.real(eigvals[i, i])
+                if W is not None: W_real[:, i] = np.real(W[:, i])
                 i += 1
-
+                
+    if W is not None:
+        return V_real, Lambda_real, W_real
     return V_real, Lambda_real
 
 
-def plot_koopman_mode_rollout(model, Phi, Lambda, real_traj, save_path=None, model_type="regression_dmd"):
-    """
-    Plot data projected onto one mode at a time to compare real vs. model evolution.
-    """
-    # # Normalize columns so arbitrary eigenvector scaling does not suppress modal amplitudes.
-    # phi_col_norms = np.linalg.norm(Phi, axis=0, keepdims=True)
-    # Phi = Phi / (phi_col_norms + 1e-12)
-
-    # Measure dimensions
-    n_steps = real_traj.shape[0]
+def plot_koopman_mode_rollout(
+    model, Phi, Lambda, real_traj, save_path=None, 
+    model_type="regression_dmd", subtitle=None, 
+    main_title="Koopman Eigenfunction Rollout (Real Part)",
+    W=None
+):
     n_trajs = real_traj.shape[1]
     state_dim = real_traj.shape[2]
     n_modes = Phi.shape[1]
     lifted_dim = Phi.shape[0]
     
-    # Lift real trajectory
-    real_traj_flattened = real_traj.reshape(-1, state_dim) # (n_steps * n_trajs, state_dim)
-    expanded_traj_flattened = safe_expand(model, torch.tensor(real_traj_flattened, dtype=torch.float32)).cpu().numpy() # (n_steps * n_trajs, lifted_dim)
-    expanded_traj = expanded_traj_flattened.reshape(n_steps, n_trajs, lifted_dim)
+    delay_depth = int(getattr(model.expander, "delay_depth", 1)) if hasattr(model, "expander") else 1
     
-    # Grab initial conditions
-    init_conditions = torch.as_tensor(real_traj[0, :, :], dtype=torch.float32) # (n_trajs, state_dim)
+    if delay_depth > 1:
+        q = delay_depth
+        T = real_traj.shape[0]
+        history_traj = []
+        for t in range(q-1, T):
+            window = real_traj[t-q+1 : t+1, :, :] 
+            window = window[::-1, :, :]
+            history_traj.append(window.transpose(1, 0, 2).reshape(n_trajs, -1))
+        real_traj_input = np.concatenate(history_traj, axis=0)
+        real_traj_valid = real_traj[q-1:, :, :]
+    else:
+        real_traj_input = torch.tensor(real_traj.reshape(-1, state_dim), dtype=torch.float32)
+        real_traj_valid = real_traj
+        
+    n_steps_valid = real_traj_valid.shape[0]
+        
+    expanded_traj_flattened = safe_expand(model, real_traj_input).cpu().numpy()
+    expanded_traj = expanded_traj_flattened.reshape(n_steps_valid, n_trajs, -1)
+    
+    init_conditions = torch.as_tensor(real_traj_valid[0, :, :], dtype=torch.float32) 
     expanded_init_conditions = expanded_traj[0, :, :] 
 
-    ### 1. Real trajectory projected onto modes ###
-    real_proj = expanded_traj @ Phi
-    real_proj = real_proj.real
+    real_proj = _safe_matmul(expanded_traj, Phi).real
 
-    ### 2. Model rollout trajectory ###
-    model_rollouts = model.rollout(init_conditions, steps=n_steps-1).detach().numpy() # (n_steps, n_trajs, state_dim)
-    model_rollouts_flattened_real = model_rollouts.reshape(-1, state_dim).real if np.iscomplexobj(model_rollouts) else model_rollouts.reshape(-1, state_dim) # (n_steps * n_trajs, state_dim)
-    model_rollouts_flattened_expanded = safe_expand(model, torch.as_tensor(model_rollouts_flattened_real, dtype=torch.float32)).detach().numpy()
-    model_rollouts_expanded = model_rollouts_flattened_expanded.reshape(n_steps, n_trajs, lifted_dim) # (n_steps, n_trajs, lifted_dim)
-    model_proj = model_rollouts_expanded @ Phi
-    model_proj = model_proj.real
+    if model is None or not hasattr(model, "rollout"):
+        model_rollouts = np.repeat(init_conditions.unsqueeze(0).cpu().numpy(), n_steps_valid, axis=0)
+    else:
+        if delay_depth > 1:
+            window = real_traj[0:delay_depth, :, :]
+            window = window[::-1, :, :]
+            init_hist = window.transpose(1, 0, 2).reshape(n_trajs, -1)
+            init_input = torch.as_tensor(init_hist, dtype=torch.float32).to(init_conditions.device)
+        else:
+            init_input = init_conditions
+        
+        rollout_raw = model.rollout(init_input, steps=n_steps_valid-1)
+        model_rollouts = rollout_raw.detach().cpu().numpy() if hasattr(rollout_raw, "detach") else np.asarray(rollout_raw)
 
-    ### 3. Mode evolution under Lambda ###
-    # Initialize mode amplitudes from initial conditions
-    z0 = expanded_init_conditions @ Phi # Initial mode amplitudes
-    mode_evolution = np.zeros((n_steps, n_trajs, n_modes), dtype=complex)
+    T_mod, N_mod, D_mod = model_rollouts.shape
+
+    if delay_depth > 1:
+        history_rollout = []
+        for t in range(T_mod):
+            window_indices = np.arange(t - delay_depth + 1, t + 1)
+            window_indices = np.maximum(window_indices, 0)
+            window = model_rollouts[window_indices, :, :]
+            window = window[::-1, :, :]
+            history_rollout.append(window.transpose(1, 0, 2).reshape(N_mod, -1))
+        model_rollouts_input = np.concatenate(history_rollout, axis=0)
+    else:
+        model_rollouts_input = model_rollouts.reshape(-1, D_mod)
+
+    model_rollouts_flattened_expanded = safe_expand(model, torch.as_tensor(model_rollouts_input, dtype=torch.float32)).detach().numpy()
+    model_rollouts_expanded = model_rollouts_flattened_expanded.reshape(n_steps_valid, n_trajs, lifted_dim) 
+    model_proj = _safe_matmul(model_rollouts_expanded, Phi).real
+
+    # --- DYNAMIC W LOGIC ---
+    if W is not None:
+        W_mat = W
+    else:
+        W_mat = np.linalg.pinv(Phi).T
+    z0 = expanded_init_conditions @ W_mat
+    mode_evolution = np.zeros((n_steps_valid, n_trajs, n_modes), dtype=complex)
     mode_evolution[0, :, :] = z0
 
-    # Evolve with Lambda
-    for t in range(1, n_steps):
-        z = mode_evolution[t-1, :, :]
-        z_next = z @ Lambda.T
-        mode_evolution[t, :, :] = z_next
+    for t in range(1, n_steps_valid):
+        mode_evolution[t, :, :] = mode_evolution[t-1, :, :] @ Lambda.T
     mode_evolution = mode_evolution.real
 
-    ### 4. Plotting ###
-    fig, axes = plt.subplots(n_trajs, n_modes, figsize=(2.5 * n_modes, 10), sharex=True)
-    if n_modes == 1: axes = [axes]
+    # 1. Base width is slim (2.5 per mode). Minimum 6.5 inches just so the legend fits.
+    fig_width = max(6.5, 2.5 * n_modes)
+    fig, axes = plt.subplots(n_trajs, n_modes, figsize=(fig_width, 10), sharex=True)
+    
+    # Safely ensure axes is a 2D array even if n_modes=1 or n_trajs=1
+    if n_trajs == 1 and n_modes == 1:
+        axes = np.array([[axes]])
+    elif n_trajs == 1:
+        axes = axes[np.newaxis, :]
+    elif n_modes == 1:
+        axes = axes[:, np.newaxis]
 
-    time = np.arange(n_steps)
+    time = np.arange(n_steps_valid)
 
-    for i in range(n_modes): # columns
-        for traj_idx in range(n_trajs): # rows
-        
-            # Label columns
-            if i == 0:
-                axes[traj_idx,i].set_ylabel(f"Trajectory {traj_idx + 1}")
+    for i in range(n_modes): 
+        for traj_idx in range(n_trajs): 
+            if i == 0: axes[traj_idx,i].set_ylabel(f"Trajectory {traj_idx + 1}")
+            if traj_idx == 0: axes[traj_idx,i].set_title(f"Mode {i + 1}", fontsize=10)
 
-            # Label rows
-            if traj_idx == 0:
-                axes[traj_idx,i].set_title(f"Mode {i + 1}", fontsize=10)
-
-            # Plot real projection, model rollout, and mode evolution
-            axes[traj_idx,i].plot(time, real_proj[:, traj_idx, i], 'k-', label='Real (Proj)', alpha=0.6)
+            axes[traj_idx,i].plot(time, real_proj[:, traj_idx, i], 'k-', label='Ground Truth (Proj)', alpha=0.6)
             axes[traj_idx,i].plot(time, model_proj[:, traj_idx, i], 'r--', label='Model Rollout')
-            axes[traj_idx,i].plot(time, mode_evolution[:, traj_idx, i], 'b:', label='$\Lambda$ Evolution')
+            axes[traj_idx,i].plot(time, mode_evolution[:, traj_idx, i], 'b:', label='$\lambda$ Evolution')
 
-            # y-lim : keep close to real projection
-            y_min_real = real_proj[:, traj_idx, i].min()
-            y_max_real = real_proj[:, traj_idx, i].max()
-            range_real = y_max_real - y_min_real
-            y_lower_bound_real = y_min_real - range_real * 0.1
-            y_upper_bound_real = y_max_real + range_real * 0.1
+            y_min_real, y_max_real = real_proj[:, traj_idx, i].min(), real_proj[:, traj_idx, i].max()
+            range_real = max(y_max_real - y_min_real, 1e-12)
+            y_lower_bound_real, y_upper_bound_real = y_min_real - range_real * 0.1, y_max_real + range_real * 0.1
             y_range_real = y_upper_bound_real - y_lower_bound_real
 
             y_min_other = min(model_proj[:, traj_idx, i].min(), mode_evolution[:, traj_idx, i].min())
             y_max_other = max(model_proj[:, traj_idx, i].max(), mode_evolution[:, traj_idx, i].max())
-            range_other = y_max_other - y_min_other
-            y_lower_bound_other = y_min_other - range_other * 0.1
-            y_upper_bound_other = y_max_other + range_other * 0.1
+            range_other = max(y_max_other - y_min_other, 1e-12)
+            y_lower_bound_other, y_upper_bound_other = y_min_other - range_other * 0.1, y_max_other + range_other * 0.1
             y_range_other = y_upper_bound_other - y_lower_bound_other
             
             if y_range_other > 10 * y_range_real:
-                axes[traj_idx,i].set_ylim([y_lower_bound_real - y_range_real * 2, y_upper_bound_real + y_range_real * 2])
+                _set_nonzero_ylim(axes[traj_idx, i], y_lower_bound_real - y_range_real * 2, y_upper_bound_real + y_range_real * 2)
             else:
-                y_lower_bound_final = min(y_lower_bound_real, y_lower_bound_other)
-                y_upper_bound_final = max(y_upper_bound_real, y_upper_bound_other)
-                if not 0.9 < abs(y_lower_bound_final / y_upper_bound_final) < 1.1:
-                    axes[traj_idx,i].set_ylim([y_lower_bound_final, y_upper_bound_final])
+                y_lower_bound_final, y_upper_bound_final = min(y_lower_bound_real, y_lower_bound_other), max(y_upper_bound_real, y_upper_bound_other)
+                if np.isclose(y_lower_bound_final, y_upper_bound_final):
+                    pad = max(1.0, abs(y_upper_bound_final) * 0.1)
+                    _set_nonzero_ylim(axes[traj_idx, i], y_lower_bound_final - pad, y_upper_bound_final + pad)
+                elif abs(y_upper_bound_final) > 1e-12 and not 0.9 < abs(y_lower_bound_final / y_upper_bound_final) < 1.1:
+                    _set_nonzero_ylim(axes[traj_idx, i], y_lower_bound_final, y_upper_bound_final)
+                elif abs(y_upper_bound_final) <= 1e-12:
+                    _set_nonzero_ylim(axes[traj_idx, i], y_lower_bound_final - 1.0, y_upper_bound_final + 1.0)
 
-            # Legend info
-            if i == 0 and traj_idx == 0:
-                # Grab handles and labels from this specific subplot
-                handles, labels = axes[traj_idx, i].get_legend_handles_labels()
-            
-            # Final subplot gets x-label
-            if traj_idx == n_trajs - 1:
-                axes[traj_idx, i].set_xlabel("Time Steps")
+            axes[traj_idx, i].grid(True, linestyle="--", alpha=0.5)
+            if traj_idx == n_trajs - 1: axes[traj_idx, i].set_xlabel("Time Steps")
         
-    fig.suptitle("Koopman Mode Evolution (Real Part)", fontsize=22, y=1.02)
-    plt.tight_layout()
-    plt.subplots_adjust(top=0.92) # move plots down to avoid overlap
-    fig.legend(handles, labels, loc='upper left', ncol=3, fontsize=14, frameon=True, bbox_to_anchor=(0.01, 0.99))
+    # 2. Dynamic Title Sizing
+    title_fontsize = min(22, max(14, int(1.5 * fig_width)))
+    handles, labels = axes[0, 0].get_legend_handles_labels()
     
+    # 3. Legend ALWAYS at the bottom center, no exceptions
+    fig.suptitle(_with_subtitle(main_title, subtitle), fontsize=title_fontsize, y=0.96)
+    fig.legend(handles, labels, loc="lower center", ncol=3, bbox_to_anchor=(0.5, 0.02), fontsize=12, frameon=False)
+    
+    # 4. Protect top and bottom margins for the text and legend
+    plt.tight_layout(rect=(0, 0.08, 1, 0.92))
+        
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')
         plt.close(fig)
@@ -966,10 +1154,12 @@ def plot_eigenfunctions(
         grid_points_expanded, 
         Phi,
         scores,
+        eigvals,
         score_metric,
         complex_pair_idx,
         cmap="inferno", 
-        save_path=None
+    save_path=None,
+    subtitle=None,
     ):
     # Compute eigenfunction values on the grid for the top N modes
     eigenfunction_vals = grid_points_expanded @ Phi
@@ -981,8 +1171,19 @@ def plot_eigenfunctions(
     extent = [grid_points[:,0].min(), grid_points[:,0].max(), grid_points[:,1].min(), grid_points[:,1].max()]
     num_modes = eigenfunction_vals.shape[1]
 
-    fig, axes = plt.subplots(4, num_modes, figsize=(3+ 2.5*num_modes, 10))
-        
+    # --- FIX 1: Adjust figsize to give the 4 rows enough vertical space to be square ---
+    fig_width = max(6.0, 3.0 * num_modes)
+    fig, axes = plt.subplots(4, num_modes, figsize=(fig_width, 11.0))
+    
+    # Safely ensure axes is 2D if num_modes is 1
+    if num_modes == 1:
+        axes = axes[:, np.newaxis]
+    
+    # --- FIX: Track visible pairs dynamically ---
+    visible_pair_counter = 1
+    pair_to_stars = {}
+    # --------------------------------------------
+
     for mode_idx in range(num_modes):
         data_map = {
             "Real": np.real(eigenfunction_vals[:, mode_idx]), 
@@ -993,9 +1194,16 @@ def plot_eigenfunctions(
     
         # Annotate complex pairs
         pair_string = ""
-        for n_pair, pair in enumerate(complex_pairs):
+        for pair in complex_pairs:
             if mode_idx+1 in pair: # if this mode is part of a complex pair
-                pair_string += f" {'*' * (n_pair+1)}\n"
+                pair_tuple = tuple(pair)
+                
+                # Assign the next available asterisk count if we haven't seen this pair yet
+                if pair_tuple not in pair_to_stars:
+                    pair_to_stars[pair_tuple] = '*' * visible_pair_counter
+                    visible_pair_counter += 1
+                    
+                pair_string += f" {pair_to_stars[pair_tuple]}\n"
 
         for i, (label, data) in enumerate(data_map.items()):
             if i==0:
@@ -1003,14 +1211,21 @@ def plot_eigenfunctions(
                     pair_string + 
                     rf"$\mathbf{{EF{mode_idx+1}}}$" + 
                     f"\n{score_metric}: {scores[mode_idx]:.3f}" +
+                    f"\n$\lambda$: {eigvals[mode_idx]:.3g}" +
                     f"\n\n{label}")
             ax = axes[i, mode_idx]
             im = ax.imshow(data.reshape(grid_n, grid_n), extent=extent, origin="lower", cmap=cmap, aspect='auto')
+            
+            # --- FIX 2: Force the subplot box to be a perfect square ---
+            ax.set_box_aspect(1)
+            
             ax.set_title(f"{label}")
-            plt.colorbar(im, ax=ax)
+            
+            # Adjust colorbar fraction so it matches the newly squared plot
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    fig.suptitle(f"{num_modes} first eigenfunctions", fontsize=20)
-    plt.tight_layout()
+    fig.suptitle(_with_subtitle(f"{num_modes} first eigenfunctions", subtitle), fontsize=20, y=0.99)
+    plt.tight_layout(rect=(0, 0, 1, 0.96))
     
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')
@@ -1019,149 +1234,177 @@ def plot_eigenfunctions(
         plt.show()
 
 
-def modes_by_mse(model, Phi, Lambda, real_traj):
-    """
-    Rank modes by rollout error while avoiding a bias toward near-zero modes.
-    """
-    # # Normalize columns so ranking is not dominated by arbitrary eigenvector scaling.
-    # phi_col_norms = np.linalg.norm(Phi, axis=0, keepdims=True)
-    # Phi = Phi / (phi_col_norms + 1e-12)
-
-    # Measure dimensions
-    n_steps = real_traj.shape[0]
+def modes_by_mse(model, Phi, Lambda, real_traj, W=None):
     n_trajs = real_traj.shape[1]
     state_dim = real_traj.shape[2]
     n_modes = Phi.shape[1]
-    lifted_dim = Phi.shape[0]
     
-    # Lift real trajectory
-    real_traj_flattened = real_traj.reshape(-1, state_dim) # (n_steps * n_trajs, state_dim)
-    expanded_traj_flattened = safe_expand(model, torch.tensor(real_traj_flattened, dtype=torch.float32)).cpu().numpy() # (n_steps * n_trajs, lifted_dim)
-    expanded_traj = expanded_traj_flattened.reshape(n_steps, n_trajs, lifted_dim)
+    delay_depth = int(getattr(model.expander, "delay_depth", 1)) if hasattr(model, "expander") else 1
     
-    # Grab initial conditions
-    init_conditions = torch.as_tensor(real_traj[0, :, :], dtype=torch.float32) # (n_trajs, state_dim)
+    if delay_depth > 1:
+        q = delay_depth
+        T = real_traj.shape[0]
+        history_traj = []
+        # Consume the first q-1 steps strictly as history
+        for t in range(q-1, T):
+            window = real_traj[t-q+1 : t+1, :, :] 
+            window = window[::-1, :, :] 
+            history_traj.append(window.transpose(1, 0, 2).reshape(n_trajs, -1))
+        real_traj_input = np.concatenate(history_traj, axis=0)
+        # The valid trajectory we evaluate against starts AFTER the history
+        real_traj_valid = real_traj[q-1:, :, :]
+    else:
+        real_traj_input = torch.tensor(real_traj.reshape(-1, state_dim), dtype=torch.float32)
+        real_traj_valid = real_traj
+        
+    n_steps_valid = real_traj_valid.shape[0]
+    
+    expanded_traj_flattened = safe_expand(model, real_traj_input).cpu().numpy()
+    expanded_traj = expanded_traj_flattened.reshape(n_steps_valid, n_trajs, -1)
+    
     expanded_init_conditions = expanded_traj[0, :, :] 
-
-    ### 1. Real trajectory projected onto modes ###
     real_proj = expanded_traj @ Phi
     real_proj = real_proj.real
 
-    ### 2. Mode evolution under Lambda ###
-    # Initialize mode amplitudes from initial conditions
-    z0 = expanded_init_conditions @ Phi # Initial mode amplitudes
-    mode_evolution = np.zeros((n_steps, n_trajs, n_modes), dtype=complex)
+    # --- DYNAMIC W LOGIC ---
+    if W is not None:
+        W_mat = W
+    else:
+        W_mat = np.linalg.pinv(Phi).T
+    z0 = expanded_init_conditions @ W_mat
+    mode_evolution = np.zeros((n_steps_valid, n_trajs, n_modes), dtype=complex)
     mode_evolution[0, :, :] = z0
 
-    # Evolve with Lambda
-    for t in range(1, n_steps):
-        z = mode_evolution[t-1, :, :]
-        z_next = z @ Lambda.T
-        mode_evolution[t, :, :] = z_next
+    for t in range(1, n_steps_valid):
+        mode_evolution[t, :, :] = mode_evolution[t-1, :, :] @ Lambda.T
     mode_evolution = mode_evolution.real
 
-    ### 3. Calculate mode score: relative rollout error + low-energy penalty ###
     mode_abs_errors = np.linalg.norm(mode_evolution - real_proj, axis=(0, 1))
-    # mode_energy = np.linalg.norm(real_proj, axis=(0, 1))
-    # mode_relative_errors = mode_abs_errors / (mode_energy + 1e-12)
-
-    # # Penalize modes that are almost inactive so tiny-amplitude modes are not ranked first.
-    # mode_energy_norm = mode_energy / (mode_energy.max() + 1e-12)
-    # mode_scores = mode_relative_errors + 0.05 * (1.0 - mode_energy_norm)
-    # ranked_indices = np.argsort(mode_scores)[::1] # Ascending order (lower is better)
-    ranked_indices = np.argsort(mode_abs_errors)[::1] # Ascending order (lower is better)
-
-    # return ranked_indices, mode_scores
+    ranked_indices = np.argsort(mode_abs_errors)[::1] 
     return ranked_indices, mode_abs_errors
 
+def _get_expanded_indices(mode_indices, Lambda_full):
+    """Ensures complex conjugate pairs are kept together."""
+    L_full = np.diag(Lambda_full) if Lambda_full.ndim == 2 else Lambda_full
+    expanded_idx = set(mode_indices)
+    
+    if np.iscomplexobj(L_full):
+        for i in mode_indices:
+            if abs(L_full[i].imag) > 1e-6:
+                # Find the conjugate
+                diffs = np.abs(L_full - L_full[i].conj())
+                conj_idx = int(np.argmin(diffs))
+                # Only add if the error is tiny and it's within bounds
+                if diffs[conj_idx] < 1e-4:
+                    expanded_idx.add(conj_idx)
+    return sorted(list(expanded_idx))
 
-def truncated_rollout(model, real_traj, n_modes=2, save_path=None):
-    # 1. Extract spectral objects directly from the model to avoid get_koopman_eigensystem's pinv
-    Phi_lift = model.Phi_lift_fitted.detach().cpu().numpy()       # (p, r)
-    Lambda_diag = model.Lambda_fitted.detach().cpu().numpy()
-    Lambda = np.diag(Lambda_diag)                                 # (r, r)
-    C = model.C_fitted.detach().cpu().numpy()                     # (state_dim, p)
-    psi_scale = model.psi_scale.detach().cpu().numpy()             # (p,)
-    x_scale = model.x_scale.detach().cpu().numpy()                 # (state_dim or full delay width)
-
-    n_steps = real_traj.shape[0]
+def truncated_rollout(
+    model, real_traj, n_modes=2, save_path=None, Phi=None, Lambda=None, 
+    mode_indices=None, subtitle=None, save_name=None,
+):
     n_trajs = real_traj.shape[1]
-    state_dim = model.state_dim
-
-    if n_modes > Phi_lift.shape[1] or n_modes <= 0:
-        n_modes = Phi_lift.shape[1]
-
-    # 2. Truncate operators to the top n_modes
-    Phi_truncated = Phi_lift[:, :n_modes]                         # (p, n_modes)
-    Lambda_truncated = Lambda[:n_modes, :n_modes]                 # (n_modes, n_modes)
-
-    # 3. Grab initial conditions and properly normalize them
-    x0 = real_traj[0, :, :]                                       # (n_trajs, width)
-    x0_n = x0 / x_scale[:x0.shape[1]]
+    state_dim = real_traj.shape[2]
     
-    # Lift to normalized coordinate space Z_x
-    with torch.no_grad():
-        psi_x0 = model.expand(torch.tensor(x0_n, dtype=torch.float64)).cpu().numpy()
-    z0_normalized = psi_x0 / psi_scale                            # (n_trajs, p)
+    delay_depth = int(getattr(model.expander, "delay_depth", 1)) if hasattr(model, "expander") else 1
     
-    # 4. Project onto the truncated modes: z0_normalized ≈ Phi_truncated @ b0
-    b0 = (np.linalg.pinv(Phi_truncated) @ z0_normalized.T).T       # (n_trajs, n_modes)
-    
-    # 5. Evolve the truncated modes over time
-    mode_evolution = np.zeros((n_steps, n_trajs, n_modes), dtype=complex)
-    mode_evolution[0, :, :] = b0
-    for t in range(1, n_steps):
-        mode_evolution[t, :, :] = mode_evolution[t-1, :, :] @ Lambda_truncated.T
-
-    # 6. Reconstruct normalized lifted states and decode via C_fitted
-    truncated_trajectory = np.zeros((n_steps, n_trajs, state_dim))
-    for t in range(n_steps):
-        # Reconstruct normalized lifted coordinate: z_n = b @ Phi_truncated^T
-        z_n_t = mode_evolution[t, :, :] @ Phi_truncated.T
-        z_n_t = z_n_t.real
+    if delay_depth > 1:
+        q = delay_depth
+        window = real_traj[0:q, :, :]
+        window = window[::-1, :, :]
+        x0_hist = window.transpose(1, 0, 2).reshape(n_trajs, -1)
+        plot_real_traj = real_traj[q-1:, :, :]
+    else:
+        x0_hist = real_traj[0, :, :]
+        plot_real_traj = real_traj
         
-        # Decode using the model's fitted linear decoder instead of safe_de_expand
-        x_n_t = z_n_t @ C.T                                       # (n_trajs, state_dim)
+    n_steps_valid = plot_real_traj.shape[0]
+    
+    if all(hasattr(model, attr) for attr in ("Phi_lift_fitted", "Lambda_fitted", "C_fitted", "psi_scale", "x_scale")):
+        is_regression = True
+        Phi_lift = model.Phi_lift_fitted.detach().cpu().numpy()
+        Lambda_diag = model.Lambda_fitted.detach().cpu().numpy()
+        Lambda_mat = np.diag(Lambda_diag)
         
-        # Denormalize back to the physical state space
-        truncated_trajectory[t, :, :] = x_n_t * x_scale[:state_dim]
+        if mode_indices is None:
+            mode_indices = list(range(min(n_modes, Phi_lift.shape[1])))
+        mode_indices = _get_expanded_indices(mode_indices, Lambda_diag)
+        
+        Phi_truncated = Phi_lift[:, mode_indices]
+        Lambda_truncated = Lambda_mat[np.ix_(mode_indices, mode_indices)]
+        
+        x_scale = np.real_if_close(model.x_scale.detach().cpu().numpy())
+        x0_n = x0_hist / x_scale[:x0_hist.shape[1]]
+        with torch.no_grad():
+            z0_norm_t = model.expand(torch.as_tensor(x0_n, dtype=torch.float64)) / torch.as_tensor(np.real_if_close(model.psi_scale.detach().cpu().numpy()), dtype=torch.float64)
+            b0_full = model._solve_modal_coeffs_exact(z0_norm_t).detach().cpu().numpy()
+            
+        b0_sel = b0_full[:, mode_indices]
+        lambda_vals = np.diag(Lambda_truncated)
+        
+        mode_evolution = np.zeros((n_steps_valid, n_trajs, len(mode_indices)), dtype=complex)
+        for t in range(n_steps_valid):
+            mode_evolution[t, :, :] = b0_sel * (lambda_vals[np.newaxis, :] ** t)
+        
+        C = model.C_fitted.detach().cpu().numpy()
+        truncated_trajectory = np.real(mode_evolution @ Phi_truncated.T @ C.T) * x_scale[:state_dim]
 
-    # 7. Calculate errors (RMSE)
-    mse = np.mean((truncated_trajectory - real_traj[:, :, :state_dim]) ** 2, axis=(0, 2))
+    elif hasattr(model, "get_Phi") and hasattr(model, "get_Lambda"):
+        is_regression = False
+        Phi_lift = model.get_Phi().detach().cpu().numpy()
+        Lambda = model.get_Lambda().detach().cpu().numpy()
+        
+        if mode_indices is None:
+            mode_indices = list(range(min(n_modes, Phi_lift.shape[1])))
+        mode_indices = _get_expanded_indices(mode_indices, Lambda)
+        
+        Phi_truncated = Phi_lift[:, mode_indices]
+        Lambda_truncated = Lambda[np.ix_(mode_indices, mode_indices)]
+        
+        with torch.no_grad():
+            z0 = model.expander.expand(torch.as_tensor(x0_hist, dtype=torch.float32))
+            b0 = model._get_modal_coords(model._normalize(z0)).detach().cpu().numpy()
+        
+        b0_sel = b0[:, mode_indices]
+        
+        mode_evolution = np.zeros((n_steps_valid, n_trajs, len(mode_indices)), dtype=complex)
+        mode_evolution[0, :, :] = b0_sel
+        for t in range(1, n_steps_valid):
+            mode_evolution[t, :, :] = mode_evolution[t-1, :, :] @ Lambda_truncated.T
+            
+        truncated_trajectory = np.zeros_like(plot_real_traj)
+        for t in range(n_steps_valid):
+            z_t = np.real(mode_evolution[t, :, :] @ Phi_truncated.T)
+            with torch.no_grad():
+                z_t_norm = model._unnormalize(torch.as_tensor(z_t, dtype=torch.float32))
+                x_t = model.expander.de_expand(z_t_norm).cpu().numpy()
+            truncated_trajectory[t, :, :] = x_t[:, :state_dim]
+    else:
+        raise ValueError("Model format not supported.")
+
+    mse = np.mean((truncated_trajectory - plot_real_traj[:, :, :state_dim]) ** 2, axis=(0, 2))
     rmse = np.sqrt(mse)
-    # print(f"Min max real: {real_traj.real.min():.3e} to {real_traj.real.max():.3e}")
-    # print(f"Min max truncated: {truncated_trajectory.real.min():.3e} to {truncated_trajectory.real.max():.3e}")
 
-    # 9. Plot each trajectory in state space
     n_rows = 2
     c_cols = 2
     fig, axes = plt.subplots(n_rows, c_cols, figsize=(12,12))
 
     for traj_idx in range(n_trajs):
         ax = axes[traj_idx // c_cols, traj_idx % c_cols]
-
-        # Plot Ground Truth vs Truncated Rollout
-        ax.plot(real_traj[:, traj_idx, 0], real_traj[:, traj_idx, 1], 'k-', label='True Trajectory', alpha=0.7)
+        ax.plot(plot_real_traj[:, traj_idx, 0], plot_real_traj[:, traj_idx, 1], 'k-', label='True Trajectory', alpha=0.7)
         ax.plot(truncated_trajectory[:, traj_idx, 0], truncated_trajectory[:, traj_idx, 1], 'b--', label=f'Mode rollout (n={n_modes})')
-
-        # Subplot layout decoration
-        ax.grid(True, linestyle=':', alpha=0.5)
-        # ax.axes.set_aspect('equal')
+        ax.grid(True, linestyle='--', alpha=0.5)
         ax.set_title(f"Traj {traj_idx + 1}\n(RMSE: {rmse[traj_idx]:.1e})", fontsize=10)
-            
-        # Add axis labels
         ax.set_xlabel("x")
         ax.set_ylabel("y")
+        ax.legend(loc="upper left", fontsize=8, frameon=True)
 
-    # Clean up legend and layout
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.suptitle(f"State Space Rollout Comparison (Top {n_modes} Koopman Modes)", fontsize=14, y=1.02)
-    fig.legend(handles, labels, loc='upper center', ncol=2, bbox_to_anchor=(0.5, 0.98), frameon=True)
-    
-    plt.tight_layout()
+    fig.suptitle(_with_subtitle(f"State Space Rollout Comparison (Top {n_modes} Koopman Modes)", subtitle), fontsize=14, y=0.985)
+    plt.tight_layout(rect=(0, 0.06, 1, 0.985))
     
     if save_path:
-        plt.savefig(f"{save_path}/truncated_rollout_{n_modes}_modes.png", bbox_inches='tight')
+        filename = save_name or f"truncated_rollout_{n_modes}_modes.png"
+        plt.savefig(os.path.join(save_path, filename), bbox_inches='tight')
         plt.close(fig)
     else:
         plt.show()
@@ -1169,81 +1412,7 @@ def truncated_rollout(model, real_traj, n_modes=2, save_path=None):
     return truncated_trajectory
 
 
-# def modes_by_quality_deprecated(
-#     model, 
-#     W, 
-#     eigvals_analytic, 
-#     state_bounds, 
-#     n_modes_to_keep=8
-#     ):
-
-#     n_eval_traj = 14
-#     eval_steps = 90
-    
-#     rng = np.random.default_rng(0)
-#     num_modes = W.shape[1]
-#     residual_accum = np.zeros(num_modes, dtype=np.float64)
-
-#     for _ in range(n_eval_traj):
-#         x0 = np.zeros((1, model.state_dim), dtype=np.float32)
-#         for dim in range(model.state_dim):
-#             x0[0, dim] = rng.uniform(state_bounds[dim][0], state_bounds[dim][1])
-            
-#         xt = torch.tensor(x0, dtype=torch.float32)
-#         traj = [x0.flatten()]
-#         with torch.no_grad():
-#             for _ in range(eval_steps):
-#                 xt = model(xt)
-#                 traj.append(xt.cpu().numpy().flatten())
-
-#         traj = np.asarray(traj, dtype=np.float32)
-#         with torch.no_grad():
-#             z_roll = safe_expand(model, torch.tensor(traj)).cpu().numpy()
-#             phi_roll = z_roll @ W
-
-#         lhs = phi_roll[1:, :] 
-#         rhs = phi_roll[:-1, :] * eigvals_analytic[None, :] 
-
-#         num = np.linalg.norm(lhs - rhs, axis=0) 
-#         den = np.linalg.norm(phi_roll[:-1, :], axis=0) + 1e-12 
-#         residual_accum += num / den
-
-#     residual_mean = residual_accum / max(1, n_eval_traj)
-
-#     # Calculate Spatial Score (Taking a 2D slice if state_dim > 2)
-#     x_range = np.linspace(state_bounds[0][0], state_bounds[0][1], 50)
-#     y_range = np.linspace(state_bounds[1][0], state_bounds[1][1], 50)
-#     X_grid, Y_grid = np.meshgrid(x_range, y_range)
-    
-#     grid_cols = [X_grid.ravel(), Y_grid.ravel()]
-#     # Pad higher dimensions with their median values
-#     for dim in range(2, model.state_dim):
-#         dim_mean = (state_bounds[dim][0] + state_bounds[dim][1]) / 2.0
-#         grid_cols.append(np.full_like(X_grid.ravel(), dim_mean))
-        
-#     pts = np.column_stack(grid_cols)
-    
-#     with torch.no_grad():
-#         z_grid = safe_expand(model, torch.as_tensor(pts, dtype=torch.float32)).cpu().numpy()
-#         phi_grid = z_grid @ W
-    
-#     spatial_std = np.std(np.real(phi_grid), axis=0)
-
-#     def to_unit(x):
-#         return (x - x.min()) / (x.max() - x.min() + 1e-12)
-
-#     res_score = 1.0 - to_unit(residual_mean)
-#     spat_score = to_unit(spatial_std)
-    
-#     mode_score = 0.8 * res_score + 0.2 * spat_score
-#     ranked_indices = np.argsort(mode_score)[::-1]
-
-#     best_ids = ranked_indices[:n_modes_to_keep]
-    
-#     return best_ids, mode_score, residual_mean
-
-
-def plot_eigenvalue_spectrum(eigvals, mode_scores, score_metric, save_path=None):
+def plot_eigenvalue_spectrum(eigvals, mode_scores, score_metric, save_path=None, subtitle=None):
     fig, ax = plt.subplots(figsize=(6,4))
     
     circle_color = "#9ca3af"
@@ -1272,15 +1441,20 @@ def plot_eigenvalue_spectrum(eigvals, mode_scores, score_metric, save_path=None)
         eigvals.imag.max() + max(0.1*abs(eigvals.imag.max()), 0.02)
     )
     ax.set_xlim(x_bounds)
-    ax.set_ylim(y_bounds)
+    _set_nonzero_ylim(ax, y_bounds[0], y_bounds[1])
     
     ax.axhline(0, color=circle_color, linewidth=0.8, alpha=0.5)
     ax.axvline(0, color=circle_color, linewidth=0.8, alpha=0.5)
     # ax.set_aspect("equal", adjustable="box")
-    ax.set_title(f"Eigenvalue Spectrum (Colored by {score_metric})", fontsize=12)
+    ax.set_title(_with_subtitle(f"Eigenvalue Spectrum", subtitle), fontsize=10)
     ax.set_xlabel("$\mathbb{R}(\lambda)$")
     ax.set_ylabel("$\mathbb{I}(\lambda)$")
-    
+
+    # Add legend for unit circle line and dot for eigenvalues
+    ax.plot([], [], "--", color=circle_color, linewidth=1.2, label="Unit Circle")
+    ax.scatter([], [], color='black', s=20, label=f"Eigenvalues")
+    ax.legend(loc="upper right", fontsize=8, frameon=True)
+
     cbar = plt.colorbar(scatter, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label(f'Mode {score_metric}', rotation=270, labelpad=15)
     
@@ -1294,7 +1468,7 @@ def plot_eigenvalue_spectrum(eigvals, mode_scores, score_metric, save_path=None)
         plt.show()
 
 
-def plot_freq_magnitude(eigvals, mode_scores, score_metric, save_path=None):
+def plot_freq_magnitude(eigvals, mode_scores, score_metric, save_path=None, subtitle=None):
     magnitudes = np.abs(eigvals)
     frequencies = np.abs(np.angle(eigvals)) / np.pi 
     
@@ -1312,46 +1486,44 @@ def plot_freq_magnitude(eigvals, mode_scores, score_metric, save_path=None):
         linewidths=0.5
     )
 
-    ### Annotate overlapping points together
-    # Threshold for how close points need to be to be considered overlapping (as a fraction of the total spread)
-    overlap_th = 0.05
-
-    # Calculate spreads for dynamic thresholding
-    x_spread = (frequencies.max() - frequencies.min()) 
-    y_spread = (magnitudes.max() - magnitudes.min()) 
-    x_th = overlap_th * x_spread + 1e-4
-    y_th = overlap_th * y_spread + 1e-4
-
-    # Loop through points
+    # Group only nearly identical points together so isolated points still get labels.
+    rounded_positions = np.column_stack((np.round(frequencies, 3), np.round(magnitudes, 3)))
     plot_checklist = np.zeros(len(eigvals), dtype=bool)  # keep track of annotated points
-    for i, (freq, mag) in enumerate(zip(frequencies, magnitudes)):
+    y_offset = 0.012 * max(magnitudes.max() - magnitudes.min(), 1e-3)
+    x_offset = 0.012 * max(frequencies.max() - frequencies.min(), 1e-3)
 
-        # skip if already annotated
+    for i, (freq, mag) in enumerate(zip(frequencies, magnitudes)):
         if plot_checklist[i]:
             continue
-        plot_checklist[i] = True
-        
-        # loop through nearby points
-        nearby_indices = np.where((np.abs(frequencies - freq) < x_th) & (np.abs(magnitudes - mag) < y_th))[0]
-        label_string = f"{i}"
-        for near_idx in nearby_indices:
 
-            # skip self or if already annotated
-            if (near_idx == i) or (plot_checklist[near_idx]):
-                continue
+        same_spot = np.where(
+            (rounded_positions[:, 0] == rounded_positions[i, 0])
+            & (rounded_positions[:, 1] == rounded_positions[i, 1])
+        )[0]
+        same_spot = same_spot[~plot_checklist[same_spot]]
 
-            # add to label and mark as annotated
-            label_string += f", {near_idx}"
-            plot_checklist[near_idx] = True
+        if len(same_spot) == 0:
+            continue
 
-        # label cluster
-        x_coord = freq
-        y_coord = mag - 0.5 * overlap_th * y_spread  # offset label slightly below the cluster
-        ax.text(x_coord, y_coord, label_string, fontsize=8, ha='center', va='center')
+        label_string = ", ".join(str(idx) for idx in same_spot)
+        plot_checklist[same_spot] = True
+
+        x_coord = freq + x_offset
+        y_coord = mag - y_offset
+        ax.text(
+            x_coord,
+            y_coord,
+            label_string,
+            fontsize=8,
+            ha='left',
+            va='center',
+            color='black',
+            fontweight='bold',
+        )
     
     ax.axhline(1.0, color=circle_color, linestyle='--', alpha=0.6, label="Unit Circle (Stable)")
     
-    ax.set_title("Eigenvalue Distribution: Frequency vs. Magnitude", fontsize=14)
+    ax.set_title(_with_subtitle("Eigenvalue Distribution: Frequency vs. Magnitude", subtitle), fontsize=14)
     ax.set_xlabel("Normalized Frequency ($\omega / \pi$)")
     ax.set_ylabel("Magnitude ($|\lambda|$)")
     
@@ -1368,7 +1540,7 @@ def plot_freq_magnitude(eigvals, mode_scores, score_metric, save_path=None):
         plt.show()
 
 
-def plot_mode_contributions_vs_quality(V, phi_traj, best_ids, scores, state_dim, n_top=10, save_path=None):
+def plot_mode_contributions_vs_quality(V, phi_traj, best_ids, scores, state_dim, n_top=10, save_path=None, subtitle=None):
     amplitudes = np.mean(np.abs(phi_traj), axis=0)
     v_norms = np.linalg.norm(V[:state_dim, :], axis=0)
     
@@ -1388,7 +1560,7 @@ def plot_mode_contributions_vs_quality(V, phi_traj, best_ids, scores, state_dim,
     ax.set_xticks(range(n_show))
     ax.set_xticklabels([f"Mode {i}" for i in top_energy_idx], rotation=45)
     ax.set_ylabel("Contribution to Reconstruction (%)")
-    ax.set_title("Physical Mode Energy (Weighted by Average Activation)")
+    ax.set_title(_with_subtitle("Physical Mode Energy (Weighted by Average Activation)", subtitle))
     
     for i, bar in enumerate(bars):
         yval = bar.get_height()
@@ -1405,7 +1577,7 @@ def plot_mode_contributions_vs_quality(V, phi_traj, best_ids, scores, state_dim,
         plt.show()
 
 
-def plot_mode_energy_vs_quality(V, scores, state_dim, n_top=20, save_path=None):
+def plot_mode_energy_vs_quality(V, scores, state_dim, n_top=20, save_path=None, subtitle=None):
     mode_energies = np.linalg.norm(V[:state_dim, :], axis=0)
     energy_norm = (mode_energies - mode_energies.min()) / (mode_energies.max() - mode_energies.min() + 1e-12)
 
@@ -1445,7 +1617,7 @@ def plot_mode_energy_vs_quality(V, scores, state_dim, n_top=20, save_path=None):
 
     ax.set_xlabel("Quality Score (Linearity & Stability)", fontsize=12)
     ax.set_ylabel("Normalized Energy (Contribution to Physical States)", fontsize=12)
-    ax.set_title("Mode Selection: Quality vs. Physical Energy", fontsize=14)
+    ax.set_title(_with_subtitle("Mode Selection: Quality vs. Physical Energy", subtitle), fontsize=14)
     
     plt.grid(True, linestyle=':', alpha=0.3)
     plt.tight_layout()

@@ -57,3 +57,6 @@ parameters:
 
   bias:
     values: ["true"]
+
+  normalize_state:
+    values: ["true"]

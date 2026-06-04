@@ -69,6 +69,33 @@ def parse_rollout_horizon_spec(text: str):
         raise ValueError("rollout_metric_horizons must be >= 1")
     return list(range(1, max_h + 1))
 
+
+def parse_threshold_spec(text: str):
+    """Parse contribution thresholds as percentages or fractions.
+
+    Examples
+    --------
+    "1,50,90"   -> [0.01, 0.5, 0.9]
+    "0.01,0.5"  -> [0.01, 0.5]
+    "100"       -> [1.0]
+    "1"         -> [0.01]
+    ""          -> []
+    """
+    text = text.strip()
+    if text == "":
+        return []
+
+    values = []
+    for item in text.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        value = float(item)
+        if value > 1:
+            value = value / 100.0
+        values.append(value)
+    return values
+
 def main():
     parser = argparse.ArgumentParser(description="Behavior / local analysis diagnostics for trained models.")
 
@@ -102,9 +129,8 @@ def main():
     parser.add_argument("--grid_overlay_n_trajs", type=int, default=1, help="Number of trajectories to overlay on true-grid heatmaps.")
     parser.add_argument("--force_linear_true_grid_error_scale", action="store_true", help="Force linear color scaling for the combined true-grid heatmap figure. Default is automatic log/linear selection.")    
     parser.add_argument("--reuse_if_exists", action="store_true", help="If diagnostics outputs already exist, skip recomputation and exit.")
-    parser.add_argument("--mode_subset_sizes", type=str, default="", help="Comma-separated subset sizes for additional mode-restricted heatmaps, e.g. '1,2,5'.")
-    parser.add_argument("--mode_subset_strategy", type=str, default="amplitude", choices=["amplitude", "manual"], help="How to choose modes for additional subset heatmaps.")
-    parser.add_argument("--mode_subset_indices", type=str, default="", help="Comma-separated explicit mode indices, used when --mode_subset_strategy=manual.")
+    parser.add_argument("--mode_subset_thresholds", type=str, default="", help="Comma-separated contribution thresholds for mode heatmaps, e.g. '1,50,90' or '0.01,0.5,0.9'.")
+    parser.add_argument("--mode_subset_indices", type=str, default="", help="Comma-separated explicit mode indices for manual mode heatmaps.")
     parser.add_argument("--outdir", type=str, default=None, help="Force a custom output directory for all plots and logs.")
 
     args = parser.parse_args()
@@ -113,7 +139,7 @@ def main():
     rollout_metric_horizons = parse_rollout_horizon_spec(args.rollout_metric_horizons)
     phase_map_horizons = parse_int_list(args.phase_map_horizons)
     true_grid_horizons = parse_int_list(args.true_grid_horizons)
-    mode_subset_sizes = parse_int_list(args.mode_subset_sizes) if args.mode_subset_sizes.strip() else []
+    mode_subset_thresholds = parse_threshold_spec(args.mode_subset_thresholds)
     mode_subset_indices = parse_int_list(args.mode_subset_indices) if args.mode_subset_indices.strip() else []
 
     phase_max = max(phase_map_horizons) if len(phase_map_horizons) > 0 else 0
@@ -128,6 +154,7 @@ def main():
         subdir=f"diagnostics_{args.split}",
         need_cache=need_cache_initially,
         max_horizon_for_cache=max_needed,
+        save_run_metadata=False,
     )
 
     # Force the outputs to route to the custom directory if provided
@@ -145,9 +172,11 @@ def main():
 
     expected_heatmap_paths = []
     if args.run_true_grid_heatmap:
-        expected_heatmap_paths = [
-            os.path.join(ctx.figdir, "true_grid_error_heatmap_grid.png")
-        ]
+        expected_heatmap_paths = [os.path.join(ctx.figdir, "true_grid_error_heatmap_grid_full.png")]
+        if mode_subset_thresholds:
+            expected_heatmap_paths.append(
+                os.path.join(ctx.figdir, "true_grid_error_heatmap_grid_with_subsets.png")
+            )
 
     all_expected_exist = os.path.exists(diagnostics_summary_path) and all(
         os.path.exists(p) for p in expected_heatmap_paths
@@ -277,8 +306,7 @@ def main():
         run_sampled_start_heatmap=args.run_sampled_start_heatmap,
         overlay_true_trajectory_on_grid=not args.no_overlay_true_trajectory_on_grid,
         grid_overlay_n_trajs=args.grid_overlay_n_trajs,
-        mode_subset_sizes=mode_subset_sizes,
-        mode_subset_strategy=args.mode_subset_strategy,
+        mode_subset_thresholds=mode_subset_thresholds,
         mode_subset_indices=mode_subset_indices,
         force_linear_true_grid_error_scale=args.force_linear_true_grid_error_scale,
     )
@@ -297,8 +325,7 @@ def main():
             "run_sampled_start_heatmap": args.run_sampled_start_heatmap,
             "overlay_true_trajectory_on_grid": not args.no_overlay_true_trajectory_on_grid,
             "grid_overlay_n_trajs": args.grid_overlay_n_trajs,
-            "mode_subset_sizes": mode_subset_sizes,
-            "mode_subset_strategy": args.mode_subset_strategy,
+            "mode_subset_thresholds": mode_subset_thresholds,
             "mode_subset_indices": mode_subset_indices,
         },
     )

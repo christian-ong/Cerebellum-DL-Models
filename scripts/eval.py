@@ -33,8 +33,11 @@ from src.eval.eval_runner import (
     save_summary,
     save_metadata_json,
 )
+from src.eval.diagnostics import format_model_label
 from src.eval.rollout_eval import compute_single_rollout
 from src.eval.plot_rollout import (
+    plot_combined_rollout,
+    plot_combined_rollout_with_reference,
     plot_time_series,
     plot_phase_space,
     plot_time_series_with_reference,
@@ -157,6 +160,7 @@ def main():
     parser.add_argument("--use_cache",action="store_true",help="Reuse rollout cache across metric computations in memory.",)
     parser.add_argument("--save_rollout_cache",action="store_true",help="Optionally save rollout cache to disk for debugging or reuse.")
     parser.add_argument("--save_rollout_arrays",action="store_true",help="Save example rollout arrays as NPZ in addition to the plots.")
+    parser.add_argument("--outdir", type=str, default=None, help="Force a custom output directory for all plots and logs.")
     args = parser.parse_args()
 
     horizons = parse_int_list(args.horizons)
@@ -170,6 +174,10 @@ def main():
         need_cache=args.use_cache,
         max_horizon_for_cache=max_needed,
     )
+
+    if args.outdir:
+        ctx.figdir = args.outdir
+        os.makedirs(ctx.figdir, exist_ok=True)
 
     if args.traj_index >= len(ctx.traj_indices):
         raise IndexError(
@@ -220,6 +228,7 @@ def main():
     )
 
     traj_id = ctx.traj_indices[args.traj_index]
+    model_label = format_model_label(args.model, ctx.model, ctx.extras, system=ctx.system)
     X_true, X_hat = compute_single_rollout(
         X=ctx.X,
         traj_id=traj_id,
@@ -229,13 +238,16 @@ def main():
         extras=ctx.extras,
     )
 
-    X_ref = None
-
-    if args.reference_data_path is None:
-        plot_time_series(X_true, X_hat, ctx.figdir, args.traj_index)
-        plot_phase_space(X_true, X_hat, ctx.system, ctx.figdir, args.model, args.traj_index)
-
+    # Save rollout plots into a dedicated sibling 'rollout' folder when the
+    # evaluation outputs are rooted under 'data'. Otherwise keep the local subfolder.
+    if os.path.basename(os.path.normpath(ctx.figdir)) == "data":
+        rollout_figdir = os.path.join(os.path.dirname(os.path.normpath(ctx.figdir)), "rollout")
     else:
+        rollout_figdir = os.path.join(ctx.figdir, "rollout")
+    os.makedirs(rollout_figdir, exist_ok=True)
+
+    X_ref = None
+    if args.reference_data_path is not None:
         X_ref = load_reference_segment(
             reference_data_path=args.reference_data_path,
             split=args.split,
@@ -243,14 +255,44 @@ def main():
             n_points=X_true.shape[0],
         )
 
+    if X_true.shape[1] == 2:
+        if args.reference_data_path is None:
+            plot_combined_rollout(
+                X_true,
+                X_hat,
+                rollout_figdir,
+                args.traj_index,
+                model_label=model_label,
+                system=ctx.system,
+            )
+        else:
+            plot_combined_rollout_with_reference(
+                X_true,
+                X_hat,
+                X_ref,
+                rollout_figdir,
+                args.traj_index,
+                true_label="Noisy observed",
+                ref_label="Clean true",
+                model_label=model_label,
+                system=ctx.system,
+            )
+
+    elif args.reference_data_path is None:
+        plot_time_series(X_true, X_hat, rollout_figdir, args.traj_index, model_label=model_label, system=ctx.system)
+        plot_phase_space(X_true, X_hat, ctx.system, rollout_figdir, args.model, args.traj_index, model_label=model_label)
+
+    else:
         plot_time_series_with_reference(
             X_true,
             X_hat,
             X_ref,
-            ctx.figdir,
+            rollout_figdir,
             args.traj_index,
             true_label="Noisy observed",
             ref_label="Clean true",
+            model_label=model_label,
+            system=ctx.system,
         )
 
         plot_phase_space_with_reference(
@@ -258,11 +300,12 @@ def main():
             X_hat,
             X_ref,
             ctx.system,
-            ctx.figdir,
+            rollout_figdir,
             args.model,
             args.traj_index,
             true_label="Noisy observed",
             ref_label="Clean true",
+            model_label=model_label,
         )
 
     if args.save_rollout_arrays:
