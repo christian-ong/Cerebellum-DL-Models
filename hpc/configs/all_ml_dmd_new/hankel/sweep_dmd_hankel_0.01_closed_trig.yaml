@@ -25,8 +25,10 @@ parameters:
       - ml_dmd_drop
 
   data_path:
-      values:
-        - data/trajectories/nonlinear/vanderpol/dt_0.01
+    values:
+      - data/trajectories/nonlinear/closed_trig_small/dt_0.01
+      - data/trajectories/nonlinear/closed_trig_medium/dt_0.01
+      - data/trajectories/nonlinear/closed_trig_large/dt_0.01
 
   lr:
     values: [1e-3]
@@ -37,23 +39,23 @@ parameters:
 
   # --- FIXED: Shorter horizons ---
   rollout_horizon:
-    values: [10, 20, 50] 
+    values: [10, 20]
 
   # --- NEW: Test the strictness of the learned inverse ---
   biorth_weight:
     values: [0.1, 1.0, 10.0]
 
-  # --- GENERAL ARCHITECTURE ---
+  # --- HANKEL ARCHITECTURE ---
   expansion_type:
-    values: ["general"]
-  expansion_degree:
-    values: [3, 5, 7]
+    values: ["hankel_svd"]
+  delay_depth:
+    values: [10, 30, 50, 100]
+  hankel_rank:
+    values: [5, 10, 20, 40]
   
-  # --- LOCKED (Based on Pilot Win) ---
-  sine_cosine_expansion:
-    values: ["false", "true"]
   l1_weight:
     values: [0.0, 1e-4]
-  
+  sine_cosine_expansion:
+    values: ["false"]
   bias:
     values: ["true"]

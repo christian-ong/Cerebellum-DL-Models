@@ -63,7 +63,7 @@ def plot_combined_rollout(X_true, X_hat, figdir, traj_index, *, model_label=None
 
     if model_label:
         # Since model_label is already a string, just use it directly!
-        fig_title = f"Rollout Comparison: {model_label}"
+        fig_title = f"Rollout Comparison: \n{model_label}"
         fig.suptitle(fig_title, fontsize=14)
         plt.tight_layout(rect=(0, 0, 1, 0.95))
     else:

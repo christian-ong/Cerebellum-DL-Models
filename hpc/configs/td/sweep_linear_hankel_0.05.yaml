@@ -32,24 +32,25 @@ parameters:
       - data/trajectories/nonlinear/lotka_volterra/dt_0.05
       - data/trajectories/nonlinear/duffing/dt_0.05
       - data/trajectories/nonlinear/pendulum/dt_0.05
+      - data/trajectories/nonlinear/lorenz/dt_0.05
 
   lr:
-    values: [1e-2, 1e-3, 1e-4]
+    values: [1e-3]
   
   rollout_horizon:
-    values: [2, 4, 10]
+    values: [4, 10]
   
   expansion_type:
     values: ["hankel_svd"]
 
   delay_depth:
-    values: [50, 100, 150]
+    values: [10, 30, 50]
 
   hankel_rank:
-    values: [20, 50, 80]
+    values: [5, 10, 20]
 
   weight_decay:
-    values: [0.0]
+    values: [0.0, 1e-5]
 
   batch_size:
     values: [2048]

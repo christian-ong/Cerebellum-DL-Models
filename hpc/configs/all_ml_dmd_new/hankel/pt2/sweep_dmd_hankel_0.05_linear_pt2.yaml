@@ -1,0 +1,66 @@
+project: koopman-operator-learning
+entity: DeepLearningP4Destruction
+method: grid
+
+metric:
+  name: val_rollout_rmse_h20
+  goal: minimize
+
+command:
+  - ${env}
+  - python
+  - -m
+  - scripts.train_sweep
+  - --epochs
+  - 100
+  - --eval_every
+  - 1
+  - --num_workers
+  - 4
+  - ${args}
+
+parameters:
+  model:
+    values:
+      - ml_dmd_drop
+
+  data_path:
+    values:
+      - data/trajectories/linear/inward_spiral/dt_0.05
+      - data/trajectories/linear/harmonic_oscillator/dt_0.05
+      - data/trajectories/linear/saddle_point/dt_0.05
+      - data/trajectories/linear/degenerate_node/dt_0.05
+
+  lr:
+    values: [1e-3]
+  batch_size:
+    values: [2048]
+  weight_decay:
+    values: [0.0]
+
+  # --- Time-scaled Evaluation ---
+  eval_horizon_divisor:
+    values: [5]
+
+  # --- Backprop sequence length ---
+  rollout_horizon:
+    values: [2, 4] # Bump to [4, 10] if training collapses
+
+  # --- The "Elephant in the Room" parameter ---
+  biorth_weight:
+    values: [0.1, 1.0, 10.0]
+
+  # --- HANKEL ARCHITECTURE ---
+  expansion_type:
+    values: ["hankel_svd"]
+  delay_depth:
+    values: [5, 10, 20, 40]
+  hankel_rank:
+    values: [5, 10, 20]
+  
+  l1_weight:
+    values: [0.0, 1e-4]
+  sine_cosine_expansion:
+    values: ["false"]
+  bias:
+    values: ["true"]

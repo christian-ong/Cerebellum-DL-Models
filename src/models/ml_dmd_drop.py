@@ -19,6 +19,7 @@ class ML_DMD_DROP(nn.Module):
         rbf_knn_k=5,
         hankel_rank=None,
         l1_weight=1e-6,
+        biorth_weight=0.1,
     ):
 
         super().__init__()
@@ -56,6 +57,7 @@ class ML_DMD_DROP(nn.Module):
         self.expanded_dim = self.expander.expanded_dim
         self.latent_dim = self.expanded_dim
         self.l1_weight = l1_weight
+        self.biorth_weight = biorth_weight
         self.rollout_horizon = 20
 
         # ------------------------------------------------
@@ -259,7 +261,7 @@ class ML_DMD_DROP(nn.Module):
             + 1.0 * loss_rollout
             + 0.01 * loss_lift 
             + 1e-5 * loss_unit_length
-            + 0.1 * loss_biortho              # <--- Add biortho penalty here
+            + self.biorth_weight * loss_biortho
             + self.l1_weight * loss_sparsity  
         )
 

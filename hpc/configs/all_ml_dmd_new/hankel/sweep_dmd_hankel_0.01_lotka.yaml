@@ -26,34 +26,34 @@ parameters:
 
   data_path:
     values:
-      - data/trajectories/nonlinear/duffing/dt_0.01
+      - data/trajectories/nonlinear/lotka_volterra/dt_0.01
 
   lr:
     values: [1e-3]
-  
-  rollout_horizon:
-    values: [20, 50]
-
-  l1_weight:
-    values: [0.0, 1e-4]
-  
-  expansion_type:
-    values: ["hankel_svd"]
-
-  delay_depth:
-    values: [10, 30, 50]
-
-  hankel_rank:
-    values: [5, 10, 20]
-
-  weight_decay:
-    values: [0.0, 1e-5]
-
   batch_size:
     values: [2048]
+  weight_decay:
+    values: [0.0]  # Locked to 0.0
 
+  # --- FIXED: Shorter horizons ---
+  rollout_horizon:
+    values: [10, 20]
+
+  # --- NEW: Test the strictness of the learned inverse ---
+  biorth_weight:
+    values: [0.1, 1.0, 10.0]
+
+  # --- HANKEL ARCHITECTURE ---
+  expansion_type:
+    values: ["hankel_svd"]
+  delay_depth:
+    values: [10, 30, 50, 100]
+  hankel_rank:
+    values: [5, 10, 20, 40]
+  
+  l1_weight:
+    values: [0.0, 1e-4]
   sine_cosine_expansion:
     values: ["false"]
-
   bias:
     values: ["true"]

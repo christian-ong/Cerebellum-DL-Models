@@ -132,6 +132,7 @@ def main():
     parser.add_argument("--rbf_knn_k", type=int, default=5, help="k for k-nearest-center bandwidth when expansion_type='rbf'.")
     parser.add_argument("--load_rbf_from", type=str, default=None, help="Path to a model file to load fixed RBF centers from.")
     parser.add_argument("--l1_weight", type=float, default=1e-6, help="L1 regularization weight for regression DMD")
+    parser.add_argument("--biorth_weight", type=float, default=0.1, help="Weight for bi-orthogonality regularization")
 
     parser.add_argument("--sindy_discrete_time", type=str.lower, choices=["true", "false"], default="false")
     parser.add_argument("--sindy_poly_order", type=int, default=3)

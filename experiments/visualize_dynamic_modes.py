@@ -526,46 +526,34 @@ supports_truncated_rollout = (
         and hasattr(model.expander, "de_expand")
     )
 )
+summary_stats = []
 if supports_truncated_rollout:
-    # Get the raw list of sorted indices
     sorted_indices_full = sorted_data["model"]["real"]["indeces"]
     truncation_dir = os.path.join(save_dir, "truncation")
     os.makedirs(truncation_dir, exist_ok=True)
 
     def _subset_contribution_score(mode_indices):
-        # 1. Try pulling from diagnostics object (if it exists)
         try:
             contrib = np.asarray(diag.get("state_contribution", []), dtype=float)
         except NameError:
             contrib = np.array([])
-
-        # 2. Fallback to sorted_data (which is already sorted)
         if contrib.size == 0:
             try:
-                # These scores are already sorted by the main script logic
                 contrib = np.asarray(sorted_data["model"]["real"]["scores"], dtype=float)
             except (NameError, KeyError, TypeError):
                 return None
-        
-        # 3. Validation
         if contrib.size == 0 or not np.isfinite(np.sum(contrib)):
             return None
             
-        # The mode_indices passed in are indices into the sorted array.
-        # We simply need to sum the contributions at those specific indices.
         idx = np.asarray(mode_indices, dtype=int)
         valid_idx = idx[(idx >= 0) & (idx < contrib.shape[0])]
-        
         if valid_idx.size == 0:
             return None
             
         total_contrib = float(np.sum(contrib))
-        if total_contrib <= 1e-12: # Avoid division by zero
-            return 0.0
-            
+        if total_contrib <= 1e-12: return 0.0
         return float(np.sum(contrib[valid_idx]) / total_contrib)
     
-    # If contribution-ordered modes, use fixed fractions of the sorted mode list.
     if order_modes_by == "contribution":
         pct_list = []
         by_mode_count = {}
@@ -578,11 +566,9 @@ if supports_truncated_rollout:
                 by_mode_count[n].append(pct_label)
 
         if pct_list:
-            for n, pct_labels in pct_list:
-                # Grab the current subset of mode indices
+            # LOOP OVER ALL MODES
+            for n in range(1, num_modes + 1):
                 current_subset = list(sorted_indices_full[:n])
-
-                # 2. Add pairs
                 modes_to_add = []
                 for mode in current_subset:
                     for pair in orig_complex_pair_idx:
@@ -591,30 +577,40 @@ if supports_truncated_rollout:
                             if partner_idx not in current_subset and partner_idx not in modes_to_add:
                                 modes_to_add.append(partner_idx)
                 current_subset.extend(modes_to_add)
-
-                # Convert to numpy array for the function
                 mode_idx = np.asarray(current_subset, dtype=int)
-                pct_text = ", ".join(f"{pct}%" for pct in pct_labels)
-                save_tag = "_".join(str(pct) for pct in pct_labels)
-                contrib_score = _subset_contribution_score(mode_idx)
-                if contrib_score is not None:
-                    subset_text = f"{len(mode_idx)} Modes ({pct_text}) | Contribution = {contrib_score:.3f}"
-                else:
-                    subset_text = f"{len(mode_idx)} Modes ({pct_text})"
+                actual_n = len(mode_idx)
 
-                truncated_rollout(
-                    model=model,
-                    real_traj=trunc_trajectories,
-                    n_modes=len(mode_idx), 
-                    mode_indices=mode_idx,
-                    save_path=truncation_dir,
-                    save_name=f"truncated_rollout_pct_{save_tag}_modes.png",
-                    subtitle=f"{plot_subtitle}\n{subset_text}",
+                is_plot_target = n in by_mode_count
+                already_evaluated = any(s['n_modes'] == actual_n for s in summary_stats)
+                
+                # Skip recalculation ONLY if we already have it AND we don't need to generate a plot
+                if already_evaluated and not is_plot_target:
+                    continue
+
+                contrib_score = _subset_contribution_score(mode_idx)
+                
+                if is_plot_target:
+                    pct_labels = by_mode_count[n]
+                    pct_text = ", ".join(f"{pct}%" for pct in pct_labels)
+                    save_tag = "_".join(str(pct) for pct in pct_labels)
+                    subset_text = f"{actual_n} Modes ({pct_text}) | Contribution = {contrib_score:.3f}" if contrib_score is not None else f"{actual_n} Modes ({pct_text})"
+                    save_name = f"truncated_rollout_pct_{save_tag}_modes.png"
+                    sub = f"{plot_subtitle}\n{subset_text}"
+                else:
+                    save_name, sub = None, None
+
+                reconstructed_traj = truncated_rollout(
+                    model=model, real_traj=trunc_trajectories, n_modes=actual_n, 
+                    mode_indices=mode_idx, save_path=truncation_dir, 
+                    save_name=save_name, subtitle=sub, plot=is_plot_target
                 )
+
+                if not already_evaluated:
+                    mse = np.mean((reconstructed_traj - trunc_trajectories) ** 2)
+                    summary_stats.append({"n_modes": actual_n, "rmse": np.sqrt(mse), "contribution": contrib_score if contrib_score is not None else 0.0})
         else:
             print("Contribution thresholds unavailable; falling back to incremental truncated rollouts.")
-            for n in n_modes:
-                # previous incremental behavior
+            for n in range(1, num_modes + 1):
                 current_subset = list(sorted_indices_full[:n])
                 modes_to_add = []
                 for mode in current_subset:
@@ -625,51 +621,70 @@ if supports_truncated_rollout:
                                 modes_to_add.append(partner_idx)
                 current_subset.extend(modes_to_add)
                 mode_idx = np.asarray(current_subset, dtype=int)
-                truncated_rollout(
-                    model=model,
-                    real_traj=trunc_trajectories,
-                    n_modes=len(mode_idx), 
-                    mode_indices=mode_idx,
-                    save_path=truncation_dir,
-                    save_name=f"truncated_rollout_n{len(mode_idx)}_modes.png",
-                    subtitle=f"{plot_subtitle}\nIncremental selection: {len(mode_idx)} modes retained after pair preservation",
+                actual_n = len(mode_idx)
+                
+                is_plot_target = (n <= n_top_modes)
+                already_evaluated = any(s['n_modes'] == actual_n for s in summary_stats)
+                if already_evaluated and not is_plot_target:
+                    continue
+                    
+                contrib_score = _subset_contribution_score(mode_idx)
+                reconstructed_traj = truncated_rollout(
+                    model=model, real_traj=trunc_trajectories, n_modes=actual_n, 
+                    mode_indices=mode_idx, save_path=truncation_dir, 
+                    save_name=f"truncated_rollout_n{actual_n}_modes.png" if is_plot_target else None,
+                    subtitle=f"{plot_subtitle}\nIncremental selection: {actual_n} modes" if is_plot_target else None,
+                    plot=is_plot_target
                 )
+                
+                if not already_evaluated:
+                    mse = np.mean((reconstructed_traj - trunc_trajectories) ** 2)
+                    summary_stats.append({"n_modes": actual_n, "rmse": np.sqrt(mse), "contribution": contrib_score if contrib_score is not None else 0.0})
     else:
-        for n in n_modes:
-            # Grab the current subset of mode indices
+        for n in range(1, num_modes + 1):
             current_subset = list(sorted_indices_full[:n])
-
-            # Ensure we don't split ANY complex pairs!
             modes_to_add = []
             for mode in current_subset:
                 for pair in orig_complex_pair_idx:
                     if mode in pair:
                         partner_idx = pair[1] if pair[0] == mode else pair[0]
                         if partner_idx not in current_subset and partner_idx not in modes_to_add:
-                            print(f"Truncation at n={n} split a complex pair! Adding partner mode {partner_idx} to preserve rotation.")
                             modes_to_add.append(partner_idx)
-                            
             current_subset.extend(modes_to_add)
-            
-            # Convert to numpy array for the function
             mode_idx = np.asarray(current_subset, dtype=int)
-            
-            # Note: We pass the ACTUAL length of the subset, which might be n+1 or n+2 now!
             actual_n = len(mode_idx)
-            contrib_score = _subset_contribution_score(mode_idx)
-            contrib_text = f" | contribution score: {contrib_score:.3f}" if contrib_score is not None else ""
             
-            truncated_rollout(
-                model=model,
-                real_traj=trunc_trajectories,
-                n_modes=actual_n, 
-                mode_indices=mode_idx,
-                save_path=truncation_dir,
-                save_name=f"truncated_rollout_n{actual_n}_modes.png",
-                subtitle=f"{plot_subtitle}\nModes {actual_n} | pair-preserved{contrib_text}",
+            is_plot_target = (n <= n_top_modes)
+            already_evaluated = any(s['n_modes'] == actual_n for s in summary_stats)
+            if already_evaluated and not is_plot_target:
+                continue
+                
+            contrib_score = _subset_contribution_score(mode_idx)
+            reconstructed_traj = truncated_rollout(
+                model=model, real_traj=trunc_trajectories, n_modes=actual_n, 
+                mode_indices=mode_idx, save_path=truncation_dir, 
+                save_name=f"truncated_rollout_n{actual_n}_modes.png" if is_plot_target else None,
+                subtitle=f"{plot_subtitle}\nModes {actual_n} | pair-preserved" if is_plot_target else None,
+                plot=is_plot_target
             )
+            
+            if not already_evaluated:
+                mse = np.mean((reconstructed_traj - trunc_trajectories) ** 2)
+                summary_stats.append({"n_modes": actual_n, "rmse": np.sqrt(mse), "contribution": contrib_score if contrib_score is not None else 0.0})
 else:
     print("Skipping truncated rollout plot: model does not expose a supported modal/decoder path.")
+
+if len(summary_stats) > 0:
+    summary_stats = sorted(summary_stats, key=lambda x: x['n_modes'])
+    counts = [s['n_modes'] for s in summary_stats]
+    rmses = [s['rmse'] for s in summary_stats]
+    contribs = [s['contribution'] * 100 for s in summary_stats]
+
+    plot_rmse_contribution(
+        mode_counts=counts, rmses=rmses, contributions=contribs,
+        save_path=os.path.join(truncation_dir, "summary_performance.png"),
+        subtitle=plot_subtitle
+    )
 
 # --------------------------------------------------
 # Spectrum plot with quality coloring

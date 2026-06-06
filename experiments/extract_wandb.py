@@ -45,8 +45,8 @@ def main():
         "config_system_name": "system_name", "config_expansion_type": "expansion_type",
         "config_expansion_degree": "expansion_degree", "config_rbf_bandwidth_mode": "rbf_bandwidth_mode",
         "config_lr": "lr", "config_rollout_horizon": "rollout_horizon",
-        "config_l1_weight": "l1_weight", "config_bias": "bias",
-        "config_batch_size": "batch_size", "config_delay_depth": "delay_depth",
+        "config_l1_weight": "l1_weight", "config_biorth_weight": "biorth_weight",
+        "config_bias": "bias", "config_batch_size": "batch_size", "config_delay_depth": "delay_depth",
         "config_epochs": "epochs", "config_hankel_rank": "hankel_rank",
         "config_rbf_center_selection": "rbf_center_selection", "config_rbf_knn_k": "rbf_knn_k",
         "config_rbf_n_centers": "rbf_n_centers", "config_sine_cosine_expansion": "sine_cosine_expansion",
@@ -114,8 +114,18 @@ def main():
     df["data_path"] = df.get("data_path", "unknown").fillna("unknown").astype(str)
     df["expansion_type"] = df.get("expansion_type", "none").fillna("none").astype(str)
 
-    # Drop runs that crashed or failed to log the target metric
-    df_valid = df.dropna(subset=["val_rollout_rmse_h100"])
+    # Dynamically pick the 1.0s physical time metric for sorting
+    def get_target_metric(row):
+        if 'dt_0.01' in str(row.get('data_path', '')):
+            return row.get('val_rollout_rmse_h100', np.nan)  # 100 * 0.01 = 1.0s
+        elif 'dt_0.05' in str(row.get('data_path', '')):
+            return row.get('val_rollout_rmse_h20', np.nan)   # 20 * 0.05 = 1.0s
+        return row.get('val_rollout_rmse_h100', np.nan)
+    
+    df["sort_metric"] = df.apply(get_target_metric, axis=1)
+
+    # Drop runs that crashed or failed to log the 1.0s metric (instead of strictly h100)
+    df_valid = df.dropna(subset=["sort_metric"])
 
     best_runs = []
     
@@ -125,22 +135,21 @@ def main():
         if not model_name: model_name = "unknown"
         safe_model_name = model_name.replace(os.sep, "_")
         
-        # Sub-group by System (data_path) and Expansion Type
-        for (d_path, exp_type), grp_sub in grp_model.groupby(["data_path", "expansion_type"]):
-            
-            # Special Rule for ML_DMD models: Keep best l1=0.0 AND best l1>0.0
-            if safe_model_name in ["ml_dmd", "ml_dmd_drop"]:
+        # Special Rule for ML_DMD models: Keep best per expansion type, splitting L1=0 vs L1>0
+        if safe_model_name in ["ml_dmd", "ml_dmd_drop"]:
+            for (d_path, exp_type), grp_sub in grp_model.groupby(["data_path", "expansion_type"]):
                 grp_zero = grp_sub[grp_sub["l1_weight"] == 0.0]
                 grp_pos = grp_sub[grp_sub["l1_weight"] > 0.0]
                 
                 if not grp_zero.empty:
-                    best_runs.append(grp_zero.loc[grp_zero["val_rollout_rmse_h100"].idxmin()])
+                    best_runs.append(grp_zero.loc[grp_zero["sort_metric"].idxmin()])
                 if not grp_pos.empty:
-                    best_runs.append(grp_pos.loc[grp_pos["val_rollout_rmse_h100"].idxmin()])
-            
-            # Standard Rule: Just keep the absolute best run
-            else:
-                best_runs.append(grp_sub.loc[grp_sub["val_rollout_rmse_h100"].idxmin()])
+                    best_runs.append(grp_pos.loc[grp_pos["sort_metric"].idxmin()])
+                    
+        # Standard Rule for ALL other models: Just keep the single absolute best run per dataset
+        else:
+            for d_path, grp_sub in grp_model.groupby("data_path"):
+                best_runs.append(grp_sub.loc[grp_sub["sort_metric"].idxmin()])
                 
     best_df = pd.DataFrame(best_runs)
     

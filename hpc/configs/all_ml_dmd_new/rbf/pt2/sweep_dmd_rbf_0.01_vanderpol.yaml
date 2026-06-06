@@ -25,35 +25,41 @@ parameters:
       - ml_dmd_drop
 
   data_path:
-      values:
-        - data/trajectories/nonlinear/vanderpol/dt_0.01
+    values:
+      - data/trajectories/nonlinear/vanderpol/dt_0.01
 
   lr:
     values: [1e-3]
   batch_size:
     values: [2048]
   weight_decay:
-    values: [0.0]  # Locked to 0.0
+    values: [0.0] # Locked to 0.0 based on ml_dmd wins
 
-  # --- FIXED: Shorter horizons ---
+  # --- FIXED: Shorter horizons for stability ---
   rollout_horizon:
     values: [10, 20, 50] 
 
   # --- NEW: Test the strictness of the learned inverse ---
   biorth_weight:
-    values: [0.1, 1.0, 10.0]
+    values: [0.1, 1.0, 10.0] 
 
-  # --- GENERAL ARCHITECTURE ---
+  # --- RBF ARCHITECTURE ---
   expansion_type:
-    values: ["general"]
-  expansion_degree:
-    values: [3, 5, 7]
+    values: ["rbf"]
+  rbf_n_centers:
+    values: [50, 100, 200]
+  rbf_center_selection:
+    values: ["farthest"]
+  rbf_bandwidth_mode:
+    values: ["knn"] # Locked to knn based on previous wins
   
-  # --- LOCKED (Based on Pilot Win) ---
-  sine_cosine_expansion:
-    values: ["false", "true"]
+  # --- FIXED: Added the winning k=2 configuration ---
+  rbf_knn_k:
+    values: [2, 5] 
+
   l1_weight:
     values: [0.0, 1e-4]
-  
+  sine_cosine_expansion:
+    values: ["false"]
   bias:
     values: ["true"]

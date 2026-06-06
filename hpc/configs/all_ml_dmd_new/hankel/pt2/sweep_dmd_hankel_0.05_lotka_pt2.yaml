@@ -3,7 +3,7 @@ entity: DeepLearningP4Destruction
 method: grid
 
 metric:
-  name: val_rollout_rmse_h100
+  name: val_rollout_rmse_h20
   goal: minimize
 
 command:
@@ -26,34 +26,38 @@ parameters:
 
   data_path:
     values:
-      - data/trajectories/nonlinear/vanderpol/dt_0.01
+      - data/trajectories/nonlinear/lotka_volterra/dt_0.05
 
   lr:
     values: [1e-3]
-  
-  rollout_horizon:
-    values: [20, 50]
-
-  l1_weight:
-    values: [0.0, 1e-4]
-  
-  expansion_type:
-    values: ["hankel_svd"]
-
-  delay_depth:
-    values: [10, 30, 50]
-
-  hankel_rank:
-    values: [5, 10, 20]
-
-  weight_decay:
-    values: [0.0, 1e-5]
-
   batch_size:
     values: [2048]
+  weight_decay:
+    values: [0.0]
 
+  # --- Time-scaled Evaluation ---
+  eval_horizon_divisor:
+    values: [5]
+
+  # --- Backprop sequence length ---
+  rollout_horizon:
+    values: [2, 4] # Bump to [4, 10] if training collapses
+
+  # --- The "Elephant in the Room" parameter ---
+  biorth_weight:
+    values: [0.1, 1.0, 10.0]
+
+  # --- HANKEL ARCHITECTURE ---
+  expansion_type:
+    values: ["hankel_svd"]
+  delay_depth:
+    values: [5, 10, 20, 40]
+  hankel_rank:
+    values: [5, 10, 20]
+  
+  l1_weight:
+    values: [0.0, 1e-4]
   sine_cosine_expansion:
     values: ["false"]
-
   bias:
     values: ["true"]

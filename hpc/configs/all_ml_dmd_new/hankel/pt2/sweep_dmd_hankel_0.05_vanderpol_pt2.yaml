@@ -3,7 +3,7 @@ entity: DeepLearningP4Destruction
 method: grid
 
 metric:
-  name: val_rollout_rmse_h100
+  name: val_rollout_rmse_h20
   goal: minimize
 
 command:
@@ -25,35 +25,39 @@ parameters:
       - ml_dmd_drop
 
   data_path:
-      values:
-        - data/trajectories/nonlinear/vanderpol/dt_0.01
+    values:
+      - data/trajectories/nonlinear/vanderpol/dt_0.05
 
   lr:
     values: [1e-3]
   batch_size:
     values: [2048]
   weight_decay:
-    values: [0.0]  # Locked to 0.0
+    values: [0.0]
 
-  # --- FIXED: Shorter horizons ---
+  # --- Time-scaled Evaluation ---
+  eval_horizon_divisor:
+    values: [5]
+
+  # --- Backprop sequence length ---
   rollout_horizon:
-    values: [10, 20, 50] 
+    values: [2, 4] # Bump to [4, 10] if training collapses
 
-  # --- NEW: Test the strictness of the learned inverse ---
+  # --- The "Elephant in the Room" parameter ---
   biorth_weight:
     values: [0.1, 1.0, 10.0]
 
-  # --- GENERAL ARCHITECTURE ---
+  # --- HANKEL ARCHITECTURE ---
   expansion_type:
-    values: ["general"]
-  expansion_degree:
-    values: [3, 5, 7]
+    values: ["hankel_svd"]
+  delay_depth:
+    values: [5, 10, 20, 40]
+  hankel_rank:
+    values: [5, 10, 20]
   
-  # --- LOCKED (Based on Pilot Win) ---
-  sine_cosine_expansion:
-    values: ["false", "true"]
   l1_weight:
     values: [0.0, 1e-4]
-  
+  sine_cosine_expansion:
+    values: ["false"]
   bias:
     values: ["true"]

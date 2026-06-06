@@ -43,13 +43,13 @@ parameters:
     values: ["hankel_svd"]
 
   regression_rollout_mode:
-    values: ["DMD", "linear_dynamics"]
+    values: ["DMD"]
 
   delay_depth:
-    values: [50, 100, 150]
+    values: [10, 30, 50]
 
   hankel_rank:
-    values: [20, 50, 80]
+    values: [5, 10, 20]
 
   sine_cosine_expansion:
     values: ["false"]

@@ -18,7 +18,6 @@ NOISE_ROBUSTNESS_MODELS = {
     "ml_linear_dynamics",
     "ml_lineardynamics",
     "mlp_baseline",
-    "sindy_baseline",
 }
 
 import numpy as _np
@@ -354,6 +353,7 @@ def _overview_metadata_columns():
         "rollout_horizon",
         "regression_rollout_mode",
         "l1_weight",
+        "biorth_weight",
         "lr",
         "weight_decay",
         "batch_size",
@@ -834,27 +834,26 @@ def run_evaluations(
 
             # --- NEW: Check our skipping conditions ---
             is_lorenz = "lorenz" in system.lower()
-            is_sindy_linear = (model_name == "sindy_baseline" and "linear" in system.lower())
+            is_sindy = (model_name == "sindy_baseline")
 
             commands = []
 
             # 1. Trajectory Rollout Plotter
-            if not is_sindy_linear:
-                commands.append(
-                    [
-                        "python", "-m", "experiments.eval_trajectory_rollout",
-                        "--model_name", model_name,
-                        "--custom_name", run_name,
-                        "--data_path", data_path,
-                        "--num_steps", str(num_steps),
-                        "--model_path", model_path,
-                        "--outdir", os.path.join(mode_run_base, "rollout"),
-                    ]
-                )
+            commands.append(
+                [
+                    "python", "-m", "experiments.eval_trajectory_rollout",
+                    "--model_name", model_name,
+                    "--custom_name", run_name,
+                    "--data_path", data_path,
+                    "--num_steps", str(num_steps),
+                    "--model_path", model_path,
+                    "--outdir", os.path.join(mode_run_base, "rollout"),
+                ]
+            )
 
             # 2. Mode visualization for modal models
             subset_thresholds = None
-            if not is_sindy_linear and mode_count is not None and mode_count > 1:
+            if not is_sindy and mode_count is not None and mode_count > 1:
                 commands += _mode_visualization_commands(
                     model_name=model_name,
                     run_name=run_name,
@@ -879,7 +878,7 @@ def run_evaluations(
             )
 
             # 4. Behavior (Heatmaps)
-            if not is_sindy_linear and not is_lorenz:
+            if not is_sindy and not is_lorenz:
                 commands += _behavior_commands(
                     model_name=model_name,
                     run_name=run_name,
@@ -891,7 +890,7 @@ def run_evaluations(
                 )
 
             # 5. Noise robustness
-            if not is_sindy_linear:
+            if not is_sindy:
                 if mode_count is not None and mode_count > 1 and evaluation_rollout_mode != "linear_dynamics":
                     commands += _noise_robustness_commands(
                         model_name=model_name,

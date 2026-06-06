@@ -30,28 +30,26 @@ parameters:
 
   lr:
     values: [1e-3]
-
-  expansion_degree:
-    values: [8]
-  
-  rollout_horizon:
-    values: [20, 50]
-
-  l1_weight:
-    values: [0.0, 1e-4, 1e-3]
-
-  # Keep high-frequency trig weights from blowing up
+  batch_size:
+    values: [2048]
   weight_decay:
     values: [0.0]
 
-  batch_size:
-    values: [2048]
+  # --- FIXED: Shorter horizons ---
+  rollout_horizon:
+    values: [10, 20]
+
+  # --- NEW: Bi-ortho sweep ---
+  biorth_weight:
+    values: [0.1, 1.0, 10.0]
 
   expansion_type:
     values: ["specific"]
-
+  expansion_degree:
+    values: [8]
+  l1_weight:
+    values: [0.0, 1e-4]
   sine_cosine_expansion:
     values: ["false"]
-
   bias:
     values: ["false"]

@@ -82,6 +82,7 @@ def build_model(args, state_dim, system_name, device):
             rbf_bandwidth_mode=getattr(args, "rbf_bandwidth_mode", "knn"),
             rbf_knn_k=getattr(args, "rbf_knn_k", 5),
             l1_weight=getattr(args, "l1_weight", 1e-6),
+            biorth_weight=getattr(args, "biorth_weight", 0.1),
         ).to(device)        
 
     elif args.model == "regression_dmd":

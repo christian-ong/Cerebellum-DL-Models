@@ -1301,7 +1301,7 @@ def _get_expanded_indices(mode_indices, Lambda_full):
 
 def truncated_rollout(
     model, real_traj, n_modes=2, save_path=None, Phi=None, Lambda=None, 
-    mode_indices=None, subtitle=None, save_name=None,
+    mode_indices=None, subtitle=None, save_name=None, plot=True
 ):
     n_trajs = real_traj.shape[1]
     state_dim = real_traj.shape[2]
@@ -1320,8 +1320,11 @@ def truncated_rollout(
         
     n_steps_valid = plot_real_traj.shape[0]
     
+    # ---------------------------------------------------------
+    # Reconstruct Trajectory (Preserved logic)
+    # ---------------------------------------------------------
     if all(hasattr(model, attr) for attr in ("Phi_lift_fitted", "Lambda_fitted", "C_fitted", "psi_scale", "x_scale")):
-        is_regression = True
+        # Regression logic
         Phi_lift = model.Phi_lift_fitted.detach().cpu().numpy()
         Lambda_diag = model.Lambda_fitted.detach().cpu().numpy()
         Lambda_mat = np.diag(Lambda_diag)
@@ -1350,7 +1353,7 @@ def truncated_rollout(
         truncated_trajectory = np.real(mode_evolution @ Phi_truncated.T @ C.T) * x_scale[:state_dim]
 
     elif hasattr(model, "get_Phi") and hasattr(model, "get_Lambda"):
-        is_regression = False
+        # ML model logic
         Phi_lift = model.get_Phi().detach().cpu().numpy()
         Lambda = model.get_Lambda().detach().cpu().numpy()
         
@@ -1382,35 +1385,93 @@ def truncated_rollout(
     else:
         raise ValueError("Model format not supported.")
 
-    mse = np.mean((truncated_trajectory - plot_real_traj[:, :, :state_dim]) ** 2, axis=(0, 2))
-    rmse = np.sqrt(mse)
-
-    n_rows = 2
-    c_cols = 2
-    fig, axes = plt.subplots(n_rows, c_cols, figsize=(12,12))
-
-    for traj_idx in range(n_trajs):
-        ax = axes[traj_idx // c_cols, traj_idx % c_cols]
-        ax.plot(plot_real_traj[:, traj_idx, 0], plot_real_traj[:, traj_idx, 1], 'k-', label='True Trajectory', alpha=0.7)
-        ax.plot(truncated_trajectory[:, traj_idx, 0], truncated_trajectory[:, traj_idx, 1], 'b--', label=f'Mode rollout (n={n_modes})')
-        ax.grid(True, linestyle='--', alpha=0.5)
-        ax.set_title(f"Traj {traj_idx + 1}\n(RMSE: {rmse[traj_idx]:.1e})", fontsize=10)
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.legend(loc="upper left", fontsize=8, frameon=True)
-
-    fig.suptitle(_with_subtitle(f"State Space Rollout Comparison (Top {n_modes} Koopman Modes)", subtitle), fontsize=14, y=0.985)
-    plt.tight_layout(rect=(0, 0.06, 1, 0.985))
+    # ---------------------------------------------------------
+    # Evaluation (Best/Median/Worst)
+    # ---------------------------------------------------------
+    # RMSE per trajectory: mean over time and state dimensions
+    mse_all = np.mean((truncated_trajectory - plot_real_traj[:, :, :state_dim]) ** 2, axis=(0, 2))
+    rmse_all = np.sqrt(mse_all)
     
-    if save_path:
-        filename = save_name or f"truncated_rollout_{n_modes}_modes.png"
-        plt.savefig(os.path.join(save_path, filename), bbox_inches='tight')
-        plt.close(fig)
-    else:
-        plt.show()
+    # Store tuples of (RMSE, trajectory_index)
+    results = [(rmse_all[i], i) for i in range(n_trajs)]
+    results.sort(key=lambda x: x[0])
+    
+    best_idx = results[0][1]
+    median_idx = results[len(results) // 2][1]
+    worst_idx = results[-1][1]
+    
+    selected_cases = [
+        ("Best Case", best_idx),
+        ("Median Case", median_idx),
+        ("Worst Case", worst_idx)
+    ]
+    
+    # 2. Wrap the plotting section in `if plot:`
+    if plot:
+        # ---------------------------------------------------------
+        # Plotting
+        # ---------------------------------------------------------
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        
+        for ax, (case_name, idx) in zip(axes, selected_cases):
+            rmse = rmse_all[idx]
+            
+            ax.plot(plot_real_traj[:, idx, 0], plot_real_traj[:, idx, 1], 'k-', label='Ground Truth', alpha=0.7)
+            ax.plot(truncated_trajectory[:, idx, 0], truncated_trajectory[:, idx, 1], 'b--', label=f'Mode rollout (n={len(mode_indices)})')
+            
+            ax.scatter(plot_real_traj[0, idx, 0], plot_real_traj[0, idx, 1], color='black', marker='o', s=40, label='GT Start', zorder=10)
+            ax.scatter(truncated_trajectory[0, idx, 0], truncated_trajectory[0, idx, 1], color='blue', marker='x', s=50, label='Model Start', zorder=10)
+            
+            ax.grid(True, linestyle='--', alpha=0.5)
+            ax.set_title(f"{case_name}\nRMSE: {rmse:.2e}", fontsize=12)
+            ax.set_xlabel("x")
+            ax.set_ylabel("y")
+            ax.legend(loc="best", fontsize=8, frameon=True)
+
+        avg_rmse = np.mean(rmse_all)
+        display_subtitle = f"{subtitle}\nAvg Test RMSE: {avg_rmse:.2e}"
+        fig.suptitle(_with_subtitle(f"State Space Rollout Comparison (Top {len(mode_indices)} Koopman Modes)", display_subtitle), fontsize=14, y=0.985)
+        plt.tight_layout(rect=(0, 0, 1, 0.95))
+        
+        if save_path:
+            filename = save_name or f"truncated_rollout_{len(mode_indices)}_modes.png"
+            plt.savefig(os.path.join(save_path, filename), bbox_inches='tight')
+            plt.close(fig)
+        else:
+            plt.show()
+
+    # Always return the trajectory regardless of plotting!
+    return truncated_trajectory
 
     return truncated_trajectory
 
+def plot_rmse_contribution(mode_counts, rmses, contributions, save_path=None, subtitle=None):
+    fig, ax1 = plt.subplots(figsize=(10, 5))
+    
+    # Plot RMSE (Left Axis)
+    color1 = 'tab:blue'
+    ax1.set_xlabel('Number of Modes')
+    ax1.set_ylabel('RMSE', color=color1, fontsize=12)
+    ax1.plot(mode_counts, rmses, color=color1, marker='o', linestyle='-', linewidth=2, label='RMSE')
+    ax1.tick_params(axis='y', labelcolor=color1)
+    ax1.grid(True, linestyle='--', alpha=0.5)
+
+    # Plot Contribution (Right Axis)
+    ax2 = ax1.twinx()
+    color2 = 'tab:red'
+    ax2.set_ylabel('Contribution (%)', color=color2, fontsize=12)
+    ax2.plot(mode_counts, contributions, color=color2, marker='s', linestyle='--', linewidth=2, label='Contribution')
+    ax2.tick_params(axis='y', labelcolor=color2)
+    ax2.set_ylim(0, 105) # Contribution is a percentage
+
+    plt.title(_with_subtitle("Model Performance vs. Mode Truncation", subtitle), fontsize=14)
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
 
 def plot_eigenvalue_spectrum(eigvals, mode_scores, score_metric, save_path=None, subtitle=None):
     fig, ax = plt.subplots(figsize=(6,4))

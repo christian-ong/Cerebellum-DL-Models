@@ -33,30 +33,36 @@ parameters:
 
   lr:
     values: [1e-3]
-  
+  batch_size:
+    values: [2048]
+  weight_decay:
+    values: [0.0] # Locked to 0.0 based on ml_dmd wins
+
+  # --- FIXED: Shorter horizons for stability ---
   rollout_horizon:
-    values: [20, 50]
+    values: [10, 20, 50] 
+
+  # --- NEW: Test the strictness of the learned inverse ---
+  biorth_weight:
+    values: [0.1, 1.0, 10.0] 
+
+  # --- RBF ARCHITECTURE ---
+  expansion_type:
+    values: ["rbf"]
+  rbf_n_centers:
+    values: [50, 100, 200]
+  rbf_center_selection:
+    values: ["farthest"]
+  rbf_bandwidth_mode:
+    values: ["knn"] # Locked to knn based on previous wins
+  
+  # --- FIXED: Added the winning k=2 configuration ---
+  rbf_knn_k:
+    values: [2, 5] 
 
   l1_weight:
     values: [0.0, 1e-4]
-  
-  expansion_type:
-    values: ["hankel_svd"]
-
-  delay_depth:
-    values: [10, 30, 50]
-
-  hankel_rank:
-    values: [5, 10, 20]
-
-  weight_decay:
-    values: [0.0]
-
-  batch_size:
-    values: [2048]
-
   sine_cosine_expansion:
     values: ["false"]
-
   bias:
     values: ["true"]
