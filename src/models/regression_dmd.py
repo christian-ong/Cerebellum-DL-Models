@@ -539,15 +539,20 @@ class Regression_DMD(nn.Module):
         Lambda = self.Lambda_fitted.to(torch.complex128)
         C = self.C_fitted.to(device=z0.device, dtype=torch.complex128)
 
+        # 1. Get exact modal coordinates using the FULL basis
+        b0_full = self._solve_modal_coeffs_exact(z0) # (N, r)
+        
+        # 2. Apply truncation mask by zeroing out dropped modes
         idx = self._prepare_mode_subset(mode_indices)
         if idx is not None:
-            Phi_lift = Phi_lift[:, idx]
-            Lambda = Lambda[idx]
-            b0 = (torch.linalg.pinv(Phi_lift) @ z0.T).T # (N, r)
+            mask = torch.zeros_like(b0_full)
+            mask[:, idx] = 1.0
+            b0 = b0_full * mask
         else:
-            b0 = self._solve_modal_coeffs_exact(z0) # (N, r)
+            b0 = b0_full
 
         for k in range(1, steps + 1):
+            # Dropped modes stay exactly zero!
             b_k = (Lambda ** k).unsqueeze(0) * b0 # (N, r)
             z_k = (Phi_lift @ b_k.T).T # (N, p)
             
@@ -577,20 +582,25 @@ class Regression_DMD(nn.Module):
         Phi = self.Phi_lift_fitted.to(torch.complex128)
         Lambda = self.Lambda_fitted.to(torch.complex128)
         C = self.C_fitted.to(device=x.device, dtype=torch.complex128)
+        Phi_pinv = self.Phi_pinv_fitted.to(torch.complex128)
 
+        # Create mask
         idx = self._prepare_mode_subset(mode_indices)
         if idx is not None:
-            Phi = Phi[:, idx]
-            Lambda = Lambda[idx]
-            Phi_pinv = torch.linalg.pinv(Phi)
+            mask = torch.zeros(Lambda.shape[0], dtype=Lambda.dtype, device=Lambda.device)
+            mask[idx] = 1.0
         else:
-            Phi_pinv = self.Phi_pinv_fitted.to(torch.complex128)
+            mask = torch.ones(Lambda.shape[0], dtype=Lambda.dtype, device=Lambda.device)
 
         for _ in range(steps):
             x_n = self._normalize_x(x)
             z = (self.expand(x_n) / self.psi_scale).to(torch.complex128) # (N, p)
 
+            # Extract full coefficients, mask dropped modes
             b = (Phi_pinv @ z.T).T # (N, r)
+            b = b * mask 
+            
+            # Evolve and reconstruct
             z_next = (Phi @ (Lambda.unsqueeze(1) * b.T)).T # (N, p)
 
             x_next_n = (C @ z_next.T).T.real.to(torch.float64) # (N, state_dim)

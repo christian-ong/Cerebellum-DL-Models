@@ -170,6 +170,49 @@ def _get_x0_hist(X, t0, traj_id, delay_depth):
         return X[t0, traj_id, :]
     return np.concatenate([X[t0 - lag, traj_id, :] for lag in range(delay_depth)])
 
+def _get_expanded_indices(mode_indices, model):
+    if mode_indices is None or len(mode_indices) == 0:
+        return mode_indices
+        
+    expanded_idx = set(mode_indices)
+    
+    # 1. Complex diagonal models (Regression DMD)
+    if hasattr(model, "Lambda_fitted"):
+        L = model.Lambda_fitted.detach().cpu().numpy()
+        L_diag = np.diag(L) if L.ndim == 2 else L
+        if np.iscomplexobj(L_diag):
+            for i in mode_indices:
+                if abs(L_diag[i].imag) > 1e-6:
+                    diffs = np.abs(L_diag - L_diag[i].conj())
+                    diffs[i] = np.inf
+                    conj_idx = int(np.argmin(diffs))
+                    if diffs[conj_idx] < 1e-4:
+                        expanded_idx.add(conj_idx)
+                        
+    # 2. Real block matrices (ML DMD)
+    elif hasattr(model, "Lambda"):
+        L = model.Lambda.detach().cpu().numpy()
+        if L.ndim == 2:
+            # BROAD PROTECTION: Detect any significant coupling anywhere in the matrix
+            L_mag = np.abs(L)
+            connected = L_mag > 1e-3
+            np.fill_diagonal(connected, False) 
+            connected = connected | connected.T # Symmetrize
+            
+            active = np.zeros(L.shape[0], dtype=bool)
+            active[list(expanded_idx)] = True
+            
+            # Loop until no new connected modes are found (Transitive Closure)
+            while True:
+                new_active = active | (active @ connected)
+                if np.array_equal(active, new_active):
+                    break # We found the whole isolated subsystem
+                active = new_active
+                
+            expanded_idx.update(np.where(active)[0])
+            
+    return sorted(list(expanded_idx))
+
 
 # ============================================================
 # Model wrappers
@@ -197,19 +240,10 @@ def rollout_model(model, x0, steps, *, model_name=None, extras=None, rollout_mod
             if rollout_mode in {"DMD", "projected_DMD"}:
                 idx_np = clean_mode_indices(mode_indices)
                 
-                # --- FIX: PROTECT COMPLEX PAIRS ---
-                if idx_np is not None and hasattr(model, "Lambda_fitted") and torch.is_complex(model.Lambda_fitted):
-                    expanded_idx = list(idx_np)
-                    L = model.Lambda_fitted.diag() if model.Lambda_fitted.ndim == 2 else model.Lambda_fitted
-                    for i in idx_np:
-                        if abs(L[i].imag) > 1e-6:
-                            diffs = torch.abs(L - L[i].conj())
-                            diffs[i] = float('inf') # Prevent self-matching
-                            conj_idx = torch.argmin(diffs).item()
-                            if diffs[conj_idx] < 1e-4 and conj_idx not in expanded_idx:
-                                expanded_idx.append(conj_idx)
-                    idx_np = np.array(expanded_idx, dtype=np.int64)
-                # ----------------------------------
+                # --- FIX: UNIVERSAL MODE COUPLING PROTECTION (REGRESSION DMD) ---
+                if idx_np is not None:
+                    idx_np = np.array(_get_expanded_indices(idx_np, model), dtype=np.int64)
+                # ----------------------------------------------------------------
                 
                 kwargs["mode_indices"] = idx_np
             out = model.rollout(x0, steps=steps, **kwargs)
@@ -243,30 +277,11 @@ def rollout_model(model, x0, steps, *, model_name=None, extras=None, rollout_mod
             if idx_np is None:
                 return to_numpy(model.rollout(x0, steps=steps))
 
-            idx = torch.as_tensor(idx_np, dtype=torch.long, device=dev)
+            expanded_idx = _get_expanded_indices(idx_np, model)
+            idx = torch.as_tensor(np.array(expanded_idx, dtype=np.int64), dtype=torch.long, device=dev)
+            
             mask = torch.zeros_like(b)
             mask[:, idx] = 1.0
-
-            # --- FIX: DYNAMICALLY ENFORCE COMPLEX CONJUGATE PAIRS ---
-            lambdas = None
-            if hasattr(model, "get_eigenvalues") and callable(model.get_eigenvalues):
-                try:
-                    lambdas = model.get_eigenvalues()
-                except Exception:
-                    pass
-            elif hasattr(model, "Lambda"):
-                lambdas = model.Lambda.diag() if model.Lambda.ndim == 2 else model.Lambda
-
-            if lambdas is not None and torch.is_complex(lambdas):
-                for idx in idx_np:
-                    if abs(lambdas[idx].imag) > 1e-6:
-                        diffs = torch.abs(lambdas - lambdas[idx].conj())
-                        diffs[idx] = float('inf') # Prevent self-matching
-                        conj_idx = torch.argmin(diffs).item()
-                        if diffs[conj_idx] < 1e-4:
-                            mask[:, conj_idx] = 1.0
-            # --------------------------------------------------------
-
             b = b * mask
 
             if delay_depth > 1:
@@ -372,28 +387,24 @@ def modal_project_denoise(model, x, mode_indices=None):
             z = (model.expand(x_n) / model.psi_scale).to(torch.complex128)
 
             Phi = model.Phi_lift_fitted.to(torch.complex128)
+            # Use the pre-calculated pseudo-inverse to match ML W-matrix projection
+            Phi_pinv = model.Phi_pinv_fitted.to(torch.complex128) 
             C = model.C_fitted.to(torch.complex128)
+
+            # 1. Project onto ALL modes to get true independent coordinates
+            b_modal = (Phi_pinv @ z.T).T 
 
             idx_np = clean_mode_indices(mode_indices)
             if idx_np is not None:
-                # --- FIX: PROTECT COMPLEX PAIRS ---
-                if hasattr(model, "Lambda_fitted") and torch.is_complex(model.Lambda_fitted):
-                    expanded_idx = list(idx_np)
-                    L = model.Lambda_fitted.diag() if model.Lambda_fitted.ndim == 2 else model.Lambda_fitted
-                    for i in idx_np:
-                        if abs(L[i].imag) > 1e-6:
-                            diffs = torch.abs(L - L[i].conj())
-                            diffs[i] = float('inf') # Prevent self-matching
-                            conj_idx = torch.argmin(diffs).item()
-                            if diffs[conj_idx] < 1e-4 and conj_idx not in expanded_idx:
-                                expanded_idx.append(conj_idx)
-                    idx_np = np.array(expanded_idx, dtype=np.int64)
-                # ----------------------------------
-                
+                idx_np = np.array(_get_expanded_indices(idx_np, model), dtype=np.int64)
                 idx = torch.as_tensor(idx_np, dtype=torch.long, device=dev)
-                Phi = Phi[:, idx]
+                
+                # 2. Mask the dropped modes (Exact Truncation, no re-solving)
+                mask = torch.zeros_like(b_modal)
+                mask[:, idx] = 1.0
+                b_modal = b_modal * mask
 
-            b_modal = (torch.linalg.pinv(Phi) @ z.T).T
+            # 3. Project back to latent space
             z_proj = (Phi @ b_modal.T).T
 
             x_proj_n = (C @ z_proj.T).T.real.to(m_dtype)
@@ -408,30 +419,11 @@ def modal_project_denoise(model, x, mode_indices=None):
 
             idx_np = clean_mode_indices(mode_indices)
             if idx_np is not None:
-                idx = torch.as_tensor(idx_np, dtype=torch.long, device=dev)
+                expanded_idx = _get_expanded_indices(idx_np, model)
+                idx = torch.as_tensor(np.array(expanded_idx, dtype=np.int64), dtype=torch.long, device=dev)
+                
                 mask = torch.zeros_like(b_modal)
                 mask[:, idx] = 1.0
-                
-                # --- FIX: DYNAMICALLY ENFORCE COMPLEX CONJUGATE PAIRS ---
-                lambdas = None
-                if hasattr(model, "get_eigenvalues") and callable(model.get_eigenvalues):
-                    try:
-                        lambdas = model.get_eigenvalues()
-                    except Exception:
-                        pass
-                elif hasattr(model, "Lambda"):
-                    lambdas = model.Lambda.diag() if model.Lambda.ndim == 2 else model.Lambda
-
-                if lambdas is not None and torch.is_complex(lambdas):
-                    for idx in idx_np:
-                        if abs(lambdas[idx].imag) > 1e-6:
-                            diffs = torch.abs(lambdas - lambdas[idx].conj())
-                            diffs[idx] = float('inf') # Prevent self-matching
-                            conj_idx = torch.argmin(diffs).item()
-                            if diffs[conj_idx] < 1e-4:
-                                mask[:, conj_idx] = 1.0
-                # --------------------------------------------------------
-                
                 b_modal = b_modal * mask
 
             z_norm_proj = model._modal_to_latent(b_modal)
@@ -660,14 +652,15 @@ def modal_coefficients(model, X_states, mode_indices=None, max_samples=20000):
             x_n = model._normalize_x(x_t)
             z = (model.expand(x_n) / model.psi_scale).to(torch.complex128)
 
-            Phi = model.Phi_lift_fitted.to(torch.complex128)
+            # 1. Project onto ALL modes first to get true independent coordinates
+            Phi_pinv = getattr(model, "Phi_pinv_fitted", torch.linalg.pinv(model.Phi_lift_fitted)).to(torch.complex128)
+            b = (Phi_pinv @ z.T).T
 
+            # 2. Slice the columns AFTER projection if subset is requested
             idx_np = clean_mode_indices(mode_indices)
             if idx_np is not None:
                 idx = torch.as_tensor(idx_np, dtype=torch.long, device=dev)
-                Phi = Phi[:, idx]
-
-            b = (torch.linalg.pinv(Phi) @ z.T).T
+                b = b[:, idx]
 
         # Branch for ML_DMD-like API
         elif hasattr(model, "_normalize") and hasattr(model, "_get_modal_coords"):
@@ -692,30 +685,11 @@ def modal_coefficients(model, X_states, mode_indices=None, max_samples=20000):
             # Use model helper to get modal coefficients
             b = model._get_modal_coords(z_norm)
             if mode_indices is not None:
-                idx_t = torch.as_tensor(mode_indices, dtype=torch.long, device=b.device)
+                expanded_idx = _get_expanded_indices(mode_indices, model)
+                idx_t = torch.as_tensor(np.array(expanded_idx, dtype=np.int64), dtype=torch.long, device=b.device)
+                
                 mask = torch.zeros_like(b)
                 mask[:, idx_t] = 1.0
-                
-                # --- FIX: DYNAMICALLY ENFORCE COMPLEX CONJUGATE PAIRS ---
-                lambdas = None
-                if hasattr(model, "get_eigenvalues") and callable(model.get_eigenvalues):
-                    try:
-                        lambdas = model.get_eigenvalues()
-                    except Exception:
-                        pass
-                elif hasattr(model, "Lambda"):
-                    lambdas = model.Lambda.diag() if model.Lambda.ndim == 2 else model.Lambda
-
-                if lambdas is not None and torch.is_complex(lambdas):
-                    for idx in mode_indices:
-                        if abs(lambdas[idx].imag) > 1e-6:
-                            diffs = torch.abs(lambdas - lambdas[idx].conj())
-                            diffs[idx] = float('inf') # Prevent self-matching
-                            conj_idx = torch.argmin(diffs).item()
-                            if diffs[conj_idx] < 1e-4:
-                                mask[:, conj_idx] = 1.0
-                # --------------------------------------------------------
-                
                 b = b * mask
 
             # If mode subset selected, subset columns
@@ -742,6 +716,13 @@ def compute_mode_diagnostics(model, X_states, dt=None, max_samples=20000):
     # Regression_DMD-style saved spectral objects
     if hasattr(model, "Phi_state_fitted") and hasattr(model, "Lambda_fitted"):
         Phi_state = model.Phi_state_fitted.detach().cpu().numpy()
+        
+        # --- FIX: Restore physical units before calculating contribution norms ---
+        if hasattr(model, "x_scale"):
+            x_scale = model.x_scale[:model.state_dim].detach().cpu().numpy()
+            # Multiply each row (state dimension) by its corresponding physical scale
+            Phi_state = Phi_state * x_scale[:, None]
+            
         mode_state_norm = np.linalg.norm(Phi_state, axis=0)
         lambdas = model.Lambda_fitted.detach().cpu().numpy()
 
@@ -835,7 +816,7 @@ def compute_mode_diagnostics(model, X_states, dt=None, max_samples=20000):
 
     cum_amp_score = cumulative_score_fractions(coeff_rms, order_amp)
     cum_contrib_score = cumulative_score_fractions(state_contribution, order_contrib)
-
+    print("Correlation between coeff_rms and lift_scale:", np.corrcoef(coeff_rms, lift_scale))
     return {
         "coeff_rms": coeff_rms,
         "state_contribution": state_contribution,
@@ -902,21 +883,7 @@ def write_mode_diagnostics(path, diag, top_n=20):
                 f"{diag['frequency'][idx]:.8e}\n"
             )
 
-def _get_expanded_indices(mode_indices, lambdas):
-    if lambdas is None or len(lambdas) == 0:
-        return mode_indices
-    expanded_idx = set(mode_indices)
-    if np.iscomplexobj(lambdas):
-        for i in mode_indices:
-            if i < len(lambdas) and abs(lambdas[i].imag) > 1e-6:
-                diffs = np.abs(lambdas - lambdas[i].conj())
-                diffs[i] = np.inf # prevent self match
-                conj_idx = int(np.argmin(diffs))
-                if diffs[conj_idx] < 1e-4:
-                    expanded_idx.add(conj_idx)
-    return sorted(list(expanded_idx))
-
-def _mode_subset_indices_for_fraction(diag, fraction, total_modes):
+def _mode_subset_indices_for_fraction(diag, fraction, total_modes, model):
     if fraction is None or total_modes <= 0:
         return None, None, None
 
@@ -935,19 +902,19 @@ def _mode_subset_indices_for_fraction(diag, fraction, total_modes):
     
     # --- FIX: Expand the raw slice to include missing conjugate pairs ---
     raw_idx = np.asarray(diag["order_contrib"][:n_modes], dtype=int)
-    expanded_idx = _get_expanded_indices(raw_idx, diag.get("lambdas"))
+    expanded_idx = _get_expanded_indices(raw_idx, model)
     
     # Return the expanded list and its ACTUAL length
     return np.asarray(expanded_idx, dtype=int), pct_label, len(expanded_idx)
 
 
-def _mode_subset_specs_for_fractions(diag, fractions, total_modes):
+def _mode_subset_specs_for_fractions(diag, fractions, total_modes, model):
     specs = []
     contrib = np.asarray(diag.get("state_contribution", []), dtype=float)
     total_contrib = float(np.sum(contrib)) if contrib.size > 0 else 0.0
 
     for fraction in fractions or []:
-        contrib_idx, pct_label, n_modes = _mode_subset_indices_for_fraction(diag, fraction, total_modes)
+        contrib_idx, pct_label, n_modes = _mode_subset_indices_for_fraction(diag, fraction, total_modes, model)
         if contrib_idx is None or pct_label is None:
             continue
 
@@ -1576,7 +1543,7 @@ def run_noise_robustness_suite(
     if mode_subset_thresholds is not None:
         n_modes = len(diag["coeff_rms"])
 
-        for spec in _mode_subset_specs_for_fractions(diag, mode_subset_thresholds, n_modes):
+        for spec in _mode_subset_specs_for_fractions(diag, mode_subset_thresholds, n_modes, model):
             contrib_idx = spec["mode_indices"]
             n_used = spec["n_modes"]
             actual_score = spec.get("actual_score")

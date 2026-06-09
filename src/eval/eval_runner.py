@@ -134,7 +134,7 @@ def prepare_eval_context(
 
         base_figdir = os.path.join(base_figdir, expansion_folder)
 
-        if args.model == "ml_dmd":
+        if args.model in {"ml_dmd", "ml_dmd_drop"}: # <-- CHANGE TO INCLUDE ml_dmd_drop
             l1_weight = None
             try:
                 l1_weight = getattr(model, "l1_weight", None)

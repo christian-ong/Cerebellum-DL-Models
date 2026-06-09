@@ -98,13 +98,19 @@ def _subtitle_from_row(row, evaluation_rollout_mode: str | None = None) -> str:
         if rollout_mode is not None and not pd.isna(rollout_mode):
             pieces.append(f"Rollout mode {rollout_mode}")
 
-    if model_name == "ml_dmd":
+    # Update _subtitle_from_row() (Around line 74)
+    if model_name in {"ml_dmd", "ml_dmd_drop"}: # <-- CHANGE TO INCLUDE ml_dmd_drop
         l1_weight = row.get("l1_weight", None)
         if l1_weight is not None and not pd.isna(l1_weight):
             try:
                 pieces.append(f"L1 Weight {float(l1_weight):.3g}")
             except Exception:
                 pieces.append(f"L1 Weight {l1_weight}")
+                
+        # Optional: Append the biorth_weight to your plot subtitles!
+        biorth_weight = row.get("biorth_weight", None)
+        if biorth_weight is not None and not pd.isna(biorth_weight):
+            pieces.append(f"Biorth Weight {float(biorth_weight):.3g}")
 
     if model_name == "mlp_baseline":
         hidden_dim = row.get("hidden_dim", None)
@@ -248,7 +254,7 @@ def _mode_visualization_commands(model_name, run_name, data_path, base_figdir, n
     if model_name not in MODE_VISUALIZATION_MODELS:
         return []
 
-    mode_orders = ["contribution"]
+    mode_orders = ["contribution","time_int_energy"]
 
     commands = []
     for mode_order in mode_orders:
@@ -422,9 +428,11 @@ def resolve_model_checkpoint(model_name, system, run_name):
     if model_name == "ml_linear_dynamics":
         folder_candidates.append("ml_lineardynamics")
     elif model_name == "ml_lineardynamics":
-        folder_candidates.append("ml_linear_dynamics")
+        folder_candidates.append("ml_linear_dynamics") 
     elif model_name == "ml_dmd":
         folder_candidates.append("ml_dmd")
+    elif model_name == "ml_dmd_drop":
+        folder_candidates.append("ml_dmd_drop")
     elif model_name == "linear_baseline":
         folder_candidates.append("linear_baseline")
     elif model_name == "dmd_baseline":
@@ -692,7 +700,7 @@ def run_evaluations(
 
         # For ml_dmd, add an l1_weight subfolder (e.g., '0.0' or '1e-03'/'1e-02')
         l1_folder = None
-        if model_name == "ml_dmd":
+        if model_name in {"ml_dmd", "ml_dmd_drop"}:
             l1_val = _to_float_or_none(row.get("l1_weight")) if "l1_weight" in row else None
             if l1_val is not None:
                 if float(l1_val) == 0.0:

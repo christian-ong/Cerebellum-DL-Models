@@ -28,7 +28,7 @@ source .venv/bin/activate
 # SWEEP
 # ----------------------------------
 
-SWEEP_ID=DeepLearningP4Destruction/koopman-operator-learning/8gxhvluk
+SWEEP_ID=DeepLearningP4Destruction/koopman-operator-learning/e08bsrzz
 
 # ----------------------------------
 # RUN (ONLY ONE AGENT!)

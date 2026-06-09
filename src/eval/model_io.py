@@ -371,6 +371,7 @@ def load_model(
             "rbf_knn_k": int(train_args.get("rbf_knn_k", 5)),
             "hankel_rank": train_args.get("hankel_rank", None),
             "l1_weight": float(train_args.get("l1_weight", 1e-3)),
+            "biorth_weight": float(train_args.get("biorth_weight", 0.1))
         }
 
         # --- FIX: Instantiate the correct class ---
@@ -499,19 +500,11 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
     if model_name == "regression_dmd":
         rollout_mode = extras.get("rollout_mode", "DMD")
         
-        # --- FIX: PROTECT COMPLEX PAIRS FOR REGRESSION DMD ---
-        if mode_indices is not None and hasattr(model, "Lambda_fitted") and torch.is_complex(model.Lambda_fitted):
-            idx_list = list(mode_indices)
-            L = model.Lambda_fitted.diag() if model.Lambda_fitted.ndim == 2 else model.Lambda_fitted
-            for i in mode_indices:
-                if abs(L[i].imag) > 1e-6:
-                    diffs = torch.abs(L - L[i].conj())
-                    diffs[i] = float('inf')  # Prevent self-matching
-                    conj_idx = torch.argmin(diffs).item()
-                    if diffs[conj_idx] < 1e-4 and conj_idx not in idx_list:
-                        idx_list.append(conj_idx)
-            mode_indices = idx_list
-        # -----------------------------------------------------
+        # --- FIX: UNIVERSAL MODE COUPLING PROTECTION (REGRESSION DMD) ---
+        if mode_indices is not None:
+            from src.eval.visualize_modes import _get_expanded_indices
+            mode_indices = _get_expanded_indices(mode_indices, model)
+        # ----------------------------------------------------------------
 
         rollout = model.rollout(
             x0=x0,
@@ -580,29 +573,14 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
             if mode_indices is None:
                 mask = torch.ones_like(b)
             else:
-                idx_np = np.asarray(mode_indices, dtype=np.int64)
+                from src.eval.visualize_modes import _get_expanded_indices
+                
+                # Use the bulletproof central function for ALL models
+                expanded_idx = _get_expanded_indices(mode_indices, model)
+                idx_np = np.asarray(expanded_idx, dtype=np.int64)
+                
                 mask = torch.zeros_like(b)
                 mask[:, idx_np] = 1.0
-                
-                # --- NEW: Protect complex conjugate pairs! ---
-                lambdas = None
-                if hasattr(model, "get_eigenvalues") and callable(model.get_eigenvalues):
-                    try:
-                        lambdas = model.get_eigenvalues()
-                    except Exception:
-                        pass
-                elif hasattr(model, "Lambda"):
-                    lambdas = model.Lambda.diag() if model.Lambda.ndim == 2 else model.Lambda
-
-                if lambdas is not None and torch.is_complex(lambdas):
-                    for idx in idx_np:
-                        if abs(lambdas[idx].imag) > 1e-6:
-                            diffs = torch.abs(lambdas - lambdas[idx].conj())
-                            diffs[idx] = float('inf') # Prevent self-matching
-                            conj_idx = torch.argmin(diffs).item()
-                            if diffs[conj_idx] < 1e-4:
-                                mask[:, conj_idx] = 1.0
-                # ---------------------------------------------
             
             b = b * mask
             
@@ -621,7 +599,7 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
                 
                 # 5. Reconstruct back to physical space using updated pipeline
                 z_norm_next = model._modal_to_latent(b)
-                z_next_phys = model._unnormalize(z_norm_next)
+                z_next_phys = model._unnormalize(z_norm_next) if hasattr(model, "_unnormalize") else z_norm_next
                 # ensure real/float tensors for de_expand
                 if torch.is_complex(z_next_phys):
                     z_next_phys = z_next_phys.real

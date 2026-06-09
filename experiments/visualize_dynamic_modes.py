@@ -24,7 +24,7 @@ parser.add_argument("--custom_name", type=str, default="default", help="Custom n
 parser.add_argument("--data_path", type=str, required=True, help="Path to the dataset directory")
 
 parser.add_argument("--decomp_method", type=str, default="schur", choices=["numpy","jordan", "schur"], help="Method to use for decomposition (Jordan or Schur)")
-parser.add_argument("--mode_order", type=str, default="contribution", choices=["original", "contribution", "mse", "time_int_energy"], help="Criterion to order modes by for visualization")
+parser.add_argument("--mode_order", type=str, default="contribution", choices=["original", "contribution", "mse", "time_int_energy", "magnitude"], help="Criterion to order modes by for visualization")
 parser.add_argument("--outdir", type=str, default=None, help="Force a custom output directory for all mode-visualization plots.")
 parser.add_argument("--num_steps", type=int, default=None, help="Number of steps for truncated rollouts")
 args = parser.parse_args()
@@ -134,7 +134,7 @@ else:
         expansion_folder = "hankel_svd"
 
     save_dir = os.path.join(save_dir, expansion_folder)
-    if args.model_name == "ml_dmd":
+    if args.model_name in {"ml_dmd", "ml_dmd_drop"}:
         l1_weight = None
         try:
             l1_weight = getattr(model, "l1_weight", None)
@@ -225,17 +225,20 @@ else:
 # Create a grid covering the state space and lift to latent space
 state_bounds, grid_points = get_data_bounds_and_grid_points(trajectories, grid_res=grid_res, state_dim=state_dim)
 with torch.no_grad():
-    # If the expander requires delay history, inject it here
     if hasattr(model.expander, "delay_depth") and model.expander.delay_depth > 1:
-        # Create a buffer of [x(t), x(t-1), ..., x(t-q+1)]
-        # We fill it with the current point as a dummy history
         q = model.expander.delay_depth
-        d = model.state_dim
-        # grid_points shape: (N, d) -> (N, d*q)
         dummy_history = torch.as_tensor(grid_points, dtype=torch.float32).repeat_interleave(q, dim=1)
-        grid_points_expanded = safe_expand(model, dummy_history).cpu().numpy()
+        grid_points_expanded = safe_expand(model, dummy_history)
     else:
-        grid_points_expanded = safe_expand(model, torch.as_tensor(grid_points, dtype=torch.float32)).cpu().numpy()
+        grid_points_expanded = safe_expand(model, torch.as_tensor(grid_points, dtype=torch.float32))
+        
+    # --- FIX: Must scale the latent grid before passing to W! ---
+    if hasattr(model, "_normalize"):
+        grid_points_expanded = model._normalize(grid_points_expanded)
+    elif hasattr(model, "psi_scale"):
+        grid_points_expanded = grid_points_expanded / model.psi_scale
+        
+    grid_points_expanded = grid_points_expanded.cpu().numpy()
 
 # Order modes by chosen criterion
 sorting_info = {} # scores are unsorted, indices are the order to sort by
@@ -265,26 +268,12 @@ elif order_modes_by == "contribution":
         "indices_analytic": np.arange(len(Lambda_analytic)),
     }
 
-elif order_modes_by in ["magnitude", "phase"]: # simple soring criterias (also sorts analytic modes)
-    if order_modes_by == "magnitude":
-        if model_param_type == "complex": # magnitude = abs(lambda)
-            scores_model = np.abs(Lambda_model_complex.diagonal())
-            scores_analytic = np.abs(Lambda_analytic)
-        elif model_param_type == "real": # magnitude = norm(lambda_row) ; (since Lambda determines how mode i contributes to all modes in next step)
-            scores_model = np.linalg.norm(Lambda_model, axis=1)
-            scores_analytic = np.linalg.norm(Lambda_analytic, axis=1)
-        sorted_idx_model = np.argsort(scores_model)[::-1] # Descending order
-        sorted_idx_analytic = np.argsort(scores_analytic)[::-1] # Descending order
-
-    elif order_modes_by == "phase":
-        if model_param_type == "complex": # phase = angle(lambda)
-            scores_model = np.abs(np.angle(Lambda_model_complex.diagonal()))
-            scores_analytic = np.abs(np.angle(Lambda_analytic))
-        elif model_param_type == "real": # idk
-            scores_model = np.abs(np.angle(Lambda_model_complex.diagonal())) # idk
-            scores_analytic = np.abs(np.angle(Lambda_analytic)) # idk
-        sorted_idx_model = np.argsort(scores_model)[::1] # Ascending order
-        sorted_idx_analytic = np.argsort(scores_analytic)[::1] # Ascending order
+elif order_modes_by == "magnitude":
+    # Always use the complex diagonal, regardless of real/complex model type!
+    scores_model = np.abs(Lambda_model_complex.diagonal())
+    scores_analytic = np.abs(Lambda_analytic)
+    sorted_idx_model = np.argsort(scores_model)[::-1] 
+    sorted_idx_analytic = np.argsort(scores_analytic)[::-1]
 
     sorting_info[order_modes_by] = {
         "scores_model": scores_model,
@@ -293,7 +282,7 @@ elif order_modes_by in ["magnitude", "phase"]: # simple soring criterias (also s
         "indices_analytic": sorted_idx_analytic
     }
 
-elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven sorting criterias (doesn't sort analytic modes)
+elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven sorting criterias
     if order_modes_by == "mse":
         n_trajectories = 3
         n_steps = trajectories.shape[0] # use all steps available
@@ -318,15 +307,20 @@ elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven 
             else:
                 x = torch.as_tensor(trajectories[0,:,:], dtype=torch.float32)
             # -------------------------------------------
-            expanded_init_conditions = safe_expand(model, x).cpu().numpy()
-        init_mode_amplitudes = expanded_init_conditions @ W_proj # (n_trajs, n_modes)
+            expanded_init_conditions = safe_expand(model, x)
+            if hasattr(model, "_normalize"):
+                expanded_init_conditions = model._normalize(expanded_init_conditions)
+            elif hasattr(model, "psi_scale"):
+                expanded_init_conditions = expanded_init_conditions / model.psi_scale
+                
+        init_mode_amplitudes = expanded_init_conditions.cpu().numpy() @ W_proj
         mode_energies = np.linalg.norm(init_mode_amplitudes, axis=0) # (n_modes,)
         sorted_idx_model = np.argsort(mode_energies)[::-1] # Descending order
         scores_model = mode_energies
 
     elif order_modes_by == "time_int_energy":
         with torch.no_grad():
-            # ---> FIX: Extract true rolling history <---
+            # ---> Extract true rolling history <---
             if hasattr(model.expander, "delay_depth") and model.expander.delay_depth > 1:
                 q = model.expander.delay_depth
                 hist_list = []
@@ -336,20 +330,31 @@ elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven 
                 x = torch.as_tensor(x_packed.reshape(-1, x_packed.shape[-1]), dtype=torch.float32)
             else:
                 x = torch.as_tensor(trajectories.reshape(-1, state_dim), dtype=torch.float32)
-            # -------------------------------------------
-            expanded_traj = safe_expand(model, x).cpu().numpy()
-        mode_amplitudes = expanded_traj @ W_proj # (n_steps*n_trajs, n_modes)
-        mode_energies = np.linalg.norm(mode_amplitudes, axis=0) # (n_modes,)
-        sorted_idx_model = np.argsort(mode_energies)[::-1] # Descending order
-        scores_model = mode_energies
+            
+            # --- Expand and Normalize ---
+            expanded_traj = safe_expand(model, x)
+            if hasattr(model, "_normalize"):
+                expanded_traj = model._normalize(expanded_traj)
+            elif hasattr(model, "psi_scale"):
+                expanded_traj = expanded_traj / model.psi_scale
 
+        # 1. TEMPORAL ACTIVITY: Project to modal space
+        # How much is the mode "used" over the duration of the data?
+        mode_amplitudes = expanded_traj.cpu().numpy() @ W_proj
+        mode_energies_temp = np.linalg.norm(mode_amplitudes, axis=0) # (n_modes,)
+
+        # 2. PURE TEMPORAL ENERGY SORT (Removed redundant spatial logic)
+        scores_model = mode_energies_temp 
+        sorted_idx_model = np.argsort(scores_model)[::-1]
+
+    # Save to the sorting_info dictionary
     sorting_info[order_modes_by] = {
         "scores_model": scores_model,
         "indices_model": sorted_idx_model,
-        "scores_analytic": np.zeros(len(Lambda_analytic)), # dummy scores for plotting
-        "indices_analytic": np.arange(len(Lambda_analytic)) # keep original order for analytic modes
+        "scores_analytic": np.zeros(len(Lambda_analytic)), 
+        "indices_analytic": np.arange(len(Lambda_analytic)) 
     }
-
+    
 # # Deprecated : This one cheats
 # elif order_modes_by == "quality":
 #     print("Warning: This one is cheating!")
@@ -490,7 +495,7 @@ for config_name, traj_data in rollout_configs:
 plot_eigenfunctions(
     grid_points=grid_points, 
     grid_points_expanded=grid_points_expanded, 
-    Phi=sorted_data["model"]["complex"]["Phi"][:, :n_top_modes], 
+    W=sorted_data["model"]["complex"]["W"][:, :n_top_modes],
     scores=sorted_data["model"]["complex"]["scores"][:n_top_modes], 
     eigvals=sorted_data["model"]["complex"]["Lambda"][:n_top_modes].diagonal(),
     score_metric=order_modes_by,
@@ -514,8 +519,9 @@ else:
     trunc_trajectories = trajectories[:, :n_trajectories, :]
 
 # Use complex representation for truncation so complex conjugate pairs stay together
-Phi = sorted_data["model"]["complex"]["Phi"]
-Lambda = sorted_data["model"]["complex"]["Lambda"]
+Phi = Phi_model_complex
+Lambda = Lambda_model_complex
+W = W_proj_complex
 supports_truncated_rollout = (
     all(hasattr(model, attr) for attr in ("Phi_lift_fitted", "Lambda_fitted", "C_fitted", "psi_scale", "x_scale"))
     or (
@@ -532,11 +538,24 @@ if supports_truncated_rollout:
     truncation_dir = os.path.join(save_dir, "truncation")
     os.makedirs(truncation_dir, exist_ok=True)
 
+    # 1. Define target mode counts
+    # Base: 1-10
+    # Percentages: 10%, 25%, 50%, 75%, 100% of num_modes
+    fixed_targets = list(range(1, 11))
+    percent_targets = [max(1, min(num_modes, int(np.ceil(p * num_modes)))) for p in [0.1, 0.25, 0.5, 0.75, 1.0]]
+    targets = sorted(list(set(fixed_targets + percent_targets)))
+    targets = [n for n in targets if n <= num_modes]
+
+    # Helper for contribution scores
+    try:
+        from src.eval.noise_robustness import compute_mode_diagnostics
+        diag = compute_mode_diagnostics(model, trajectories)
+        print("Successfully computed mode diagnostics for contribution scores.")
+    except Exception:
+        diag = {}
+
     def _subset_contribution_score(mode_indices):
-        try:
-            contrib = np.asarray(diag.get("state_contribution", []), dtype=float)
-        except NameError:
-            contrib = np.array([])
+        contrib = np.asarray(diag.get("state_contribution", []), dtype=float)
         if contrib.size == 0:
             try:
                 contrib = np.asarray(sorted_data["model"]["real"]["scores"], dtype=float)
@@ -553,124 +572,50 @@ if supports_truncated_rollout:
         total_contrib = float(np.sum(contrib))
         if total_contrib <= 1e-12: return 0.0
         return float(np.sum(contrib[valid_idx]) / total_contrib)
-    
-    if order_modes_by == "contribution":
-        pct_list = []
-        by_mode_count = {}
-        for pct_label in [1, 5, 10, 25, 50, 100]:
-            n = max(1, min(int(np.ceil((pct_label / 100.0) * num_modes)), num_modes))
-            if n not in by_mode_count:
-                by_mode_count[n] = [pct_label]
-                pct_list.append((n, by_mode_count[n]))
-            else:
-                by_mode_count[n].append(pct_label)
 
-        if pct_list:
-            # LOOP OVER ALL MODES
-            for n in range(1, num_modes + 1):
-                current_subset = list(sorted_indices_full[:n])
-                modes_to_add = []
-                for mode in current_subset:
-                    for pair in orig_complex_pair_idx:
-                        if mode in pair:
-                            partner_idx = pair[1] if pair[0] == mode else pair[0]
-                            if partner_idx not in current_subset and partner_idx not in modes_to_add:
-                                modes_to_add.append(partner_idx)
-                current_subset.extend(modes_to_add)
-                mode_idx = np.asarray(current_subset, dtype=int)
-                actual_n = len(mode_idx)
+    # 2. Run loop over targets
+    for n in targets:
+        # Preserve complex pairs
+        current_subset = list(sorted_indices_full[:n])
+        modes_to_add = []
+        for mode in current_subset:
+            for pair in orig_complex_pair_idx:
+                if mode in pair:
+                    partner_idx = pair[1] if pair[0] == mode else pair[0]
+                    if partner_idx not in current_subset and partner_idx not in modes_to_add:
+                        modes_to_add.append(partner_idx)
+        current_subset.extend(modes_to_add)
+        current_subset = sorted(current_subset, key=lambda x: list(sorted_indices_full).index(x))
 
-                is_plot_target = n in by_mode_count
-                already_evaluated = any(s['n_modes'] == actual_n for s in summary_stats)
-                
-                # Skip recalculation ONLY if we already have it AND we don't need to generate a plot
-                if already_evaluated and not is_plot_target:
-                    continue
-
-                contrib_score = _subset_contribution_score(mode_idx)
-                
-                if is_plot_target:
-                    pct_labels = by_mode_count[n]
-                    pct_text = ", ".join(f"{pct}%" for pct in pct_labels)
-                    save_tag = "_".join(str(pct) for pct in pct_labels)
-                    subset_text = f"{actual_n} Modes ({pct_text}) | Contribution = {contrib_score:.3f}" if contrib_score is not None else f"{actual_n} Modes ({pct_text})"
-                    save_name = f"truncated_rollout_pct_{save_tag}_modes.png"
-                    sub = f"{plot_subtitle}\n{subset_text}"
-                else:
-                    save_name, sub = None, None
-
-                reconstructed_traj = truncated_rollout(
-                    model=model, real_traj=trunc_trajectories, n_modes=actual_n, 
-                    mode_indices=mode_idx, save_path=truncation_dir, 
-                    save_name=save_name, subtitle=sub, plot=is_plot_target
-                )
-
-                if not already_evaluated:
-                    mse = np.mean((reconstructed_traj - trunc_trajectories) ** 2)
-                    summary_stats.append({"n_modes": actual_n, "rmse": np.sqrt(mse), "contribution": contrib_score if contrib_score is not None else 0.0})
-        else:
-            print("Contribution thresholds unavailable; falling back to incremental truncated rollouts.")
-            for n in range(1, num_modes + 1):
-                current_subset = list(sorted_indices_full[:n])
-                modes_to_add = []
-                for mode in current_subset:
-                    for pair in orig_complex_pair_idx:
-                        if mode in pair:
-                            partner_idx = pair[1] if pair[0] == mode else pair[0]
-                            if partner_idx not in current_subset and partner_idx not in modes_to_add:
-                                modes_to_add.append(partner_idx)
-                current_subset.extend(modes_to_add)
-                mode_idx = np.asarray(current_subset, dtype=int)
-                actual_n = len(mode_idx)
-                
-                is_plot_target = (n <= n_top_modes)
-                already_evaluated = any(s['n_modes'] == actual_n for s in summary_stats)
-                if already_evaluated and not is_plot_target:
-                    continue
-                    
-                contrib_score = _subset_contribution_score(mode_idx)
-                reconstructed_traj = truncated_rollout(
-                    model=model, real_traj=trunc_trajectories, n_modes=actual_n, 
-                    mode_indices=mode_idx, save_path=truncation_dir, 
-                    save_name=f"truncated_rollout_n{actual_n}_modes.png" if is_plot_target else None,
-                    subtitle=f"{plot_subtitle}\nIncremental selection: {actual_n} modes" if is_plot_target else None,
-                    plot=is_plot_target
-                )
-                
-                if not already_evaluated:
-                    mse = np.mean((reconstructed_traj - trunc_trajectories) ** 2)
-                    summary_stats.append({"n_modes": actual_n, "rmse": np.sqrt(mse), "contribution": contrib_score if contrib_score is not None else 0.0})
-    else:
-        for n in range(1, num_modes + 1):
-            current_subset = list(sorted_indices_full[:n])
-            modes_to_add = []
-            for mode in current_subset:
-                for pair in orig_complex_pair_idx:
-                    if mode in pair:
-                        partner_idx = pair[1] if pair[0] == mode else pair[0]
-                        if partner_idx not in current_subset and partner_idx not in modes_to_add:
-                            modes_to_add.append(partner_idx)
-            current_subset.extend(modes_to_add)
-            mode_idx = np.asarray(current_subset, dtype=int)
-            actual_n = len(mode_idx)
+        mode_idx = np.asarray(current_subset, dtype=int)
+        actual_n = len(mode_idx)
+        
+        # Check if we already evaluated this count (e.g., if 10% happens to be 5 modes, which is already in 1-10)
+        if any(s['n_modes'] == actual_n for s in summary_stats):
+            continue
             
-            is_plot_target = (n <= n_top_modes)
-            already_evaluated = any(s['n_modes'] == actual_n for s in summary_stats)
-            if already_evaluated and not is_plot_target:
-                continue
-                
-            contrib_score = _subset_contribution_score(mode_idx)
-            reconstructed_traj = truncated_rollout(
-                model=model, real_traj=trunc_trajectories, n_modes=actual_n, 
-                mode_indices=mode_idx, save_path=truncation_dir, 
-                save_name=f"truncated_rollout_n{actual_n}_modes.png" if is_plot_target else None,
-                subtitle=f"{plot_subtitle}\nModes {actual_n} | pair-preserved" if is_plot_target else None,
-                plot=is_plot_target
-            )
+        contrib_score = _subset_contribution_score(mode_idx)
+        
+        # Generate plot for all requested targets
+        save_name = f"truncated_rollout_n{actual_n}_modes.png"
+        subtitle_text = f"{plot_subtitle}\n{actual_n} Modes"
+        if contrib_score is not None:
+            subtitle_text += f" | Contribution = {contrib_score:.3f}"
             
-            if not already_evaluated:
-                mse = np.mean((reconstructed_traj - trunc_trajectories) ** 2)
-                summary_stats.append({"n_modes": actual_n, "rmse": np.sqrt(mse), "contribution": contrib_score if contrib_score is not None else 0.0})
+        reconstructed_traj = truncated_rollout(
+            model=model, real_traj=trunc_trajectories, n_modes=actual_n, 
+            Phi=Phi, Lambda=Lambda, W=W,
+            mode_indices=mode_idx, save_path=truncation_dir, 
+            save_name=save_name, subtitle=subtitle_text, plot=True
+        )
+        
+        mse = np.mean((reconstructed_traj - trunc_trajectories) ** 2)
+        summary_stats.append({
+            "n_modes": actual_n, 
+            "rmse": np.sqrt(mse), 
+            "contribution": contrib_score if contrib_score is not None else 0.0
+        })
+
 else:
     print("Skipping truncated rollout plot: model does not expose a supported modal/decoder path.")
 

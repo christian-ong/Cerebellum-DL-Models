@@ -258,6 +258,7 @@ def build_model_from_checkpoint(model_path, device="cpu"):
         "rbf_bandwidth_mode": str(train_args.get("rbf_bandwidth_mode", "knn")),
         "rbf_knn_k": int(train_args.get("rbf_knn_k", 5)),
         "l1_weight": float(train_args.get("l1_weight", 1e-6)),
+        "biorth_weight": float(train_args.get("biorth_weight", 0.1)),
     }
 
     if model_name in {"ml_dmd", "hardcoded_dmd", "ml_dmd_free", "ml_dmd_band"}:
@@ -449,10 +450,6 @@ def get_koopman_eigensystem(model):
 
         if Lambda.ndim == 1:
             Lambda = np.diag(Lambda)
-
-        # Transpose to match convention
-        Lambda = Lambda.T
-        Phi_true = np.linalg.pinv(Phi_true).T
 
         eigvals, V_inner = np.linalg.eig(Lambda)
         _, W_inner = np.linalg.eig(Lambda.T)
@@ -853,18 +850,43 @@ def rotation_blocks_to_complex(Lambda, Phi, complex_pair_idx, W=None):
 
     for idx in complex_pair_idx:
         i, j = idx
-        a, c = Lambda[i, i], Lambda[i, j] 
-        b, d = Lambda[j, i], Lambda[j, j]
-
-        Lambda_complex[i, i], Lambda_complex[j, j] = a + 1j*b, d + 1j*c 
-        Lambda_complex[i, j], Lambda_complex[j, i] = 0, 0
-
-        real_part, imag_part = Phi[:, i], Phi[:, j]
-        Phi_complex[:, i], Phi_complex[:, j] = real_part + 1j*imag_part, real_part - 1j*imag_part
         
+        # 2x2 block elements
+        a = Lambda[i, i]
+        c = Lambda[i, j]
+        b = Lambda[j, i]
+        d = Lambda[j, j]
+
+        # 1. EXACT EIGENVALUES
+        # For a 2x2 matrix, characteristic eq gives: (a+d)/2 +/- i * sqrt(|bc - (a-d)^2 / 4|)
+        real_part = (a + d) / 2.0
+        det = a * d - b * c
+        discriminant = real_part**2 - det
+        
+        if discriminant < 0:
+            imag_part = np.sqrt(-discriminant)
+        else:
+            # Fallback if the filter accidentally caught a non-rotational block
+            imag_part = 0.0
+
+        Lambda_complex[i, i] = real_part + 1j * imag_part
+        Lambda_complex[j, j] = real_part - 1j * imag_part
+        Lambda_complex[i, j] = 0.0
+        Lambda_complex[j, i] = 0.0
+
+        # 2. EXACT RIGHT EIGENVECTORS (Phi)
+        phi_i = Phi[:, i]
+        phi_j = Phi[:, j]
+        Phi_complex[:, i] = phi_i + 1j * phi_j
+        Phi_complex[:, j] = phi_i - 1j * phi_j
+
+        # 3. EXACT LEFT EIGENVECTORS (W)
         if W is not None:
-            real_w, imag_w = W[:, i], W[:, j]
-            W_complex[:, i], W_complex[:, j] = real_w + 1j*imag_w, real_w - 1j*imag_w
+            w_i = W[:, i]
+            w_j = W[:, j]
+            # Must be scaled by 0.5 and imaginary signs inverted to be the true inverse of Phi
+            W_complex[:, i] = 0.5 * (w_i - 1j * w_j)
+            W_complex[:, j] = 0.5 * (w_i + 1j * w_j)
 
     if W is not None:
         return Lambda_complex, Phi_complex, W_complex
@@ -1035,7 +1057,7 @@ def plot_koopman_mode_rollout(
     init_conditions = torch.as_tensor(real_traj_valid[0, :, :], dtype=torch.float32) 
     expanded_init_conditions = expanded_traj[0, :, :] 
 
-    real_proj = _safe_matmul(expanded_traj, Phi).real
+    real_proj = (expanded_traj @ W).real
 
     if model is None or not hasattr(model, "rollout"):
         model_rollouts = np.repeat(init_conditions.unsqueeze(0).cpu().numpy(), n_steps_valid, axis=0)
@@ -1067,7 +1089,7 @@ def plot_koopman_mode_rollout(
 
     model_rollouts_flattened_expanded = safe_expand(model, torch.as_tensor(model_rollouts_input, dtype=torch.float32)).detach().numpy()
     model_rollouts_expanded = model_rollouts_flattened_expanded.reshape(n_steps_valid, n_trajs, lifted_dim) 
-    model_proj = _safe_matmul(model_rollouts_expanded, Phi).real
+    model_proj = (model_rollouts_expanded @ W).real
 
     # --- DYNAMIC W LOGIC ---
     if W is not None:
@@ -1152,7 +1174,7 @@ def plot_koopman_mode_rollout(
 def plot_eigenfunctions(
         grid_points, 
         grid_points_expanded, 
-        Phi,
+        W,
         scores,
         eigvals,
         score_metric,
@@ -1162,7 +1184,7 @@ def plot_eigenfunctions(
     subtitle=None,
     ):
     # Compute eigenfunction values on the grid for the top N modes
-    eigenfunction_vals = grid_points_expanded @ Phi
+    eigenfunction_vals = grid_points_expanded @ W
 
     # Compute complex pairs for annotation
     complex_pairs = [sorted([int(i+1), int(j+1)]) for i, j in complex_pair_idx] # 1-based index and internal sort
@@ -1262,45 +1284,114 @@ def modes_by_mse(model, Phi, Lambda, real_traj, W=None):
     expanded_traj_flattened = safe_expand(model, real_traj_input).cpu().numpy()
     expanded_traj = expanded_traj_flattened.reshape(n_steps_valid, n_trajs, -1)
     
-    expanded_init_conditions = expanded_traj[0, :, :] 
-    real_proj = expanded_traj @ Phi
-    real_proj = real_proj.real
-
-    # --- DYNAMIC W LOGIC ---
+    # --- Normalize initial conditions so W projection is accurate ---
+    expanded_init_conditions = torch.as_tensor(expanded_traj[0, :, :], dtype=torch.float32)
+    if hasattr(model, "_normalize"):
+        expanded_init_conditions = model._normalize(expanded_init_conditions)
+    elif hasattr(model, "psi_scale"):
+        expanded_init_conditions = expanded_init_conditions / model.psi_scale.to(expanded_init_conditions.device)
+    expanded_init_conditions = expanded_init_conditions.cpu().numpy()
+    
     if W is not None:
         W_mat = W
     else:
         W_mat = np.linalg.pinv(Phi).T
+
     z0 = expanded_init_conditions @ W_mat
     mode_evolution = np.zeros((n_steps_valid, n_trajs, n_modes), dtype=complex)
     mode_evolution[0, :, :] = z0
 
+    # Step forward in modal space
     for t in range(1, n_steps_valid):
         mode_evolution[t, :, :] = mode_evolution[t-1, :, :] @ Lambda.T
-    mode_evolution = mode_evolution.real
+        
+    mode_mses = np.zeros(n_modes)
+    
+    # Evaluate physical reconstruction error for each mode individually
+    device = next(model.parameters()).device if hasattr(model, 'parameters') else "cpu"
+    for i in range(n_modes):
+        # 1. Isolate the modal trajectory for mode i: shape (T, N_traj)
+        b_i = mode_evolution[:, :, i] 
+        
+        # 2. Map back to latent space: z_i(t) = b_i(t) * Phi[:, i]
+        phi_i = Phi[:, i] # shape (latent_dim,)
+        z_i = np.einsum('tn,d->tnd', b_i, phi_i) # shape (T, N_traj, latent_dim)
+        
+        if np.iscomplexobj(z_i):
+            z_i = z_i.real
+            
+        # 3. Unnormalize the latent features
+        z_i_tensor = torch.as_tensor(z_i, dtype=torch.float32, device=device)
+        if hasattr(model, "_unnormalize"):
+            z_i_unnorm = model._unnormalize(z_i_tensor)
+        elif hasattr(model, "psi_scale"):
+            scale = model.psi_scale.to(device)
+            z_i_unnorm = z_i_tensor * scale
+        else:
+            z_i_unnorm = z_i_tensor
+            
+        # 4. De-expand back to physical space
+        x_i_pred_t = safe_de_expand(model, z_i_unnorm)
+        
+        # ---> FIX: Apply Regression_DMD's custom denormalizer if it exists <---
+        if hasattr(model, "_denormalize_x"):
+            x_i_pred_t = model._denormalize_x(x_i_pred_t)
+            
+        x_i_pred = x_i_pred_t.detach().cpu().numpy()
+        
+        # 5. MSE against the true physical trajectory
+        error = np.mean((x_i_pred - real_traj_valid)**2)
+        mode_mses[i] = error
+        
+    # Sort lowest error to highest
+    ranked_indices = np.argsort(mode_mses)[::1] 
+    return ranked_indices, mode_mses
 
-    mode_abs_errors = np.linalg.norm(mode_evolution - real_proj, axis=(0, 1))
-    ranked_indices = np.argsort(mode_abs_errors)[::1] 
-    return ranked_indices, mode_abs_errors
-
-def _get_expanded_indices(mode_indices, Lambda_full):
-    """Ensures complex conjugate pairs are kept together."""
-    L_full = np.diag(Lambda_full) if Lambda_full.ndim == 2 else Lambda_full
+def _get_expanded_indices(mode_indices, model):
+    if mode_indices is None or len(mode_indices) == 0:
+        return mode_indices
+        
     expanded_idx = set(mode_indices)
     
-    if np.iscomplexobj(L_full):
-        for i in mode_indices:
-            if abs(L_full[i].imag) > 1e-6:
-                # Find the conjugate
-                diffs = np.abs(L_full - L_full[i].conj())
-                conj_idx = int(np.argmin(diffs))
-                # Only add if the error is tiny and it's within bounds
-                if diffs[conj_idx] < 1e-4:
-                    expanded_idx.add(conj_idx)
+    # 1. Complex diagonal models (Regression DMD)
+    if hasattr(model, "Lambda_fitted"):
+        L = model.Lambda_fitted.detach().cpu().numpy()
+        L_diag = np.diag(L) if L.ndim == 2 else L
+        if np.iscomplexobj(L_diag):
+            for i in mode_indices:
+                if abs(L_diag[i].imag) > 1e-6:
+                    diffs = np.abs(L_diag - L_diag[i].conj())
+                    diffs[i] = np.inf
+                    conj_idx = int(np.argmin(diffs))
+                    if diffs[conj_idx] < 1e-4:
+                        expanded_idx.add(conj_idx)
+                        
+    # 2. Real block matrices (ML DMD)
+    elif hasattr(model, "Lambda"):
+        L = model.Lambda.detach().cpu().numpy()
+        if L.ndim == 2:
+            # BROAD PROTECTION: Detect any significant coupling anywhere in the matrix
+            L_mag = np.abs(L)
+            connected = L_mag > 1e-3
+            np.fill_diagonal(connected, False) 
+            connected = connected | connected.T # Symmetrize
+            
+            active = np.zeros(L.shape[0], dtype=bool)
+            active[list(expanded_idx)] = True
+            
+            # Loop until no new connected modes are found (Transitive Closure)
+            while True:
+                new_active = active | (active @ connected)
+                if np.array_equal(active, new_active):
+                    break # We found the whole isolated subsystem
+                active = new_active
+                
+            expanded_idx.update(np.where(active)[0])
+            
     return sorted(list(expanded_idx))
 
 def truncated_rollout(
-    model, real_traj, n_modes=2, save_path=None, Phi=None, Lambda=None, 
+    model, real_traj, n_modes=2, save_path=None, Phi=None, Lambda=None, W=None,
     mode_indices=None, subtitle=None, save_name=None, plot=True
 ):
     n_trajs = real_traj.shape[1]
@@ -1327,14 +1418,16 @@ def truncated_rollout(
         # Regression logic
         Phi_lift = model.Phi_lift_fitted.detach().cpu().numpy()
         Lambda_diag = model.Lambda_fitted.detach().cpu().numpy()
-        Lambda_mat = np.diag(Lambda_diag)
+        Lambda_mat = np.diag(Lambda_diag) if Lambda_diag.ndim == 1 else Lambda_diag
         
         if mode_indices is None:
             mode_indices = list(range(min(n_modes, Phi_lift.shape[1])))
-        mode_indices = _get_expanded_indices(mode_indices, Lambda_diag)
+        mode_indices = _get_expanded_indices(mode_indices, model)
         
-        Phi_truncated = Phi_lift[:, mode_indices]
-        Lambda_truncated = Lambda_mat[np.ix_(mode_indices, mode_indices)]
+        # --- NEW: Create a mask of 1s for active modes, 0s for inactive ---
+        latent_dim = Phi_lift.shape[1]
+        mask = np.zeros(latent_dim, dtype=complex)
+        mask[mode_indices] = 1.0
         
         x_scale = np.real_if_close(model.x_scale.detach().cpu().numpy())
         x0_n = x0_hist / x_scale[:x0_hist.shape[1]]
@@ -1342,46 +1435,81 @@ def truncated_rollout(
             z0_norm_t = model.expand(torch.as_tensor(x0_n, dtype=torch.float64)) / torch.as_tensor(np.real_if_close(model.psi_scale.detach().cpu().numpy()), dtype=torch.float64)
             b0_full = model._solve_modal_coeffs_exact(z0_norm_t).detach().cpu().numpy()
             
-        b0_sel = b0_full[:, mode_indices]
-        lambda_vals = np.diag(Lambda_truncated)
+        # --- NEW: Apply mask to initial coordinates ---
+        b_t = b0_full * mask
         
-        mode_evolution = np.zeros((n_steps_valid, n_trajs, len(mode_indices)), dtype=complex)
+        mode_evolution = np.zeros((n_steps_valid, n_trajs, latent_dim), dtype=complex)
         for t in range(n_steps_valid):
-            mode_evolution[t, :, :] = b0_sel * (lambda_vals[np.newaxis, :] ** t)
+            mode_evolution[t, :, :] = b_t
+            # Step forward using FULL Lambda, then re-mask to prevent leakage
+            b_t = (b_t @ Lambda_mat.T) * mask
         
         C = model.C_fitted.detach().cpu().numpy()
-        truncated_trajectory = np.real(mode_evolution @ Phi_truncated.T @ C.T) * x_scale[:state_dim]
+        # Project back using FULL Phi
+        truncated_trajectory = np.real(mode_evolution @ Phi_lift.T @ C.T) * x_scale[:state_dim]
 
     elif hasattr(model, "get_Phi") and hasattr(model, "get_Lambda"):
-        # ML model logic
-        Phi_lift = model.get_Phi().detach().cpu().numpy()
-        Lambda = model.get_Lambda().detach().cpu().numpy()
-        
+        # 1. FETCH FULL MATRICES
+        # If decoupled complex matrices are passed in, USE THEM!
+        if Phi is not None and Lambda is not None:
+            Phi_full = Phi
+            Lambda_full = Lambda
+            W_full = W if W is not None else np.linalg.pinv(Phi).T
+        else:
+            Phi_full = model.get_Phi().detach().cpu().numpy()
+            Lambda_full = model.get_Lambda().detach().cpu().numpy()
+            # Add .T so z0_norm @ W_full correctly computes modal coordinates
+            W_full = model.get_Phi_inv().detach().cpu().numpy().T
+
         if mode_indices is None:
-            mode_indices = list(range(min(n_modes, Phi_lift.shape[1])))
-        mode_indices = _get_expanded_indices(mode_indices, Lambda)
+            mode_indices = list(range(min(n_modes, Phi_full.shape[1])))
+
+        # Ensure Lambda is treated as a diagonal matrix
+        Lambda_mat = np.diag(Lambda_full) if Lambda_full.ndim == 1 else Lambda_full
+
+        # Create a mask for truncation
+        latent_dim = Phi_full.shape[1]
+        mask = np.zeros(latent_dim, dtype=complex if np.iscomplexobj(Lambda_full) else float)
         
-        Phi_truncated = Phi_lift[:, mode_indices]
-        Lambda_truncated = Lambda[np.ix_(mode_indices, mode_indices)]
+        # --- FIX: Always expand indices. The function naturally handles both real blocks and complex pairs ---
+        mode_indices = _get_expanded_indices(mode_indices, model)
+            
+        mask[mode_indices] = 1.0
         
+        # 2. INITIAL CONDITION
         with torch.no_grad():
             z0 = model.expander.expand(torch.as_tensor(x0_hist, dtype=torch.float32))
-            b0 = model._get_modal_coords(model._normalize(z0)).detach().cpu().numpy()
-        
-        b0_sel = b0[:, mode_indices]
-        
-        mode_evolution = np.zeros((n_steps_valid, n_trajs, len(mode_indices)), dtype=complex)
-        mode_evolution[0, :, :] = b0_sel
-        for t in range(1, n_steps_valid):
-            mode_evolution[t, :, :] = mode_evolution[t-1, :, :] @ Lambda_truncated.T
+            z0_norm = model._normalize(z0).detach().cpu().numpy()
             
+            # Project to modal coords using W
+            b_t = z0_norm @ W_full
+            
+        # Truncate initial coordinates
+        b_t = b_t * mask
+        
+        # 3. ROLLOUT IN SUBSPACE
+        n_steps_valid = plot_real_traj.shape[0]
+        mode_evolution = np.zeros((n_steps_valid, n_trajs, latent_dim), dtype=b_t.dtype)
+        
+        for t in range(n_steps_valid):
+            mode_evolution[t, :, :] = b_t
+            # Step forward and re-mask to prevent numerical leakage
+            b_t = (b_t @ Lambda_mat.T) * mask
+                
+        # 4. RECONSTRUCT
         truncated_trajectory = np.zeros_like(plot_real_traj)
         for t in range(n_steps_valid):
-            z_t = np.real(mode_evolution[t, :, :] @ Phi_truncated.T)
+            # Project back to latent space using Phi
+            z_t_norm = mode_evolution[t, :, :] @ Phi_full.T
+            
+            # Ensure real before passing to PyTorch
+            if np.iscomplexobj(z_t_norm):
+                z_t_norm = z_t_norm.real
+                
             with torch.no_grad():
-                z_t_norm = model._unnormalize(torch.as_tensor(z_t, dtype=torch.float32))
-                x_t = model.expander.de_expand(z_t_norm).cpu().numpy()
-            truncated_trajectory[t, :, :] = x_t[:, :state_dim]
+                z_t = model._unnormalize(torch.as_tensor(z_t_norm, dtype=torch.float32))
+                x_t = model.expander.de_expand(z_t).cpu().numpy()
+                truncated_trajectory[t, :, :] = x_t[:, :state_dim]
     else:
         raise ValueError("Model format not supported.")
 
@@ -1419,7 +1547,7 @@ def truncated_rollout(
             ax.plot(plot_real_traj[:, idx, 0], plot_real_traj[:, idx, 1], 'k-', label='Ground Truth', alpha=0.7)
             ax.plot(truncated_trajectory[:, idx, 0], truncated_trajectory[:, idx, 1], 'b--', label=f'Mode rollout (n={len(mode_indices)})')
             
-            ax.scatter(plot_real_traj[0, idx, 0], plot_real_traj[0, idx, 1], color='black', marker='o', s=40, label='GT Start', zorder=10)
+            ax.scatter(plot_real_traj[0, idx, 0], plot_real_traj[0, idx, 1], color='black', marker='o', s=40, label='Ground Truth Start', zorder=10)
             ax.scatter(truncated_trajectory[0, idx, 0], truncated_trajectory[0, idx, 1], color='blue', marker='x', s=50, label='Model Start', zorder=10)
             
             ax.grid(True, linestyle='--', alpha=0.5)
@@ -1441,8 +1569,6 @@ def truncated_rollout(
             plt.show()
 
     # Always return the trajectory regardless of plotting!
-    return truncated_trajectory
-
     return truncated_trajectory
 
 def plot_rmse_contribution(mode_counts, rmses, contributions, save_path=None, subtitle=None):

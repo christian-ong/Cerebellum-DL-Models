@@ -80,7 +80,7 @@ def get_phase_dims(system: str, state_dim: int) -> Tuple[int, int]:
 
 def _infer_mode_count(model_name: str, model, extras: Dict[str, Any]) -> Optional[int]:
     """Best-effort inference of the available modal dimension for mode-subset comparisons."""
-    if model_name not in {"regression_dmd", "ml_dmd"}:
+    if model_name not in {"regression_dmd", "ml_dmd", "ml_dmd_drop"}:
         return None
 
     candidates = [
@@ -113,21 +113,50 @@ def _infer_mode_count(model_name: str, model, extras: Dict[str, Any]) -> Optiona
     return None
 
 
-def _get_expanded_indices(mode_indices, lambdas):
-    if lambdas is None or len(lambdas) == 0:
+def _get_expanded_indices(mode_indices, model):
+    if mode_indices is None or len(mode_indices) == 0:
         return mode_indices
+        
     expanded_idx = set(mode_indices)
-    if np.iscomplexobj(lambdas):
-        for i in mode_indices:
-            if i < len(lambdas) and abs(lambdas[i].imag) > 1e-6:
-                diffs = np.abs(lambdas - lambdas[i].conj())
-                diffs[i] = np.inf # prevent self match
-                conj_idx = int(np.argmin(diffs))
-                if diffs[conj_idx] < 1e-4:
-                    expanded_idx.add(conj_idx)
+    
+    # 1. Complex diagonal models (Regression DMD)
+    if hasattr(model, "Lambda_fitted"):
+        L = model.Lambda_fitted.detach().cpu().numpy()
+        L_diag = np.diag(L) if L.ndim == 2 else L
+        if np.iscomplexobj(L_diag):
+            for i in mode_indices:
+                if abs(L_diag[i].imag) > 1e-6:
+                    diffs = np.abs(L_diag - L_diag[i].conj())
+                    diffs[i] = np.inf
+                    conj_idx = int(np.argmin(diffs))
+                    if diffs[conj_idx] < 1e-4:
+                        expanded_idx.add(conj_idx)
+                        
+    # 2. Real block matrices (ML DMD)
+    elif hasattr(model, "Lambda"):
+        L = model.Lambda.detach().cpu().numpy()
+        if L.ndim == 2:
+            # BROAD PROTECTION: Detect any significant coupling anywhere in the matrix
+            L_mag = np.abs(L)
+            connected = L_mag > 1e-3
+            np.fill_diagonal(connected, False) 
+            connected = connected | connected.T # Symmetrize
+            
+            active = np.zeros(L.shape[0], dtype=bool)
+            active[list(expanded_idx)] = True
+            
+            # Loop until no new connected modes are found (Transitive Closure)
+            while True:
+                new_active = active | (active @ connected)
+                if np.array_equal(active, new_active):
+                    break # We found the whole isolated subsystem
+                active = new_active
+                
+            expanded_idx.update(np.where(active)[0])
+            
     return sorted(list(expanded_idx))
 
-def _mode_subset_indices_for_fraction(diag, fraction, total_modes):
+def _mode_subset_indices_for_fraction(diag, fraction, total_modes, model):
     if fraction is None or total_modes <= 0:
         return None, None, None
 
@@ -144,22 +173,21 @@ def _mode_subset_indices_for_fraction(diag, fraction, total_modes):
     n_modes = int(np.ceil(frac * total_modes))
     n_modes = min(max(n_modes, 1), total_modes)
     
-    # --- FIX: Expand the raw slice to include missing conjugate pairs ---
+    # --- FIX: Pass model instead of diag.get("lambdas") ---
     raw_idx = np.asarray(diag["order_contrib"][:n_modes], dtype=int)
-    expanded_idx = _get_expanded_indices(raw_idx, diag.get("lambdas"))
+    expanded_idx = _get_expanded_indices(raw_idx, model)  # <-- Changed
     
-    # Return the expanded list and its ACTUAL length
     return np.asarray(expanded_idx, dtype=int), pct_label, len(expanded_idx)
 
 
-def _mode_subset_specs_for_fractions(diag, fractions, total_modes):
+def _mode_subset_specs_for_fractions(diag, fractions, total_modes, model):
     specs = []
     by_mode_count = {}
     contrib = np.asarray(diag.get("state_contribution", []), dtype=float)
     total_contrib = float(np.sum(contrib)) if contrib.size > 0 else 0.0
 
     for fraction in fractions or []:
-        contrib_idx, pct_label, n_modes = _mode_subset_indices_for_fraction(diag, fraction, total_modes)
+        contrib_idx, pct_label, n_modes = _mode_subset_indices_for_fraction(diag, fraction, total_modes, model)
         if contrib_idx is None or pct_label is None:
             continue
 
@@ -231,7 +259,7 @@ def _build_mode_subset_heatmap_specs(
     if diag is None or contrib_order is None:
         return [{"name": "all", "title": "Full model", "mode_indices": None}]
 
-    for spec in _mode_subset_specs_for_fractions(diag, requested_thresholds, total_modes):
+    for spec in _mode_subset_specs_for_fractions(diag, requested_thresholds, total_modes, model):
         pct_text = ", ".join(f"{pct}%" for pct in spec["pct_labels"])
         actual_score = spec.get("actual_score")
         if actual_score is not None:
@@ -428,9 +456,9 @@ def _format_expansion_parameters(model_name: str, model, train_args: Dict[str, A
         if library_type is not None:
             params.append(f"Library type {library_type}")
 
-    if model_name in {"ml_dmd", "ml_dmd_free", "ml_dmd_band"}:
+    if model_name in {"ml_dmd", "ml_dmd_free", "ml_dmd_band", "ml_dmd_drop"}: # <-- CHANGE TO INCLUDE ml_dmd_drop
         l1_weight = _first_nonempty(
-            train_args.get("l1_weight", None),  # <-- FLIP THIS TO THE TOP
+            train_args.get("l1_weight", None),
             getattr(model, "l1_weight", None),
         )
         if l1_weight is not None:
@@ -438,6 +466,17 @@ def _format_expansion_parameters(model_name: str, model, train_args: Dict[str, A
                 params.append(f"L1 Weight {float(l1_weight):.3g}")
             except (TypeError, ValueError):
                 params.append(f"L1 Weight {l1_weight}")
+                
+        # Handle Biorth parameter plotting
+        biorth_weight = _first_nonempty(
+            train_args.get("biorth_weight", None),
+            getattr(model, "biorth_weight", None),
+        )
+        if biorth_weight is not None:
+            try:
+                params.append(f"Biorth Weight {float(biorth_weight):.3g}")
+            except (TypeError, ValueError):
+                params.append(f"Biorth Weight {biorth_weight}")
 
     if model_name == "regression_dmd":
         rollout_mode = _first_nonempty(
@@ -1497,20 +1536,11 @@ def run_diagnostics(
         subset_specs = []
 
     if subset_specs:
-        # --- NEW CONJUGATE PROTECTION ---
-        # Get eigenvalues from the model to enable protection
-        lambdas = None
-        if hasattr(model, "get_eigenvalues"):
-            lambdas = model.get_eigenvalues().detach().cpu().numpy()
-        elif hasattr(model, "Lambda_fitted"):
-            lambdas = model.Lambda_fitted.detach().cpu().numpy()
-
+        # --- FIX: Use model object directly ---
         for spec in subset_specs:
-            if "mode_indices" in spec and lambdas is not None:
-                # Use your validated conjugate-protection logic
-                from src.eval.visualize_modes import _get_expanded_indices
-                spec["mode_indices"] = _get_expanded_indices(spec["mode_indices"], lambdas)
-        # --------------------------------
+            if "mode_indices" in spec:
+                spec["mode_indices"] = _get_expanded_indices(spec["mode_indices"], model)
+        # ------------------------------------
         
         grid_results_all = compute_true_grid_heatmap_grid(
             data_path=data_path,

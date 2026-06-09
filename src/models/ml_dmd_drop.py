@@ -114,22 +114,19 @@ class ML_DMD_DROP(nn.Module):
         return self.Phi
 
     def get_Phi_inv(self):
-        """Return pseudo-inverse of Phi."""
-        return torch.linalg.pinv(self.Phi, rcond=1e-6) 
+        """Return the LEARNED left eigenvector matrix (acts as Phi inverse)."""
+        # FIX: Expose the learned W matrix instead of calculating the exact inverse
+        return self.W
 
     def get_Lambda(self):
         """Return the learned Lambda matrix."""
         return self.Lambda
 
     def get_K(self):
-        """Return the lifted Koopman operator: K = Phi Lambda Phi^{-1}"""
+        """Return the lifted Koopman operator: K = Phi Lambda W"""
+        # This will now correctly use self.W because we updated get_Phi_inv
         Phi_inv = self.get_Phi_inv()
         return self.Phi @ self.Lambda @ Phi_inv
-
-    def get_eigenvalues(self):
-        """Eigenvalues of the lifted Koopman operator."""
-        K = self.get_K()
-        return torch.linalg.eigvals(K)
 
     # Standardize these three helpers in ML_DMD_FREE
     def _get_modal_coords(self, z):

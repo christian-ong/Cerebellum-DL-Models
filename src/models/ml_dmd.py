@@ -118,11 +118,6 @@ class ML_DMD(nn.Module):
         Phi_inv = self.get_Phi_inv()
         return self.Phi @ self.Lambda @ Phi_inv
 
-    def get_eigenvalues(self):
-        """Eigenvalues of the lifted Koopman operator."""
-        K = self.get_K()
-        return torch.linalg.eigvals(K)
-
     # Standardize these three helpers in ML_DMD_FREE
     def _get_modal_coords(self, z):
         I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device)
