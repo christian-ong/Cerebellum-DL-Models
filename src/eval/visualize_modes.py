@@ -1281,19 +1281,24 @@ def modes_by_mse(model, Phi, Lambda, real_traj, W=None):
         b_i = mode_evolution[:, :, i] 
         
         # 2. Map back to latent space: z_i(t) = b_i(t) * Phi[:, i]
-        phi_i = Phi[:, i] # shape (latent_dim,)
-        z_i = np.einsum('tn,d->tnd', b_i, phi_i) # shape (T, N_traj, latent_dim)
+        phi_i = Phi[:, i] 
+        z_i = np.einsum('tn,d->tnd', b_i, phi_i) 
         
         if np.iscomplexobj(z_i):
-            z_i = z_i.real
+            # FIX: Multiply genuinely complex modes by 2 to account for the conjugate partner
+            if np.abs(np.imag(Lambda[i, i])) > 1e-6:
+                z_i = 2 * z_i.real
+            else:
+                z_i = z_i.real
             
         # 3. Unnormalize the latent features
         z_i_tensor = torch.as_tensor(z_i, dtype=torch.float32, device=device)
         if hasattr(model, "_unnormalize"):
             z_i_unnorm = model._unnormalize(z_i_tensor)
         elif hasattr(model, "psi_scale"):
-            scale = model.psi_scale.to(device)
-            z_i_unnorm = z_i_tensor * scale
+            # FIX: Regression DMD's C_fitted natively expects normalized inputs. 
+            # Do NOT multiply by psi_scale!
+            z_i_unnorm = z_i_tensor 
         else:
             z_i_unnorm = z_i_tensor
             
@@ -1315,6 +1320,9 @@ def modes_by_mse(model, Phi, Lambda, real_traj, W=None):
             x_i_pred_t = x_i_pred_t_flat.reshape(T_steps, N_traj, -1)
             
         x_i_pred = x_i_pred_t.detach().cpu().numpy()
+        
+        # ---> FIX: Strip delay history from Regression DMD prediction <---
+        x_i_pred = x_i_pred[:, :, :state_dim]
         
         # 5. MSE against the true physical trajectory
         error = np.mean((x_i_pred - real_traj_valid)**2)
@@ -1462,9 +1470,12 @@ def truncated_rollout(
             
             # Unnormalize latent
             if hasattr(model, "_unnormalize"):
+                # ML DMD requires un-scaling before de-expanding
                 z_unnorm = model._unnormalize(z_norm_tensor)
             elif hasattr(model, "psi_scale"):
-                z_unnorm = z_norm_tensor * model.psi_scale.to(device)
+                # FIX: Regression DMD's C_fitted natively expects normalized inputs. 
+                # Do NOT multiply by psi_scale!
+                z_unnorm = z_norm_tensor 
             else:
                 z_unnorm = z_norm_tensor
                 

@@ -705,50 +705,38 @@ def modal_coefficients(model, X_states, mode_indices=None, max_samples=20000):
 
 def compute_mode_diagnostics(model, X_states, dt=None, max_samples=20000):
     b = modal_coefficients(model, X_states, max_samples=max_samples)
-
     coeff_rms = np.sqrt(np.mean(np.abs(b) ** 2, axis=0))
 
-    # Default placeholders
     mode_state_norm = None
     lambdas = None
 
-    # Regression_DMD-style saved spectral objects
     if hasattr(model, "Phi_state_fitted") and hasattr(model, "Lambda_fitted"):
         Phi_state = model.Phi_state_fitted.detach().cpu().numpy()
-        
-        # --- FIX: Restore physical units before calculating contribution norms ---
+        # ---> FIX: Slice the delay history rows away <---
+        Phi_state = Phi_state[:model.state_dim, :]
         if hasattr(model, "x_scale"):
             x_scale = model.x_scale[:model.state_dim].detach().cpu().numpy()
-            # Multiply each row (state dimension) by its corresponding physical scale
             Phi_state = Phi_state * x_scale[:, None]
-            
         mode_state_norm = np.linalg.norm(Phi_state, axis=0)
         lambdas = model.Lambda_fitted.detach().cpu().numpy()
 
     else:
-        # ML_DMD-style: try to reconstruct state contribution per mode
-        try:
-            dev = next(model.parameters()).device
-        except StopIteration:
-            try:
-                dev = next(model.buffers()).device
-            except StopIteration:
-                dev = torch.device("cpu")
-
+        # ML_DMD
+        dev = next(model.parameters()).device if hasattr(model, 'parameters') else torch.device("cpu")
         if hasattr(model, "Phi") and hasattr(model, "expander"):
             Phi_param = model.Phi.detach().to(device=dev)
             n_modes = Phi_param.shape[1]
             Phi_state_cols = []
             for j in range(n_modes):
-                col = Phi_param[:, j].unsqueeze(0)  # (1, latent_dim)
-                if hasattr(model, "_unnormalize"):
-                    col_phys = model._unnormalize(col)
+                col = Phi_param[:, j].unsqueeze(0) 
+                
+                # ---> REAL FIX 1: Scale direction ONLY. No _unnormalize() mean-shifting! <---
+                if hasattr(model, "lift_scale"):
+                    col_phys = col * model.lift_scale.to(dev)
+                elif hasattr(model, "psi_scale"):
+                    col_phys = col * model.psi_scale.to(dev)
                 else:
-                    lift_scale = getattr(model, "lift_scale", None)
-                    if lift_scale is not None:
-                        col_phys = col * lift_scale.to(dev)
-                    else:
-                        col_phys = col
+                    col_phys = col
 
                 try:
                     state_vec = model.expander.de_expand(col_phys).squeeze(0)
@@ -761,45 +749,36 @@ def compute_mode_diagnostics(model, X_states, dt=None, max_samples=20000):
                 mode_state_norm = np.linalg.norm(Phi_state, axis=0)
             else:
                 mode_state_norm = np.zeros_like(coeff_rms)
-
         else:
             mode_state_norm = np.zeros_like(coeff_rms)
 
-        # Eigenvalues: prefer get_eigenvalues(), else try Lambda or form K
         if hasattr(model, "get_eigenvalues"):
             lambdas = model.get_eigenvalues().detach().cpu().numpy()
-        elif hasattr(model, "Lambda") and hasattr(model, "Phi"):
-            try:
-                K = (model.Phi @ model.Lambda @ torch.linalg.pinv(model.Phi)).to(device=dev)
-                eigvals = torch.linalg.eigvals(K.to(torch.complex128))
-                lambdas = eigvals.detach().cpu().numpy()
-            except Exception:
-                lambdas = np.full(coeff_rms.shape, np.nan)
         else:
             lambdas = np.full(coeff_rms.shape, np.nan)
 
-    # Ensure arrays have compatible shapes
+    # Ensure arrays match
     coeff_rms = np.asarray(coeff_rms)
     mode_state_norm = np.asarray(mode_state_norm)
-    if mode_state_norm.shape[0] != coeff_rms.shape[0]:
-        # Broadcast or trim as needed
-        if mode_state_norm.size == 0:
-            mode_state_norm = np.zeros_like(coeff_rms)
-        else:
-            mode_state_norm = np.resize(mode_state_norm, coeff_rms.shape)
+    if mode_state_norm.size == 0: mode_state_norm = np.zeros_like(coeff_rms)
+    elif mode_state_norm.shape[0] != coeff_rms.shape[0]: mode_state_norm = np.resize(mode_state_norm, coeff_rms.shape)
 
     state_contribution = coeff_rms * mode_state_norm
 
-    lambdas = np.asarray(lambdas)
-    if lambdas.shape[0] != coeff_rms.shape[0]:
-        # Pad or truncate
-        if lambdas.size == 0:
-            lambdas = np.full(coeff_rms.shape, np.nan)
-        else:
-            lambdas = np.resize(lambdas, coeff_rms.shape)
+    # ---> REAL FIX 2: Lock real rotation blocks together before sorting! <---
+    if hasattr(model, "Lambda") and not hasattr(model, "Lambda_fitted"):
+        L = model.Lambda.detach().cpu().numpy()
+        if L.ndim == 2:
+            for i in range(L.shape[0] - 1):
+                a, b_val = L[i, i], L[i, i+1]
+                c, d = L[i+1, i], L[i+1, i+1]
+                if abs(b_val) > 1e-3 and abs(c) > 1e-3 and np.sign(b_val) != np.sign(c) and abs(a - d) < 1e-3:
+                    # Average the score of the complex pair
+                    avg_score = (state_contribution[i] + state_contribution[i+1]) / 2.0
+                    state_contribution[i] = avg_score
+                    state_contribution[i+1] = avg_score
 
     eig_abs = np.abs(lambdas)
-
     if dt is not None and np.all(np.isfinite(lambdas)):
         mu = np.log(lambdas) / dt
         growth_rate = np.real(mu)
@@ -810,12 +789,7 @@ def compute_mode_diagnostics(model, X_states, dt=None, max_samples=20000):
 
     order_amp = np.argsort(coeff_rms)[::-1]
     order_contrib = np.argsort(state_contribution)[::-1]
-    order_amp = np.array(order_amp, dtype=np.int64, copy=True)
-    order_contrib = np.array(order_contrib, dtype=np.int64, copy=True)
 
-    cum_amp_score = cumulative_score_fractions(coeff_rms, order_amp)
-    cum_contrib_score = cumulative_score_fractions(state_contribution, order_contrib)
-    # print("Correlation between coeff_rms and lift_scale:", np.corrcoef(coeff_rms, lift_scale))
     return {
         "coeff_rms": coeff_rms,
         "state_contribution": state_contribution,
@@ -824,8 +798,8 @@ def compute_mode_diagnostics(model, X_states, dt=None, max_samples=20000):
         "frequency": frequency,
         "order_amp": order_amp,
         "order_contrib": order_contrib,
-        "cum_amp_score": cum_amp_score,
-        "cum_contrib_score": cum_contrib_score,
+        "cum_amp_score": cumulative_score_fractions(coeff_rms, order_amp),
+        "cum_contrib_score": cumulative_score_fractions(state_contribution, order_contrib),
         "lambdas": lambdas,
     }
 

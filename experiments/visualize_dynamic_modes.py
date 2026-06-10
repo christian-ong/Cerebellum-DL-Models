@@ -106,10 +106,14 @@ model_param_type = "complex" if "regression" in args.model_name else "real"
 
 if args.model_name in {"regression_dmd"}:
     Phi_model, Lambda_model, K_model, V, W,  = get_koopman_eigensystem(model)
-    # ---> FIX: Explicitly define the raw W_model for Regression DMD using the exact pseudo-inverse
+    # Explicitly define the raw W_model for Regression DMD using the exact pseudo-inverse
     W_model = np.linalg.pinv(Phi_model).T
 else:
     Phi_model, Lambda_model, W_model, K_model, V, W,  = get_koopman_eigensystem(model)
+    
+    # ---> CRITICAL FIX: The neural network stores W with modes as rows. 
+    # Transpose it so modes are columns for NumPy operations! <---
+    W_model = W_model.T
 
 num_modes = Lambda_model.shape[0]
 n_top_modes = min(n_top_modes, num_modes)
@@ -223,12 +227,19 @@ else:
 # Create a grid covering the state space and lift to latent space
 state_bounds, grid_points = get_data_bounds_and_grid_points(trajectories, grid_res=grid_res, state_dim=state_dim)
 with torch.no_grad():
+    dummy_t = torch.as_tensor(grid_points, dtype=torch.float32)
+    
     if hasattr(model.expander, "delay_depth") and model.expander.delay_depth > 1:
         q = model.expander.delay_depth
-        dummy_history = torch.as_tensor(grid_points, dtype=torch.float32).repeat_interleave(q, dim=1)
-        grid_points_expanded = safe_expand(model, dummy_history)
+        dummy_history = dummy_t.repeat_interleave(q, dim=1)
     else:
-        grid_points_expanded = safe_expand(model, torch.as_tensor(grid_points, dtype=torch.float32))
+        dummy_history = dummy_t
+        
+    # FIX: Regression DMD requires external state normalization before expansion
+    if hasattr(model, "_normalize_x"):
+        dummy_history = model._normalize_x(dummy_history)
+        
+    grid_points_expanded = safe_expand(model, dummy_history)
         
     # --- FIX: Must scale the latent grid before passing to W! ---
     if hasattr(model, "_normalize"):
@@ -249,20 +260,85 @@ if order_modes_by == "original":
         "indices_analytic": np.arange(len(Lambda_analytic))
     }
 elif order_modes_by == "contribution":
-    # Compute contribution ordering using modal diagnostics (RMS coeff * physical-state norm)
-    try:
-        from src.eval.noise_robustness import compute_mode_diagnostics
-        diag = compute_mode_diagnostics(model, trajectories)
-        order_contrib = diag.get("order_contrib")
-        scores_model = diag.get("state_contribution")
-    except Exception:
-        order_contrib = np.arange(num_modes)
-        scores_model = np.zeros(num_modes)
+    # 1. Get complex modal coefficients over time (b)
+    with torch.no_grad():
+        n_trajectories = min(3, trajectories.shape[1])
+        
+        # ---> FIX: Properly format history for delay models BEFORE expanding! <---
+        if hasattr(model, "expander") and hasattr(model.expander, "delay_depth") and model.expander.delay_depth > 1:
+            q = model.expander.delay_depth
+            hist_list = []
+            for lag in range(q):
+                hist_list.append(trajectories[q - 1 - lag : trajectories.shape[0] - lag, :n_trajectories, :])
+            x_packed = np.concatenate(hist_list, axis=-1)
+            x = torch.as_tensor(x_packed.reshape(-1, x_packed.shape[-1]), dtype=torch.float32)
+        else:
+            x = torch.as_tensor(trajectories[:, :n_trajectories, :].reshape(-1, state_dim), dtype=torch.float32)
+            
+        # ---> FIX: Regression DMD requires external state normalization <---
+        if hasattr(model, "_normalize_x"):
+            x = model._normalize_x(x)
+            
+        expanded_traj = safe_expand(model, x)
+        
+        # Normalize the latent space
+        if hasattr(model, "_normalize"):
+            expanded_traj = model._normalize(expanded_traj)
+        elif hasattr(model, "psi_scale"):
+            expanded_traj = expanded_traj / model.psi_scale.to(expanded_traj.device)
+            
+    # Project onto Complex Left Eigenvectors
+    b_t = expanded_traj.cpu().numpy() @ W_model_complex 
+    
+    # RMS amplitude of each mode (b_t is 2D: [Samples, Modes], so axis=0)
+    coeff_rms = np.sqrt(np.mean(np.abs(b_t) ** 2, axis=0))
+
+    # 2. Calculate Physical Norm of Complex Eigenvectors (Phi)
+    latent_dim = Phi_model_complex.shape[1]
+    mode_state_norms = np.zeros(latent_dim)
+    
+    for j in range(latent_dim):
+        phi_j = Phi_model_complex[:, j]
+        
+        if hasattr(model, "C_fitted"):
+            C_mat = model.C_fitted.detach().cpu().numpy()
+            # ---> FIX: Slice the delay history away before scaling <---
+            state_vec = (C_mat @ phi_j)[:model.state_dim] 
+            if hasattr(model, "x_scale"):
+                state_vec = state_vec * model.x_scale[:model.state_dim].detach().cpu().numpy()
+        else:
+            # ML DMD: Scale the direction and de-expand
+            if hasattr(model, "lift_scale"):
+                scale = model.lift_scale.detach().cpu().numpy()
+                phi_j_unscaled = phi_j * scale
+            elif hasattr(model, "psi_scale"):
+                scale = model.psi_scale.detach().cpu().numpy()
+                phi_j_unscaled = phi_j * scale
+            else:
+                phi_j_unscaled = phi_j
+                
+            device = "cpu"
+            if hasattr(model, 'parameters') and list(model.parameters()): device = next(model.parameters()).device
+            elif hasattr(model, 'buffers') and list(model.buffers()): device = next(model.buffers()).device
+            
+            phi_real = torch.as_tensor(phi_j_unscaled.real, dtype=torch.float32).unsqueeze(0).to(device)
+            phi_imag = torch.as_tensor(phi_j_unscaled.imag, dtype=torch.float32).unsqueeze(0).to(device)
+            
+            with torch.no_grad():
+                s_real = safe_de_expand(model, phi_real).squeeze(0).cpu().numpy()
+                s_imag = safe_de_expand(model, phi_imag).squeeze(0).cpu().numpy()
+            state_vec = s_real + 1j * s_imag
+            
+        mode_state_norms[j] = np.linalg.norm(state_vec[:model.state_dim])
+        
+    # 3. Compute final contribution and sort
+    scores_model = coeff_rms * mode_state_norms
+    sorted_idx_model = np.argsort(scores_model)[::-1]
 
     sorting_info["contribution"] = {
         "scores_model": scores_model,
         "scores_analytic": np.zeros(len(Lambda_analytic)),
-        "indices_model": np.asarray(order_contrib, dtype=int),
+        "indices_model": sorted_idx_model,
         "indices_analytic": np.arange(len(Lambda_analytic)),
     }
 
@@ -283,42 +359,45 @@ elif order_modes_by == "magnitude":
 elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven sorting criterias
     if order_modes_by == "mse":
         n_trajectories = 3
-        n_steps = trajectories.shape[0] # use all steps available
-        calculate_trajectories = trajectories[:n_steps, :n_trajectories, :] # (steps, id, state_dim)
+        n_steps = trajectories.shape[0] 
+        calculate_trajectories = trajectories[:n_steps, :n_trajectories, :] 
 
         sorted_idx_model, mode_mses = modes_by_mse(
             model=model,
-            Phi=Phi_model,
-            Lambda=Lambda_model,
+            Phi=Phi_model_complex,       # <--- FIX: Use Complex
+            Lambda=Lambda_model_complex, # <--- FIX: Use Complex
             real_traj=calculate_trajectories,
-            W=W_model
+            W=W_model_complex            # <--- FIX: Use Complex
         )
         scores_model = mode_mses
 
     elif order_modes_by == "init_energy":
         with torch.no_grad():
-            # ---> FIX: Extract true initial history <---
             if hasattr(model.expander, "delay_depth") and model.expander.delay_depth > 1:
                 q = model.expander.delay_depth
                 hist_list = [trajectories[q - 1 - lag, :, :] for lag in range(q)]
                 x = torch.as_tensor(np.concatenate(hist_list, axis=-1), dtype=torch.float32)
             else:
                 x = torch.as_tensor(trajectories[0,:,:], dtype=torch.float32)
-            # -------------------------------------------
+            
+            # ---> FIX: External normalization for Regression DMD <---
+            if hasattr(model, "_normalize_x"):
+                x = model._normalize_x(x)
+                
             expanded_init_conditions = safe_expand(model, x)
             if hasattr(model, "_normalize"):
                 expanded_init_conditions = model._normalize(expanded_init_conditions)
             elif hasattr(model, "psi_scale"):
-                expanded_init_conditions = expanded_init_conditions / model.psi_scale
+                device = model.psi_scale.device if isinstance(model.psi_scale, torch.Tensor) else "cpu"
+                expanded_init_conditions = expanded_init_conditions / model.psi_scale.to(device)
                 
-        init_mode_amplitudes = expanded_init_conditions.cpu().numpy() @ W_model
-        mode_energies = np.linalg.norm(init_mode_amplitudes, axis=0) # (n_modes,)
-        sorted_idx_model = np.argsort(mode_energies)[::-1] # Descending order
+        init_mode_amplitudes = expanded_init_conditions.cpu().numpy() @ W_model_complex 
+        mode_energies = np.linalg.norm(init_mode_amplitudes, axis=0) 
         scores_model = mode_energies
+        sorted_idx_model = np.argsort(mode_energies)[::-1] 
 
     elif order_modes_by == "time_int_energy":
         with torch.no_grad():
-            # ---> Extract true rolling history <---
             if hasattr(model.expander, "delay_depth") and model.expander.delay_depth > 1:
                 q = model.expander.delay_depth
                 hist_list = []
@@ -329,19 +408,19 @@ elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven 
             else:
                 x = torch.as_tensor(trajectories.reshape(-1, state_dim), dtype=torch.float32)
             
-            # --- Expand and Normalize ---
+            # ---> FIX: External normalization for Regression DMD <---
+            if hasattr(model, "_normalize_x"):
+                x = model._normalize_x(x)
+            
             expanded_traj = safe_expand(model, x)
             if hasattr(model, "_normalize"):
                 expanded_traj = model._normalize(expanded_traj)
             elif hasattr(model, "psi_scale"):
-                expanded_traj = expanded_traj / model.psi_scale
+                device = model.psi_scale.device if isinstance(model.psi_scale, torch.Tensor) else "cpu"
+                expanded_traj = expanded_traj / model.psi_scale.to(device)
 
-        # 1. TEMPORAL ACTIVITY: Project to modal space
-        # How much is the mode "used" over the duration of the data?
-        mode_amplitudes = expanded_traj.cpu().numpy() @ W_model
-        mode_energies_temp = np.linalg.norm(mode_amplitudes, axis=0) # (n_modes,)
-
-        # 2. PURE TEMPORAL ENERGY SORT (Removed redundant spatial logic)
+        mode_amplitudes = expanded_traj.cpu().numpy() @ W_model_complex 
+        mode_energies_temp = np.linalg.norm(mode_amplitudes, axis=0) 
         scores_model = mode_energies_temp 
         sorted_idx_model = np.argsort(scores_model)[::-1]
 
@@ -564,9 +643,11 @@ if supports_truncated_rollout:
         contrib = np.asarray(diag.get("state_contribution", []), dtype=float)
         if contrib.size == 0:
             try:
-                contrib = np.asarray(sorted_data["model"]["real"]["scores"], dtype=float)
+                # FIX: Use the natively UNSORTED scores array so original matrix indices map correctly!
+                contrib = np.asarray(sorting["scores_model"], dtype=float)
             except (NameError, KeyError, TypeError):
                 return None
+                
         if contrib.size == 0 or not np.isfinite(np.sum(contrib)):
             return None
             
@@ -577,6 +658,8 @@ if supports_truncated_rollout:
             
         total_contrib = float(np.sum(contrib))
         if total_contrib <= 1e-12: return 0.0
+        
+        # Now valid_idx correctly extracts the massive scores of the top modes
         return float(np.sum(contrib[valid_idx]) / total_contrib)
 
     # 2. Run loop over targets
