@@ -1046,11 +1046,12 @@ def plot_koopman_mode_rollout(
     # specific Lambda (Real Block-Diagonal or Complex Diagonal) passed to the function.
     W_mat = W if W is not None else np.linalg.pinv(Phi).T
     z0 = expanded_init_conditions @ W_mat
+    lambdas = np.diag(Lambda) if Lambda.ndim == 2 else Lambda
     mode_evolution = np.zeros((n_steps_valid, n_trajs, n_modes), dtype=complex)
     mode_evolution[0, :, :] = z0
 
     for t in range(1, n_steps_valid):
-        mode_evolution[t, :, :] = mode_evolution[t-1, :, :] @ Lambda.T
+        mode_evolution[t, :, :] = mode_evolution[t-1, :, :] * lambdas
         
     mode_evolution = mode_evolution.real
 
