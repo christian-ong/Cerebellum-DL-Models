@@ -277,7 +277,7 @@ class ML_DMD_DROP(nn.Module):
     # Rollout simulation
     # ------------------------------------------------
 
-    def rollout(self, x0, steps):
+    def rollout(self, x0, steps, return_modal=False, return_latent=False):
         if not torch.is_tensor(x0):
             x0 = torch.tensor(
                 x0,
@@ -313,15 +313,32 @@ class ML_DMD_DROP(nn.Module):
         else:
             x_curr0 = x
 
-        traj = [x_curr0.squeeze(0)]
-        
         # 1. Expand the state to latent space exactly ONCE
         z = self.expander.expand(x)
         z_norm = self._normalize(z)
         b = self._get_modal_coords(z_norm) # SOLVE ONCE
+        
+        # Store initial state based on return type requested
+        if return_modal:
+            traj = [b.squeeze(0)]
+        elif return_latent:
+            z_initial = self._modal_to_latent(b)
+            z_initial_phys = self._unnormalize(z_initial)
+            traj = [z_initial_phys.squeeze(0)]
+        else:
+            traj = [x_curr0.squeeze(0)]
+
         for _ in range(steps):
             b = self._step_modal(b)   # MATMUL LOOP
-            z = self._modal_to_latent(b)
-            z_phys = self._unnormalize(z) # MUST unnormalize before de-expanding
-            traj.append(self.expander.de_expand(z_phys).squeeze(0))
+            
+            if return_modal:
+                traj.append(b.squeeze(0))
+            else:
+                z = self._modal_to_latent(b)
+                z_phys = self._unnormalize(z) # MUST unnormalize before de-expanding
+                if return_latent:
+                    traj.append(z_phys.squeeze(0))
+                else:
+                    traj.append(self.expander.de_expand(z_phys).squeeze(0))
+                    
         return torch.stack(traj)

@@ -254,7 +254,7 @@ def _mode_visualization_commands(model_name, run_name, data_path, base_figdir, n
     if model_name not in MODE_VISUALIZATION_MODELS:
         return []
 
-    mode_orders = ["contribution","time_int_energy"]
+    mode_orders = ["contribution","mse", "time_int_energy", "magnitude", "original"]
 
     commands = []
     for mode_order in mode_orders:

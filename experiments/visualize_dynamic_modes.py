@@ -103,12 +103,13 @@ expansion_type = getattr(model, "expansion_type", None)
 plot_subtitle = format_model_label(args.model_name, model, {"ckpt": {"train_args": train_args}}, system=system)
 
 model_param_type = "complex" if "regression" in args.model_name else "real"
-Phi_model, Lambda_model, V, W_eigs, K_model = get_koopman_eigensystem(model)
-# --- DYNAMICALLY DETERMINE PROJECTION W ---
-if hasattr(model, "get_Phi_inv"):
-    W_proj = model.get_Phi_inv().detach().cpu().numpy().T
+
+if args.model_name in {"regression_dmd"}:
+    Phi_model, Lambda_model, K_model, V, W,  = get_koopman_eigensystem(model)
+    # ---> FIX: Explicitly define the raw W_model for Regression DMD using the exact pseudo-inverse
+    W_model = np.linalg.pinv(Phi_model).T
 else:
-    W_proj = np.linalg.pinv(Phi_model).T
+    Phi_model, Lambda_model, W_model, K_model, V, W,  = get_koopman_eigensystem(model)
 
 num_modes = Lambda_model.shape[0]
 n_top_modes = min(n_top_modes, num_modes)
@@ -164,27 +165,24 @@ K_c_analytic, K_d_analytic, Lambda_analytic, Phi_analytic, analytic_expansion_na
 )
 
 # Find both complex and rotation block formats.
-complex_mode_threshold = 1e-3
 complex_pair_idx = find_complex_pairs(
-    Lambda_model,
-    threshold_off_diag=complex_mode_threshold,
-    threshold_diag=complex_mode_threshold,
+    Lambda_model
 )
 if model_param_type == "real":
-    Lambda_model_complex, Phi_model_complex, W_proj_complex = rotation_blocks_to_complex(
+    Lambda_model_complex, Phi_model_complex, W_model_complex = rotation_blocks_to_complex(
         Lambda_model,
         Phi_model,
         complex_pair_idx,
-        W=W_proj,
+        W=W_model,
     )
 else:
-    Lambda_model_complex, Phi_model_complex, W_proj_complex = Lambda_model, Phi_model, W_proj
-    Phi_model, Lambda_model, W_proj = get_real_representation(
+    Lambda_model_complex, Phi_model_complex, W_model_complex = Lambda_model, Phi_model, W_model
+    Phi_model, Lambda_model, W_model = get_real_representation(
         Phi_model,
         Lambda_model,
         jordan_value=1,
         threshold_jordan=1e-1,
-        W=W_proj,
+        W=W_model,
     )
 
 K_model_complex = Phi_model_complex @ Lambda_model_complex @ np.linalg.pinv(Phi_model_complex)
@@ -293,7 +291,7 @@ elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven 
             Phi=Phi_model,
             Lambda=Lambda_model,
             real_traj=calculate_trajectories,
-            W=W_proj
+            W=W_model
         )
         scores_model = mode_mses
 
@@ -313,7 +311,7 @@ elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven 
             elif hasattr(model, "psi_scale"):
                 expanded_init_conditions = expanded_init_conditions / model.psi_scale
                 
-        init_mode_amplitudes = expanded_init_conditions.cpu().numpy() @ W_proj
+        init_mode_amplitudes = expanded_init_conditions.cpu().numpy() @ W_model
         mode_energies = np.linalg.norm(init_mode_amplitudes, axis=0) # (n_modes,)
         sorted_idx_model = np.argsort(mode_energies)[::-1] # Descending order
         scores_model = mode_energies
@@ -340,7 +338,7 @@ elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven 
 
         # 1. TEMPORAL ACTIVITY: Project to modal space
         # How much is the mode "used" over the duration of the data?
-        mode_amplitudes = expanded_traj.cpu().numpy() @ W_proj
+        mode_amplitudes = expanded_traj.cpu().numpy() @ W_model
         mode_energies_temp = np.linalg.norm(mode_amplitudes, axis=0) # (n_modes,)
 
         # 2. PURE TEMPORAL ENERGY SORT (Removed redundant spatial logic)
@@ -354,32 +352,39 @@ elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven 
         "scores_analytic": np.zeros(len(Lambda_analytic)), 
         "indices_analytic": np.arange(len(Lambda_analytic)) 
     }
-    
-# # Deprecated : This one cheats
-# elif order_modes_by == "quality":
-#     print("Warning: This one is cheating!")
-#     sorted_idx_model, scores_model, _ = modes_by_quality_deprecated(
-#         model=model,
-#         W=W,
-#         eigvals_analytic=Lambda_analytic,
-#         state_bounds=state_bounds
-#     )
-
-#     sorting_info[order_modes_by] = {
-#         "scores_model": scores_model,
-#         "indices_model": sorted_idx_model,
-
-#         # in this case, model = analytic
-#         "scores_analytic": scores_model, 
-#         "indices_analytic": sorted_idx_model
-#     }
-
 else:
     raise ValueError(f"Invalid mode ordering method: {order_modes_by}")
 
 # Apply sorting
 sorting = sorting_info[order_modes_by]
 orig_complex_pair_idx = complex_pair_idx.copy()
+
+# ---> FIX: Sanitize sort indices to keep 2x2 rotation blocks together and in order <---
+new_indices_model = []
+added = set()
+
+for idx in sorting["indices_model"]:
+    if idx in added:
+        continue
+        
+    # Check if this index belongs to a complex pair
+    pair_found = False
+    for pair in orig_complex_pair_idx:
+        if idx in pair:
+            # Append BOTH indices in their original mathematical order
+            new_indices_model.append(pair[0])
+            new_indices_model.append(pair[1])
+            added.add(pair[0])
+            added.add(pair[1])
+            pair_found = True
+            break
+            
+    if not pair_found:
+        new_indices_model.append(idx)
+        added.add(idx)
+        
+sorting["indices_model"] = np.array(new_indices_model, dtype=int)
+# --------------------------------------------------------------------------------
 
 # update complex pair indices to reflect sorting
 sorted_complex_pair_idx = []
@@ -392,29 +397,30 @@ complex_pair_idx = sorted_complex_pair_idx
 sorted_data = {
     "model": {
         "complex": {
-            "Lambda": Lambda_model_complex[sorting["indices_model"]][:, sorting["indices_model"]], # matrix
+            # Use np.ix_ for safer, slightly faster 2D NumPy permutation
+            "Lambda": Lambda_model_complex[np.ix_(sorting["indices_model"], sorting["indices_model"])],
             "Phi": Phi_model_complex[:, sorting["indices_model"]],
-            "W": W_proj_complex[:, sorting["indices_model"]],
-            "K": K_model[sorting["indices_model"]][:, sorting["indices_model"]],
-            "scores": sorting["scores_model"][sorting["indices_model"]], # sorted
+            "W": W_model_complex[:, sorting["indices_model"]],
+            "K": K_model, # <--- FIX: Do not sort the transition operator!
+            "scores": sorting["scores_model"][sorting["indices_model"]],
             "indeces": sorting["indices_model"],
             "complex_pairs": complex_pair_idx,
         },
         "real": {
-            "Lambda": Lambda_model[sorting["indices_model"]][:, sorting["indices_model"]], # matrix
+            "Lambda": Lambda_model[np.ix_(sorting["indices_model"], sorting["indices_model"])],
             "Phi": Phi_model[:, sorting["indices_model"]],
-            "W": W_proj[:, sorting["indices_model"]],
-            "K": K_model[sorting["indices_model"]][:, sorting["indices_model"]],
-            "scores": sorting["scores_model"][sorting["indices_model"]], # sorted
+            "W": W_model[:, sorting["indices_model"]],
+            "K": K_model, # <--- FIX: Do not sort the transition operator!
+            "scores": sorting["scores_model"][sorting["indices_model"]],
             "indeces": sorting["indices_model"],
             "complex_pairs": complex_pair_idx,
         }
     },
     "analytic": {
-        "Lambda": Lambda_analytic[sorting["indices_analytic"]], # vector
+        "Lambda": Lambda_analytic[sorting["indices_analytic"]],
         "Phi": Phi_analytic[:, sorting["indices_analytic"]],
-        "K_d": K_d_analytic[sorting["indices_analytic"]][:, sorting["indices_analytic"]],
-        "scores": sorting["scores_analytic"][sorting["indices_analytic"]], # sorted
+        "K_d": K_d_analytic, # <--- FIX: Do not sort the transition operator!
+        "scores": sorting["scores_analytic"][sorting["indices_analytic"]],
         "indeces": sorting["indices_analytic"],
     }
 }
@@ -453,13 +459,13 @@ if long_plot_trajectories is not None:
     rollout_configs.append(("long", long_plot_trajectories))
 
 # Extract the mode matrices once
-plot_Phi_real = sorted_data["model"]["real"]["Phi"][:, :n_modes] 
-plot_Lambda_real = sorted_data["model"]["real"]["Lambda"][:n_modes, :n_modes]
-plot_W_real = sorted_data["model"]["real"]["W"][:, :n_modes]
+plot_Phi_real = sorted_data["model"]["real"]["Phi"]
+plot_Lambda_real = sorted_data["model"]["real"]["Lambda"]
+plot_W_real = sorted_data["model"]["real"]["W"]
 
-plot_Phi_complex = sorted_data["model"]["complex"]["Phi"][:, :n_modes] 
-plot_Lambda_complex = sorted_data["model"]["complex"]["Lambda"][:n_modes, :n_modes]
-plot_W_complex = sorted_data["model"]["complex"]["W"][:, :n_modes]
+plot_Phi_complex = sorted_data["model"]["complex"]["Phi"]
+plot_Lambda_complex = sorted_data["model"]["complex"]["Lambda"]
+plot_W_complex = sorted_data["model"]["complex"]["W"]
 
 # Loop over the configs and plot both Real and Complex versions
 for config_name, traj_data in rollout_configs:
@@ -521,7 +527,7 @@ else:
 # Use complex representation for truncation so complex conjugate pairs stay together
 Phi = Phi_model_complex
 Lambda = Lambda_model_complex
-W = W_proj_complex
+W = W_model_complex
 supports_truncated_rollout = (
     all(hasattr(model, attr) for attr in ("Phi_lift_fitted", "Lambda_fitted", "C_fitted", "psi_scale", "x_scale"))
     or (
@@ -550,7 +556,7 @@ if supports_truncated_rollout:
     try:
         from src.eval.noise_robustness import compute_mode_diagnostics
         diag = compute_mode_diagnostics(model, trajectories)
-        print("Successfully computed mode diagnostics for contribution scores.")
+        print("Successfully computed mode truncation scores")
     except Exception:
         diag = {}
 

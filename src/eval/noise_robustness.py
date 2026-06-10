@@ -193,23 +193,22 @@ def _get_expanded_indices(mode_indices, model):
     elif hasattr(model, "Lambda"):
         L = model.Lambda.detach().cpu().numpy()
         if L.ndim == 2:
-            # BROAD PROTECTION: Detect any significant coupling anywhere in the matrix
-            L_mag = np.abs(L)
-            connected = L_mag > 1e-3
-            np.fill_diagonal(connected, False) 
-            connected = connected | connected.T # Symmetrize
-            
-            active = np.zeros(L.shape[0], dtype=bool)
-            active[list(expanded_idx)] = True
-            
-            # Loop until no new connected modes are found (Transitive Closure)
-            while True:
-                new_active = active | (active @ connected)
-                if np.array_equal(active, new_active):
-                    break # We found the whole isolated subsystem
-                active = new_active
-                
-            expanded_idx.update(np.where(active)[0])
+            # ---> REAL FIX: Stop grouping the entire tridiagonal matrix! <---
+            # Look ONLY for adjacent 2x2 rotation blocks (complex pairs) by 
+            # checking for skew-symmetric off-diagonals and similar diagonals.
+            for i in list(expanded_idx):
+                # Check forward pair
+                if i < L.shape[0] - 1:
+                    a, b = L[i, i], L[i, i+1]
+                    c, d = L[i+1, i], L[i+1, i+1]
+                    if abs(b) > 1e-3 and abs(c) > 1e-3 and np.sign(b) != np.sign(c) and abs(a - d) < 1e-3:
+                        expanded_idx.add(i+1)
+                # Check backward pair
+                if i > 0:
+                    a, b = L[i-1, i-1], L[i-1, i]
+                    c, d = L[i, i-1], L[i, i]
+                    if abs(b) > 1e-3 and abs(c) > 1e-3 and np.sign(b) != np.sign(c) and abs(a - d) < 1e-3:
+                        expanded_idx.add(i-1)
             
     return sorted(list(expanded_idx))
 
@@ -816,7 +815,7 @@ def compute_mode_diagnostics(model, X_states, dt=None, max_samples=20000):
 
     cum_amp_score = cumulative_score_fractions(coeff_rms, order_amp)
     cum_contrib_score = cumulative_score_fractions(state_contribution, order_contrib)
-    print("Correlation between coeff_rms and lift_scale:", np.corrcoef(coeff_rms, lift_scale))
+    # print("Correlation between coeff_rms and lift_scale:", np.corrcoef(coeff_rms, lift_scale))
     return {
         "coeff_rms": coeff_rms,
         "state_contribution": state_contribution,

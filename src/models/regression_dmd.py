@@ -519,7 +519,7 @@ class Regression_DMD(nn.Module):
 
         return out
     
-    def _rollout_DMD(self, x0, steps, mode_indices=None):
+    def _rollout_DMD(self, x0, steps, mode_indices=None, return_modal=False, return_latent=False):
         if (self.Lambda_fitted is None or self.Phi_lift_fitted is None or self.C_fitted is None):
             raise ValueError("Missing DMD spectral objects. Call fit() first.")
 
@@ -532,8 +532,6 @@ class Regression_DMD(nn.Module):
 
         x0_n = self._normalize_x(x0)
         z0 = (self.expand(x0_n) / self.psi_scale).to(torch.complex128) # (N, p)
-
-        traj = [x0[:, :self.state_dim].clone()]
 
         Phi_lift = self.Phi_lift_fitted.to(torch.complex128)
         Lambda = self.Lambda_fitted.to(torch.complex128)
@@ -551,22 +549,35 @@ class Regression_DMD(nn.Module):
         else:
             b0 = b0_full
 
+        # Set initial trajectory state based on requested return type
+        if return_modal:
+            traj = [b0.clone()]
+        elif return_latent:
+            traj = [(Phi_lift @ b0.T).T.clone()]
+        else:
+            traj = [x0[:, :self.state_dim].clone()]
+
         for k in range(1, steps + 1):
             # Dropped modes stay exactly zero!
             b_k = (Lambda ** k).unsqueeze(0) * b0 # (N, r)
-            z_k = (Phi_lift @ b_k.T).T # (N, p)
             
-            x_k_n = (C @ z_k.T).T.real.to(torch.float64) # (N, state_dim)
-            x_k = self._denormalize_x(x_k_n)
-            
-            traj.append(x_k.clone())
+            if return_modal:
+                traj.append(b_k.clone())
+            else:
+                z_k = (Phi_lift @ b_k.T).T # (N, p)
+                if return_latent:
+                    traj.append(z_k.clone())
+                else:
+                    x_k_n = (C @ z_k.T).T.real.to(torch.float64) # (N, state_dim)
+                    x_k = self._denormalize_x(x_k_n)
+                    traj.append(x_k.clone())
 
         out = torch.stack(traj, dim=0)
         if is_1d:
             out = out.squeeze(1)
         return out
 
-    def _rollout_projected_DMD(self, x0, steps, mode_indices=None):
+    def _rollout_projected_DMD(self, x0, steps, mode_indices=None, return_modal=False, return_latent=False):
         if (self.Phi_lift_fitted is None or self.Phi_pinv_fitted is None or self.Lambda_fitted is None or self.C_fitted is None):
             raise ValueError("Missing DMD spectral objects. Call fit() first.")
 
@@ -577,7 +588,6 @@ class Regression_DMD(nn.Module):
 
         self._validate_delay_rollout_input(x0, caller="_rollout_projected_DMD")
         x = x0.clone()
-        traj = [x[:, :self.state_dim].clone()]
 
         Phi = self.Phi_lift_fitted.to(torch.complex128)
         Lambda = self.Lambda_fitted.to(torch.complex128)
@@ -592,34 +602,52 @@ class Regression_DMD(nn.Module):
         else:
             mask = torch.ones(Lambda.shape[0], dtype=Lambda.dtype, device=Lambda.device)
 
+        # Get initial state
+        x_n = self._normalize_x(x)
+        z = (self.expand(x_n) / self.psi_scale).to(torch.complex128) # (N, p)
+        b = (Phi_pinv @ z.T).T * mask # (N, r)
+
+        if return_modal:
+            traj = [b.clone()]
+        elif return_latent:
+            traj = [z.clone()]
+        else:
+            traj = [x[:, :self.state_dim].clone()]
+
         for _ in range(steps):
-            x_n = self._normalize_x(x)
-            z = (self.expand(x_n) / self.psi_scale).to(torch.complex128) # (N, p)
-
-            # Extract full coefficients, mask dropped modes
-            b = (Phi_pinv @ z.T).T # (N, r)
-            b = b * mask 
-            
-            # Evolve and reconstruct
+            # Evolve b and reconstruct
             z_next = (Phi @ (Lambda.unsqueeze(1) * b.T)).T # (N, p)
-
-            x_next_n = (C @ z_next.T).T.real.to(torch.float64) # (N, state_dim)
-            x_next_head = self._denormalize_x(x_next_n)
-
-            traj.append(x_next_head.clone())
             
-            # Shift history
-            if self.delay_depth > 1:
-                x = torch.cat([x_next_head, x[:, :-self.state_dim]], dim=1)
+            if return_modal:
+                # To maintain consistency with projective nature, b is mapped forward via Lambda
+                b = b * Lambda
+                traj.append(b.clone())
+            elif return_latent:
+                traj.append(z_next.clone())
+                # Shift b forward for next step
+                b = b * Lambda
             else:
-                x = x_next_head
+                x_next_n = (C @ z_next.T).T.real.to(torch.float64) # (N, state_dim)
+                x_next_head = self._denormalize_x(x_next_n)
+                traj.append(x_next_head.clone())
+                
+                # Shift history
+                if self.delay_depth > 1:
+                    x = torch.cat([x_next_head, x[:, :-self.state_dim]], dim=1)
+                else:
+                    x = x_next_head
+                    
+                # Re-encode for projected EDMD
+                x_n = self._normalize_x(x)
+                z = (self.expand(x_n) / self.psi_scale).to(torch.complex128) 
+                b = (Phi_pinv @ z.T).T * mask 
 
         out = torch.stack(traj, dim=0)
         if is_1d:
             out = out.squeeze(1)
         return out
 
-    def rollout(self, x0, steps, mode=None, mode_indices=None):
+    def rollout(self, x0, steps, mode=None, mode_indices=None, return_modal=False, return_latent=False):
         mode = self._canonical_mode(mode)
 
         if mode_indices is not None and mode not in {"DMD", "projected_DMD"}:
@@ -630,8 +658,8 @@ class Regression_DMD(nn.Module):
                 return self._rollout_hankel_svd_linear_dynamics(x0, steps)
             return self._rollout_linear_dynamics(x0, steps)
         if mode == "DMD":
-            return self._rollout_DMD(x0, steps, mode_indices=mode_indices)
+            return self._rollout_DMD(x0, steps, mode_indices=mode_indices, return_modal=return_modal, return_latent=return_latent)
         if mode == "projected_DMD":
-            return self._rollout_projected_DMD(x0, steps, mode_indices=mode_indices)
+            return self._rollout_projected_DMD(x0, steps, mode_indices=mode_indices, return_modal=return_modal, return_latent=return_latent)
 
         raise ValueError(f"Unknown rollout mode: {mode}")
