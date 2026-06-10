@@ -1368,6 +1368,7 @@ def _get_expanded_indices(mode_indices, model):
             
     return sorted(list(expanded_idx))
 
+
 def truncated_rollout(
     model, real_traj, n_modes=2, save_path=None, Phi=None, Lambda=None, W=None,
     mode_indices=None, subtitle=None, save_name=None, plot=True
@@ -1394,104 +1395,95 @@ def truncated_rollout(
     elif hasattr(model, 'buffers') and list(model.buffers()): device = next(model.buffers()).device
     
     # ---------------------------------------------------------
-    # Reconstruct Trajectory
+    # 1. Project Initial State into Sorted Modal Space
     # ---------------------------------------------------------
-    if all(hasattr(model, attr) for attr in ("Phi_lift_fitted", "Lambda_fitted", "C_fitted", "psi_scale", "x_scale")):
-        # Regression logic
-        Phi_lift = model.Phi_lift_fitted.detach().cpu().numpy()
-        Lambda_diag = model.Lambda_fitted.detach().cpu().numpy()
-        Lambda_mat = np.diag(Lambda_diag) if Lambda_diag.ndim == 1 else Lambda_diag
-        
-        if mode_indices is None:
-            mode_indices = list(range(min(n_modes, Phi_lift.shape[1])))
-        mode_indices = _get_expanded_indices(mode_indices, model)
-        
-        latent_dim = Phi_lift.shape[1]
-        mask = np.zeros(latent_dim, dtype=complex)
-        mask[mode_indices] = 1.0
-        
-        # ---> BUG 1 FIX: Use native _normalize_x (respects BOTH x_scale and x_mean)
-        x0_t = torch.as_tensor(x0_hist, dtype=torch.float64, device=device)
-        if hasattr(model, "_normalize_x"):
-            x0_n = model._normalize_x(x0_t)
-        else:
-            x0_n = x0_t
-            
-        with torch.no_grad():
-            z0_norm_t = model.expand(x0_n) / torch.as_tensor(np.real_if_close(model.psi_scale.detach().cpu().numpy()), dtype=torch.float64, device=device)
-            b0_full = model._solve_modal_coeffs_exact(z0_norm_t).detach().cpu().numpy()
-            
-        b_t = b0_full * mask
-        
-        mode_evolution = np.zeros((n_steps_valid, n_trajs, latent_dim), dtype=complex)
-        for t in range(n_steps_valid):
-            mode_evolution[t, :, :] = b_t
-            b_t = (b_t @ Lambda_mat.T) * mask
-        
-        C = model.C_fitted.detach().cpu().numpy()
-        x_pred_t = torch.tensor(np.real(mode_evolution @ Phi_lift.T @ C.T), dtype=torch.float64, device=device)
-        
-        # ---> BUG 1 FIX: Use native _denormalize_x (adds x_mean back so RMSE isn't destroyed)
-        T_steps, N_traj, D_out = x_pred_t.shape
-        x_pred_flat = x_pred_t.reshape(-1, D_out)
-        if hasattr(model, "_denormalize_x"):
-            x_pred_flat = model._denormalize_x(x_pred_flat)
-        
-        truncated_trajectory = x_pred_flat.reshape(T_steps, N_traj, D_out).detach().cpu().numpy()[:, :, :state_dim]
-
-    elif hasattr(model, "get_Phi") and hasattr(model, "get_Lambda"):
-        # ---> BUG 2 FIX: FORCE the extraction of raw internal real matrices. 
-        # Prevents "Frankenstein" complex matrices from leaking into the rollout math.
-        Phi_full = model.get_Phi().detach().cpu().numpy()
-        Lambda_full = model.get_Lambda().detach().cpu().numpy()
-        W_full = model.get_Phi_inv().detach().cpu().numpy().T
-
-        if mode_indices is None:
-            mode_indices = list(range(min(n_modes, Phi_full.shape[1])))
-
-        Lambda_mat = np.diag(Lambda_full) if Lambda_full.ndim == 1 else Lambda_full
-
-        latent_dim = Phi_full.shape[1]
-        mask = np.zeros(latent_dim, dtype=complex if np.iscomplexobj(Lambda_full) else float)
-        
-        mode_indices = _get_expanded_indices(mode_indices, model)
-        mask[mode_indices] = 1.0
-        
-        with torch.no_grad():
-            x0_t = torch.as_tensor(x0_hist, dtype=torch.float32, device=device)
-            if hasattr(model, "_normalize_x"):
-                x0_t = model._normalize_x(x0_t)
-            
-            z0 = model.expander.expand(x0_t)
-            z0_norm = model._normalize(z0).detach().cpu().numpy()
-            b_t = z0_norm @ W_full
-            
-        b_t = b_t * mask
-        
-        mode_evolution = np.zeros((n_steps_valid, n_trajs, latent_dim), dtype=b_t.dtype)
-        
-        for t in range(n_steps_valid):
-            mode_evolution[t, :, :] = b_t
-            b_t = (b_t @ Lambda_mat.T) * mask
-                
-        truncated_trajectory = np.zeros_like(plot_real_traj)
-        for t in range(n_steps_valid):
-            z_t_norm = mode_evolution[t, :, :] @ Phi_full.T
-            
-            if np.iscomplexobj(z_t_norm):
-                z_t_norm = z_t_norm.real
-                
-            with torch.no_grad():
-                z_t_norm_t = torch.as_tensor(z_t_norm, dtype=torch.float32, device=device)
-                z_t = model._unnormalize(z_t_norm_t)
-                x_t = model.expander.de_expand(z_t)
-                
-                if hasattr(model, "_denormalize_x"):
-                    x_t = model._denormalize_x(x_t)
-                    
-                truncated_trajectory[t, :, :] = x_t.cpu().numpy()[:, :state_dim]
+    x0_t = torch.as_tensor(x0_hist, dtype=torch.float32, device=device)
+    
+    # Normalize physical state
+    if hasattr(model, "_normalize_x"):
+        x0_n = model._normalize_x(x0_t)
     else:
-        raise ValueError("Model format not supported.")
+        x0_n = x0_t
+        
+    # Expand to latent space
+    with torch.no_grad():
+        if hasattr(model, "expander"):
+            z0 = model.expander.expand(x0_n)
+        else:
+            z0 = model.expand(x0_n)
+            
+        # Normalize latent state
+        if hasattr(model, "_normalize"):
+            z0_norm = model._normalize(z0)
+        elif hasattr(model, "psi_scale"):
+            z0_norm = z0 / model.psi_scale.to(device)
+        else:
+            z0_norm = z0
+            
+    z0_norm_np = z0_norm.detach().cpu().numpy()
+    
+    # Project using the PASSED-IN, sorted W matrix!
+    b_t = z0_norm_np @ W 
+    
+    # ---------------------------------------------------------
+    # 2. Apply Truncation Mask to Sorted Modes
+    # ---------------------------------------------------------
+    latent_dim = Phi.shape[1]
+    mask = np.zeros(latent_dim, dtype=complex)
+    
+    if mode_indices is None:
+        mode_indices = list(range(min(n_modes, latent_dim)))
+    
+    # We no longer need _get_expanded_indices because Phi/Lambda/W are already 
+    # perfectly formatted as diagonal complex pairs by the main script!
+    mask[mode_indices] = 1.0
+    b_t = b_t * mask
+
+    # ---------------------------------------------------------
+    # 3. Evolve in Pure Modal Space
+    # ---------------------------------------------------------
+    Lambda_mat = np.diag(Lambda) if Lambda.ndim == 1 else Lambda
+    mode_evolution = np.zeros((n_steps_valid, n_trajs, latent_dim), dtype=complex)
+    
+    for t in range(n_steps_valid):
+        mode_evolution[t, :, :] = b_t
+        b_t = (b_t @ Lambda_mat.T) * mask
+        
+    # ---------------------------------------------------------
+    # 4. Map Back to Physical Space
+    # ---------------------------------------------------------
+    # Back to normalized latent space
+    z_t_norm = (mode_evolution @ Phi.T).real
+    
+    truncated_trajectory = np.zeros_like(plot_real_traj)
+    for t in range(n_steps_valid):
+        with torch.no_grad():
+            z_norm_tensor = torch.as_tensor(z_t_norm[t], dtype=torch.float32, device=device)
+            
+            # Unnormalize latent
+            if hasattr(model, "_unnormalize"):
+                z_unnorm = model._unnormalize(z_norm_tensor)
+            elif hasattr(model, "psi_scale"):
+                z_unnorm = z_norm_tensor * model.psi_scale.to(device)
+            else:
+                z_unnorm = z_norm_tensor
+                
+            # Decode to physical state
+            if hasattr(model, "C_fitted"):
+                # Regression DMD path
+                C_mat = model.C_fitted.detach().to(device) if hasattr(model.C_fitted, 'detach') else torch.as_tensor(model.C_fitted, device=device)
+                x_pred_n = torch.matmul(z_unnorm.to(C_mat.dtype), C_mat.T).to(torch.float32)
+            else:
+                # ML DMD path
+                x_pred_n = model.expander.de_expand(z_unnorm)
+                
+            # Unnormalize physical state
+            if hasattr(model, "_denormalize_x"):
+                x_pred = model._denormalize_x(x_pred_n)
+            else:
+                x_pred = x_pred_n
+                
+            truncated_trajectory[t, :, :] = x_pred.cpu().numpy()[:, :state_dim]
 
     # ---------------------------------------------------------
     # Evaluation (Best/Median/Worst)
@@ -1546,6 +1538,7 @@ def truncated_rollout(
             plt.show()
 
     return truncated_trajectory
+
 
 def plot_rmse_contribution(mode_counts, rmses, contributions, save_path=None, subtitle=None):
     fig, ax1 = plt.subplots(figsize=(10, 5))
