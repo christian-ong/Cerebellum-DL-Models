@@ -83,17 +83,31 @@ def _infer_mode_count(model_name: str, model, extras: Dict[str, Any]) -> Optiona
     if model_name not in {"regression_dmd", "ml_dmd", "ml_dmd_drop"}:
         return None
 
+    # ---> FIX: Always trust the explicitly learned matrices first <---
+    if hasattr(model, "Lambda") and getattr(model, "Lambda", None) is not None:
+        try:
+            return int(model.Lambda.shape[0])
+        except Exception:
+            pass
+            
+    if hasattr(model, "Lambda_fitted") and getattr(model, "Lambda_fitted", None) is not None:
+        try:
+            return int(model.Lambda_fitted.shape[0])
+        except Exception:
+            pass
+            
+    if hasattr(model, "Phi_lift_fitted") and getattr(model, "Phi_lift_fitted", None) is not None:
+        try:
+            return int(model.Phi_lift_fitted.shape[1])
+        except Exception:
+            pass
+
+    # Fallbacks:
     candidates = [
         getattr(model, "expanded_dim", None),
         getattr(model, "latent_dim", None),
         getattr(model, "rank", None),
     ]
-
-    if hasattr(model, "Phi_lift_fitted") and getattr(model, "Phi_lift_fitted", None) is not None:
-        try:
-            candidates.append(int(model.Phi_lift_fitted.shape[1]))
-        except Exception:
-            pass
 
     train_args = _get_train_args(extras)
     for key in ("rank", "latent_dim", "expanded_dim", "expansion_degree"):
@@ -251,7 +265,9 @@ def _build_mode_subset_heatmap_specs(
         if X_states is not None:
             diag = compute_mode_diagnostics(model, X_states)
             contrib_order = diag.get("order_contrib", None)
-    except Exception:
+    except Exception as e:
+        # ---> FIX: Surface errors instead of failing silently <---
+        print(f"\n[diagnostics] WARNING: Failed to compute mode diagnostics for subset heatmaps: {e}")
         diag = None
         contrib_order = None
 
@@ -1535,10 +1551,16 @@ def run_diagnostics(
         subset_specs = []
 
     if subset_specs:
-        # --- FIX: Use model object directly ---
+        # --- FIX: Ensure manual mode indices also bring their complex partners ---
         for spec in subset_specs:
-            if "mode_indices" in spec:
-                spec["mode_indices"] = _get_expanded_indices(spec["mode_indices"], model)
+            if "mode_indices" in spec and spec["mode_indices"] is not None:
+                orig_len = len(spec["mode_indices"])
+                expanded = _get_expanded_indices(spec["mode_indices"], model)
+                spec["mode_indices"] = np.asarray(expanded, dtype=int)
+                
+                # Update title dynamically if we had to stitch a pair back together
+                if "Manual" in str(spec.get("title", "")) and len(expanded) != orig_len:
+                    spec["title"] = f"Manual modes ({len(expanded)})"
         # ------------------------------------
         
         grid_results_all = compute_true_grid_heatmap_grid(
