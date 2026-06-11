@@ -109,7 +109,7 @@ def main():
         return
 
     # Ensure numeric columns for sorting
-    df["val_rollout_rmse_h100"] = pd.to_numeric(df.get("val_rollout_rmse_h100", np.nan), errors="coerce")
+    df["best_val_rollout_rmse_h100"] = pd.to_numeric(df.get("best_val_rollout_rmse_h100", np.nan), errors="coerce")
     df["l1_weight"] = pd.to_numeric(df.get("l1_weight", 0.0), errors="coerce").fillna(0.0)
     df["data_path"] = df.get("data_path", "unknown").fillna("unknown").astype(str)
     df["expansion_type"] = df.get("expansion_type", "none").fillna("none").astype(str)
@@ -117,10 +117,10 @@ def main():
     # Dynamically pick the 1.0s physical time metric for sorting
     def get_target_metric(row):
         if 'dt_0.01' in str(row.get('data_path', '')):
-            return row.get('val_rollout_rmse_h100', np.nan)  # 100 * 0.01 = 1.0s
+            return row.get('best_val_rollout_rmse_h100', np.nan)  # 100 * 0.01 = 1.0s
         elif 'dt_0.05' in str(row.get('data_path', '')):
-            return row.get('val_rollout_rmse_h20', np.nan)   # 20 * 0.05 = 1.0s
-        return row.get('val_rollout_rmse_h100', np.nan)
+            return row.get('best_val_rollout_rmse_h20', np.nan)   # 20 * 0.05 = 1.0s
+        return row.get('best_val_rollout_rmse_h100', np.nan)
     
     df["sort_metric"] = df.apply(get_target_metric, axis=1)
 
@@ -135,9 +135,22 @@ def main():
         if not model_name: model_name = "unknown"
         safe_model_name = model_name.replace(os.sep, "_")
         
-        # Special Rule for ML_DMD models: Keep best per expansion type, splitting L1=0 vs L1>0
-        if safe_model_name in ["ml_dmd", "ml_dmd_drop"]:
-            for (d_path, exp_type), grp_sub in grp_model.groupby(["data_path", "expansion_type"]):
+        # Rule for ML_DMD: Keep best per expansion type, splitting L1=0 vs L1>0
+        if safe_model_name == "ml_dmd":
+            # ---> CHANGED: Group by system_name instead of data_path <---
+            for (sys_name, exp_type), grp_sub in grp_model.groupby(["system_name", "expansion_type"]):
+                grp_zero = grp_sub[grp_sub["l1_weight"] == 0.0]
+                grp_pos = grp_sub[grp_sub["l1_weight"] > 0.0]
+                
+                if not grp_zero.empty:
+                    best_runs.append(grp_zero.loc[grp_zero["sort_metric"].idxmin()])
+                if not grp_pos.empty:
+                    best_runs.append(grp_pos.loc[grp_pos["sort_metric"].idxmin()])
+
+        # Rule for ML_DMD_DROP: Keep absolute best L1=0 and best L1>0 overall per system
+        elif safe_model_name == "ml_dmd_drop":
+            # ---> CHANGED: Group by system_name instead of data_path <---
+            for sys_name, grp_sub in grp_model.groupby("system_name"):
                 grp_zero = grp_sub[grp_sub["l1_weight"] == 0.0]
                 grp_pos = grp_sub[grp_sub["l1_weight"] > 0.0]
                 
@@ -146,9 +159,10 @@ def main():
                 if not grp_pos.empty:
                     best_runs.append(grp_pos.loc[grp_pos["sort_metric"].idxmin()])
                     
-        # Standard Rule for ALL other models: Just keep the single absolute best run per dataset
+        # Standard Rule for ALL other models: Just keep the single absolute best run per system
         else:
-            for d_path, grp_sub in grp_model.groupby("data_path"):
+            # ---> CHANGED: Group by system_name instead of data_path <---
+            for sys_name, grp_sub in grp_model.groupby("system_name"):
                 best_runs.append(grp_sub.loc[grp_sub["sort_metric"].idxmin()])
                 
     best_df = pd.DataFrame(best_runs)

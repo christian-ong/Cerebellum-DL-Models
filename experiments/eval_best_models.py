@@ -254,7 +254,7 @@ def _mode_visualization_commands(model_name, run_name, data_path, base_figdir, n
     if model_name not in MODE_VISUALIZATION_MODELS:
         return []
 
-    mode_orders = ["contribution","mse", "time_int_energy", "magnitude", "original"]
+    mode_orders = ["contribution","time_int_energy"]
 
     commands = []
     for mode_order in mode_orders:
@@ -605,8 +605,13 @@ def run_evaluations(
 
     if "model_name" in best_df.columns and "l1_weight" in best_df.columns:
         l1_values = best_df["l1_weight"].apply(_to_float_or_none)
-        best_df.loc[(best_df["model_name"] == "ml_dmd") & (l1_values == 0.0), "selection_role"] = "ml_dmd_l1_0"
-        best_df.loc[(best_df["model_name"] == "ml_dmd") & (l1_values.isin([1e-3, 1e-2])), "selection_role"] = "ml_dmd_l1_companion"
+        
+        # Include both ml_dmd and ml_dmd_drop for labeling
+        target_models = ["ml_dmd", "ml_dmd_drop"]
+        
+        best_df.loc[(best_df["model_name"].isin(target_models)) & (l1_values == 0.0), "selection_role"] = "ml_dmd_l1_0"
+        # Using > 0.0 is safer than hardcoding [1e-3, 1e-2] just in case you test other weights like 1e-4
+        best_df.loc[(best_df["model_name"].isin(target_models)) & (l1_values > 0.0), "selection_role"] = "ml_dmd_l1_companion"
 
     # 3. Calculate exactly how many steps to simulate for the given physical time
     num_steps = int(target_time / dt_val)
@@ -672,6 +677,16 @@ def run_evaluations(
             print(f"    ⚠️ Warning: no checkpoint found for {model_name}/{system}/{run_name}. Skipping.", flush=True)
             continue
 
+        # Pre-flight check: ensure the checkpoint is readable before creating any folders
+        try:
+            if str(model_path).endswith('.pt') or str(model_path).endswith('.pth'):
+                _ = torch.load(model_path, map_location="cpu")
+            elif str(model_path).endswith('.npz'):
+                _ = _np.load(model_path, allow_pickle=True)
+        except Exception as e:
+            print(f"    ⚠️ Warning: Checkpoint at {model_path} is corrupted or unreadable ({type(e).__name__}). Skipping to avoid creating empty folders.", flush=True)
+            continue
+
         # Canonical output grouping for this row. If the run root already exists,
         # treat the whole evaluation as done and move on immediately.
         expansion_type = str(row.get("expansion_type", "none")) if row.get("expansion_type", None) is not None else "none"
@@ -719,8 +734,9 @@ def run_evaluations(
         dt_folder = f"dt_{dt_val:.2f}"
         run_base = os.path.join(final_root, dt_folder, run_name)
 
-        if model_name != "regression_dmd" and skip_existing and not force and os.path.isdir(run_base):
-            print(f"    ⏭ Skipping evaluation — found existing run folder: {run_base}", flush=True)
+        summary_path_base = os.path.join(run_base, "data", "test_summary.npz")
+        if model_name != "regression_dmd" and skip_existing and not force and os.path.exists(summary_path_base):
+            print(f"    ⏭ Skipping evaluation — found successful run (test_summary.npz exists): {run_base}", flush=True)
             best_df.loc[idx, "skipped"] = True
             best_df.loc[idx, "skip_reason"] = "existing_run_folder"
             _collect_overview_row(
@@ -814,146 +830,170 @@ def run_evaluations(
         if model_name == "regression_dmd":
             evaluation_rollout_modes = ["DMD"]
 
+        # Scope this OUTSIDE the loop so it correctly aggregates all modes for this row
         row_skipped_all = True
 
         for evaluation_rollout_mode in evaluation_rollout_modes:
-            # For regression_dmd we want the rollout-mode to appear before the dt/run_name
-            # and also as a subfolder under the run_name (matches requested layout):
-            # final_root/<RolloutMode>/dt_<...>/<run_name>/<RolloutMode>/...
             if model_name == "regression_dmd" and evaluation_rollout_mode:
-                # Place the rollout mode as a top-level folder under the expansion
-                # (before dt/run_name). Avoid duplicating the rollout-mode inside
-                # the run folder to prevent redundant nesting.
                 mode_run_base = os.path.join(final_root, str(evaluation_rollout_mode), dt_folder, run_name)
             else:
                 mode_run_base = _mode_specific_run_base(run_base, model_name, evaluation_rollout_mode)
 
-            if skip_existing and not force and os.path.isdir(mode_run_base):
-                print(f"    ⏭ Skipping evaluation mode {evaluation_rollout_mode or 'default'} — found existing run folder: {mode_run_base}", flush=True)
+            summary_path_mode = os.path.join(mode_run_base, "data", "test_summary.npz")
+            lock_path = os.path.join(mode_run_base, ".eval_lock")
+
+            if skip_existing and not force:
+                # 1. Check if it is already fully completed
+                if os.path.exists(summary_path_mode):
+                    print(f"    ⏭ Skipping evaluation mode {evaluation_rollout_mode or 'default'} — found successful run (test_summary.npz exists): {mode_run_base}", flush=True)
+                    _collect_overview_row(
+                        summary_path_mode,
+                        row=row,
+                        run_name=run_name,
+                        evaluation_rollout_mode=evaluation_rollout_mode,
+                    )
+                    continue
+                
+                # 2. Check if another terminal is currently working on it
+                if os.path.exists(lock_path):
+                    print(f"    ⏭ Skipping evaluation mode {evaluation_rollout_mode or 'default'} — locked by another terminal: {mode_run_base}", flush=True)
+                    continue
+
+            # 3. Attempt to claim the run atomically
+            os.makedirs(mode_run_base, exist_ok=True)
+            if not force:
+                try:
+                    with open(lock_path, "x") as f:
+                        f.write(f"locked by pid {os.getpid()}")
+                except FileExistsError:
+                    print(f"    ⏭ Skipping evaluation mode {evaluation_rollout_mode or 'default'} — just locked by another terminal: {mode_run_base}", flush=True)
+                    continue
+
+            # At least one mode is being handled by this terminal process
+            row_skipped_all = False
+
+            # The entire script sequence and its cleanup now sit safely inside the try block
+            try:
+                # --- NEW: Check our skipping conditions ---
+                is_lorenz = "lorenz" in system.lower()
+                is_sindy = (model_name == "sindy_baseline")
+
+                commands = []
+
+                # 1. Trajectory Rollout Plotter
+                commands.append(
+                    [
+                        "python", "-m", "experiments.eval_trajectory_rollout",
+                        "--model_name", model_name,
+                        "--custom_name", run_name,
+                        "--data_path", data_path,
+                        "--num_steps", str(num_steps),
+                        "--model_path", model_path,
+                        "--outdir", os.path.join(mode_run_base, "rollout"),
+                    ]
+                )
+
+                # 2. Mode visualization for modal models
+                subset_thresholds = None
+                if not is_sindy and mode_count is not None and mode_count > 1:
+                    commands += _mode_visualization_commands(
+                        model_name=model_name,
+                        run_name=run_name,
+                        data_path=data_path,
+                        base_figdir=mode_run_base,
+                        num_steps=num_steps,
+                    )
+
+                # 3. Core Eval Script
+                commands.append(
+                    [
+                        "python", "-m", "scripts.eval",
+                        "--model", model_name,
+                        "--data_path", data_path,
+                        "--model_path", model_path,
+                        "--name", run_name,
+                        "--steps", str(num_steps),
+                        "--horizons", ",".join(str(h) for h in overview_horizons),
+                        "--rollout_horizons", ",".join(str(h) for h in overview_metric_horizons),
+                        "--outdir", os.path.join(mode_run_base, "data"),
+                    ]
+                )
+
+                # 4. Behavior (Heatmaps)
+                if not is_sindy and not is_lorenz:
+                    commands += _behavior_commands(
+                        model_name=model_name,
+                        run_name=run_name,
+                        data_path=data_path,
+                        model_path=model_path,
+                        base_figdir=mode_run_base,
+                        mode_subset_thresholds=subset_thresholds,
+                        num_steps=num_steps,
+                    )
+
+                # 5. Noise robustness
+                if not is_sindy:
+                    if mode_count is not None and mode_count > 1 and evaluation_rollout_mode != "linear_dynamics":
+                        commands += _noise_robustness_commands(
+                            model_name=model_name,
+                            run_name=run_name,
+                            clean_data_path=data_path,
+                            noisy_data_path=noisy_data_path,
+                            model_path=model_path,
+                            base_figdir=mode_run_base,
+                            num_steps=num_steps,
+                            mode_subset_thresholds=[1, 5, 10, 25, 50, 100],
+                            plot_mode_subsets=True,
+                        )
+                    else:
+                        commands += _noise_robustness_commands(
+                            model_name=model_name,
+                            run_name=run_name,
+                            clean_data_path=data_path,
+                            noisy_data_path=noisy_data_path,
+                            model_path=model_path,
+                            base_figdir=mode_run_base,
+                            num_steps=num_steps,
+                        )
+
+                for command_idx, cmd in enumerate(commands, start=1):
+                    script_name = cmd[2].split('.')[-1]
+                    print(f"  > [{command_idx}/{len(commands)}] Executing: {script_name}...", flush=True)
+                    start_time = time.perf_counter()
+
+                    env = dict(os.environ)
+                    env["EVAL_BASE_DIR"] = os.path.join("experiments", "figures")
+                    env["PYTHONUNBUFFERED"] = "1"
+                    if evaluation_rollout_mode is not None:
+                        env["EVAL_REGRESSION_ROLLOUT_MODE"] = evaluation_rollout_mode
+                    try:
+                        if inferred_state_dim is not None:
+                            env["EVAL_INFERRED_STATE_DIM"] = str(int(inferred_state_dim))
+                    except Exception:
+                        pass
+
+                    result = subprocess.run(cmd, env=env)
+
+                    if result.returncode != 0:
+                        print(f"    ⚠️ Warning: {script_name} failed with exit code {result.returncode}.", flush=True)
+                    else:
+                        elapsed = time.perf_counter() - start_time
+                        print(f"    ✓ Finished {script_name} in {elapsed:.1f}s", flush=True)
+
                 _collect_overview_row(
                     os.path.join(mode_run_base, "data", "test_summary.npz"),
                     row=row,
                     run_name=run_name,
                     evaluation_rollout_mode=evaluation_rollout_mode,
                 )
-                continue
 
-            row_skipped_all = False
-
-            # --- NEW: Check our skipping conditions ---
-            is_lorenz = "lorenz" in system.lower()
-            is_sindy = (model_name == "sindy_baseline")
-
-            commands = []
-
-            # 1. Trajectory Rollout Plotter
-            commands.append(
-                [
-                    "python", "-m", "experiments.eval_trajectory_rollout",
-                    "--model_name", model_name,
-                    "--custom_name", run_name,
-                    "--data_path", data_path,
-                    "--num_steps", str(num_steps),
-                    "--model_path", model_path,
-                    "--outdir", os.path.join(mode_run_base, "rollout"),
-                ]
-            )
-
-            # 2. Mode visualization for modal models
-            subset_thresholds = None
-            if not is_sindy and mode_count is not None and mode_count > 1:
-                commands += _mode_visualization_commands(
-                    model_name=model_name,
-                    run_name=run_name,
-                    data_path=data_path,
-                    base_figdir=mode_run_base,
-                    num_steps=num_steps,
-                )
-
-            # 3. Core Eval Script (ALWAYS RUN - this evaluates the test set and calculates metrics)
-            commands.append(
-                [
-                    "python", "-m", "scripts.eval",
-                    "--model", model_name,
-                    "--data_path", data_path,
-                    "--model_path", model_path,
-                    "--name", run_name,
-                    "--steps", str(num_steps),
-                    "--horizons", ",".join(str(h) for h in overview_horizons),
-                    "--rollout_horizons", ",".join(str(h) for h in overview_metric_horizons),
-                    "--outdir", os.path.join(mode_run_base, "data"),
-                ]
-            )
-
-            # 4. Behavior (Heatmaps)
-            if not is_sindy and not is_lorenz:
-                commands += _behavior_commands(
-                    model_name=model_name,
-                    run_name=run_name,
-                    data_path=data_path,
-                    model_path=model_path,
-                    base_figdir=mode_run_base,
-                    mode_subset_thresholds=subset_thresholds,
-                    num_steps=num_steps,
-                )
-
-            # 5. Noise robustness
-            if not is_sindy:
-                if mode_count is not None and mode_count > 1 and evaluation_rollout_mode != "linear_dynamics":
-                    commands += _noise_robustness_commands(
-                        model_name=model_name,
-                        run_name=run_name,
-                        clean_data_path=data_path,
-                        noisy_data_path=noisy_data_path,
-                        model_path=model_path,
-                        base_figdir=mode_run_base,
-                        num_steps=num_steps,
-                        mode_subset_thresholds=[1, 5, 10, 25, 50, 100],
-                        plot_mode_subsets=True,
-                    )
-                else:
-                    commands += _noise_robustness_commands(
-                        model_name=model_name,
-                        run_name=run_name,
-                        clean_data_path=data_path,
-                        noisy_data_path=noisy_data_path,
-                        model_path=model_path,
-                        base_figdir=mode_run_base,
-                        num_steps=num_steps,
-                    )
-
-            for command_idx, cmd in enumerate(commands, start=1):
-                script_name = cmd[2].split('.')[-1]
-                print(f"  > [{command_idx}/{len(commands)}] Executing: {script_name}...", flush=True)
-                start_time = time.perf_counter()
-
-                # Execute the script; set EVAL_BASE_DIR so the called scripts save under experiments/figures.
-                env = dict(os.environ)
-                env["EVAL_BASE_DIR"] = os.path.join("experiments", "figures")
-                env["PYTHONUNBUFFERED"] = "1"
-                if evaluation_rollout_mode is not None:
-                    env["EVAL_REGRESSION_ROLLOUT_MODE"] = evaluation_rollout_mode
-                # Pass lightweight inferred state-dim to subprocesses to avoid repeated dataset loads
-                try:
-                    if inferred_state_dim is not None:
-                        env["EVAL_INFERRED_STATE_DIM"] = str(int(inferred_state_dim))
-                except Exception:
-                    pass
-
-                result = subprocess.run(cmd, env=env)
-
-                if result.returncode != 0:
-                    print(f"    ⚠️ Warning: {script_name} failed with exit code {result.returncode}.", flush=True)
-                else:
-                    elapsed = time.perf_counter() - start_time
-                    print(f"    ✓ Finished {script_name} in {elapsed:.1f}s", flush=True)
-
-            _collect_overview_row(
-                os.path.join(mode_run_base, "data", "test_summary.npz"),
-                row=row,
-                run_name=run_name,
-                evaluation_rollout_mode=evaluation_rollout_mode,
-            )
+            finally:
+                # This block will now execute cleanly at the same indentation level as the try block
+                if os.path.exists(lock_path):
+                    try:
+                        os.remove(lock_path)
+                    except OSError:
+                        pass
 
         if row_skipped_all:
             best_df.loc[idx, "skipped"] = True

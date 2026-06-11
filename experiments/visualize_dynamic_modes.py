@@ -698,7 +698,10 @@ if supports_truncated_rollout:
             save_name=save_name, subtitle=subtitle_text, plot=True
         )
         
-        mse = np.mean((reconstructed_traj - trunc_trajectories) ** 2)
+        # Align lengths for time-delay models where the reconstruction is shorter due to history consumption
+        valid_len = reconstructed_traj.shape[0]
+        aligned_true_traj = trunc_trajectories[-valid_len:]
+        mse = np.mean((reconstructed_traj - aligned_true_traj) ** 2)
         summary_stats.append({
             "n_modes": actual_n, 
             "rmse": np.sqrt(mse), 
