@@ -272,9 +272,9 @@ def compute_one_step_metrics(
             per_traj_mse.append(np.mean(traj_sq_err))
 
     if len(err_list) == 0:
-        raise ValueError("No valid one-step prediction errors were computed.")
-
-    errors = np.asarray(err_list)
+        errors = np.empty((0, scale_std.shape[0]))
+    else:
+        errors = np.asarray(err_list)
     stats = _mse_rmse_nrmse_from_errors(errors, scale_std)
 
     return {
@@ -390,9 +390,9 @@ def compute_horizon_metrics(
 
     for h in horizons:
         if len(per_h_errors[h]) == 0:
-            raise ValueError(f"No valid horizon errors computed for h={h}.")
-
-        errors = np.asarray(per_h_errors[h])
+            errors = np.empty((0, scale_std.shape[0]))
+        else:
+            errors = np.asarray(per_h_errors[h])
         stats = _mse_rmse_nrmse_from_errors(errors, scale_std)
 
         horizon_mse.append(stats["mse"])
@@ -504,7 +504,10 @@ def compute_full_rollout_metrics(
             all_errors.append(err.reshape(-1, err.shape[-1]))
             traj_mse.append(np.mean(err ** 2))
 
-        all_errors = np.vstack(all_errors)
+        if len(all_errors) == 0:
+            all_errors = np.empty((0, scale_std.shape[0]))
+        else:
+            all_errors = np.vstack(all_errors)
         stats = _mse_rmse_nrmse_from_errors(all_errors, scale_std)
 
         out["rollout_mse"].append(stats["mse"])

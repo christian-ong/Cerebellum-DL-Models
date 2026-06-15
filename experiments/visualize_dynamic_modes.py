@@ -93,10 +93,15 @@ if long_test_path is not None:
         long_trajectories = None
 
 # Load model and eigensystem
-if "ml" in args.model_name:
-    model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model_best.pt"
+base_model_dir = f"data/models/{args.model_name}/{system}/{args.custom_name}"
+
+# Smartly locate the best available checkpoint file
+if os.path.exists(os.path.join(base_model_dir, "model_best.pt")):
+    model_path = os.path.join(base_model_dir, "model_best.pt")
+elif os.path.exists(os.path.join(base_model_dir, "model.pt")):
+    model_path = os.path.join(base_model_dir, "model.pt")
 else:
-    model_path = f"data/models/{args.model_name}/{system}/{args.custom_name}/model.npz"
+    model_path = os.path.join(base_model_dir, "model.npz")
 
 model, model_type, train_args = build_model_from_checkpoint(model_path, device="cpu")
 expansion_type = getattr(model, "expansion_type", None)

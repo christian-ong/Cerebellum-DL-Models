@@ -31,7 +31,7 @@ parser.add_argument("--data_path", type=str, required=True, help="Path to the da
 parser.add_argument("--model_path", type=str, default=None, help="Optional explicit checkpoint path to evaluate")
 
 # Trajectory rollout settings
-parser.add_argument("--num_steps", type=int, default=200, help="Number of steps to rollout the model for")
+parser.add_argument("--num_steps", type=int, default=100, help="Number of steps to rollout the model for")
 parser.add_argument("--traj_id", type=int, default=0, help="ID of the trajectory to rollout (index in the test set)")
 parser.add_argument("--outdir", type=str, default=None, help="Force a custom output directory for the saved rollout plot.")
 
@@ -89,20 +89,22 @@ if __name__ == "__main__":
     for i in range(num_trajs):
         x0 = make_rollout_initial_condition(X_traj=X[:, i, :], t0=t0, model_name=args.model_name, model=model)
         
+        # 1. REMOVE the [:-1, :] slice so we keep the final target step (e.g., t=100)
         trajectory = predict_rollout_from_x0(
             x0=x0,
             steps=args.num_steps,
             model_name=args.model_name,
             model=model,
             extras=extras,
-        )[:-1, :]
+        )
         
-        n_traj_steps = min(trajectory.shape[0], X.shape[0] - t0, args.num_steps)
+        # 2. Add + 1 to args.num_steps so we grab the full array (t=0 up to t=100)
+        n_traj_steps = min(trajectory.shape[0], X.shape[0] - t0, args.num_steps + 1)
         X_trunc = X[t0 : t0 + n_traj_steps, i, :]
         rollout_trunc = trajectory[:n_traj_steps, :]
 
-        # Calculate RMSE over all state dimensions for fairness
-        rmse = np.sqrt(np.mean((rollout_trunc - X_trunc)**2))
+        # 3. Skip the t=0 initial condition [1:] to perfectly match the official future-prediction metric
+        rmse = np.sqrt(np.mean((rollout_trunc[1:] - X_trunc[1:])**2))
         
         rollout_results.append({
             'idx': i,

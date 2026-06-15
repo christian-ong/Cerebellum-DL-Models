@@ -35,7 +35,7 @@ parameters:
 
   sindy_discrete_time:
     values:
-      - "true"
+      - "false"
 
   sindy_library_type:
     values:

@@ -25,7 +25,7 @@ parameters:
       - data/trajectories/nonlinear/closed_small/dt_0.01
   
   regression_rollout_mode:
-    values: ["DMD", "linear_dynamics"]
+    values: ["DMD"]
 
   expansion_degree:
     values: [3]

@@ -39,16 +39,20 @@ parameters:
       - data/trajectories/nonlinear/pendulum/dt_0.05
       - data/trajectories/nonlinear/lorenz/dt_0.05
   
-  expansion_type:
-    values: ["hankel_svd"]
-
   regression_rollout_mode:
     values: ["DMD"]
+    
+  expansion_type:
+    values: ["rbf"]
 
-  delay_depth:
-    values: [5, 10, 20, 40]
-  hankel_rank:
-    values: [5, 10, 20]
+  rbf_n_centers:
+    values: [50, 100, 200]
+
+  rbf_center_selection:
+    values: ["farthest"]
+
+  rbf_bandwidth_mode:
+    values: ["global"]
 
   sine_cosine_expansion:
     values: ["false"]

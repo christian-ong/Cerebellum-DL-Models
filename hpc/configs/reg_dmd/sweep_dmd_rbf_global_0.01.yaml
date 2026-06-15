@@ -38,13 +38,16 @@ parameters:
       - data/trajectories/nonlinear/lorenz/dt_0.01
   
   regression_rollout_mode:
-    values: ["DMD", "linear_dynamics"]
+    values: ["DMD"]
     
   expansion_type:
     values: ["rbf"]
 
   rbf_n_centers:
     values: [50, 100, 200]
+
+  rbf_center_selection:
+    values: ["farthest"]
 
   rbf_bandwidth_mode:
     values: ["global"]

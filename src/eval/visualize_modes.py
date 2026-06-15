@@ -237,20 +237,104 @@ def build_model_from_checkpoint(model_path, device="cpu"):
         return model, model_name, _as_train_args(ckpt.get("train_args", {}))
 
     # ---------------------------------------------------------
-    # ML models
+    # PyTorch Checkpoints (.pt) 
     # ---------------------------------------------------------
-
-    ckpt = torch.load(model_path, map_location="cpu")
-    model_name = ckpt.get("model", "ml_dmd_free")
-    train_args = _as_train_args(ckpt["train_args"])
+    # Added weights_only=False to allow numpy matrices to load
+    ckpt = torch.load(model_path, map_location=device, weights_only=False)
     
+    model_name = ckpt.get("model", ckpt.get("model_name", "ml_dmd_free"))
+    train_args = _as_train_args(ckpt.get("train_args", {}))
+
+    # --- 1. NEW: Handle Regression DMD from .pt ---
+    if model_name == "regression_dmd":
+        def _to_bool(val, default=True):
+            if val is None: return default
+            if isinstance(val, bool): return val
+            return str(val).lower() in ["true", "1", "yes", "t"]
+            
+        def _to_optional_int(val):
+            if val is None: return None
+            try: return int(val)
+            except: return None
+            
+        model = Regression_DMD(
+            state_dim=ckpt.get("state_dim", 2),
+            expansion_degree=int(train_args.get("expansion_degree", 3)),
+            bias=_to_bool(train_args.get("bias", True)),
+            sine_cosine_expansion=_to_bool(train_args.get("sine_cosine_expansion", False), default=False),
+            expansion_type=str(train_args.get("expansion_type", "general")),
+            system=ckpt.get("system") if train_args.get("expansion_type") == "specific" else None,
+            delay_depth=int(train_args.get("delay_depth", 1)),
+            hankel_rank=_to_optional_int(train_args.get("hankel_rank", None)),
+            normalize_state=_to_bool(train_args.get("normalize_state", False), default=False),
+            normalize_lifted=_to_bool(train_args.get("normalize_lifted", True), default=True),
+            rollout_mode=rollout_mode_override or train_args.get("regression_rollout_mode", train_args.get("rollout_mode", "DMD")),
+            ridge=float(train_args.get("ridge", 0.0)),
+            rank=_to_optional_int(train_args.get("rank", None)),
+            rbf_n_centers=int(train_args.get("rbf_n_centers", 50)),
+            rbf_center_selection=str(train_args.get("rbf_center_selection", "farthest")),
+            rbf_bandwidth_mode=str(train_args.get("rbf_bandwidth_mode", "knn")),
+            rbf_knn_k=int(train_args.get("rbf_knn_k", 5)),
+        ).to(device)
+
+        # Magically restores the Expander parameters!
+        if "model_state_dict" in ckpt:
+            model.load_state_dict(ckpt["model_state_dict"])
+            
+        # Re-hydrate the numpy matrices
+        if "dmd_matrices" in ckpt:
+            dmd_mats = ckpt["dmd_matrices"]
+            def _to_tensor(val, dtype):
+                return torch.tensor(val, dtype=dtype, device=device) if val is not None else None
+
+            model.K_fitted = _to_tensor(dmd_mats.get("K_full", dmd_mats.get("K")), torch.float64)
+            model.C_fitted = _to_tensor(dmd_mats.get("C"), torch.float64)
+            model.K_tilde_fitted = _to_tensor(dmd_mats.get("K_tilde"), torch.float64)
+            model.U_r_fitted = _to_tensor(dmd_mats.get("U_r"), torch.float64)
+            model.W_reduced_fitted = _to_tensor(dmd_mats.get("W_reduced"), torch.complex128)
+            model.Lambda_fitted = _to_tensor(dmd_mats.get("Lambda"), torch.complex128)
+            
+            phi_lift = _to_tensor(dmd_mats.get("Phi_lift"), torch.complex128)
+            if phi_lift is not None:
+                model.Phi_lift_fitted = phi_lift
+                model.Phi_fitted = phi_lift
+                if phi_lift.ndim > 1:
+                    model.Phi_pinv_fitted = torch.linalg.pinv(phi_lift)
+                else:
+                    model.Phi_pinv_fitted = torch.linalg.pinv(phi_lift.unsqueeze(1))
+            
+            model.Phi_state_fitted = _to_tensor(dmd_mats.get("Phi_state"), torch.complex128)
+
+            model.x_mean = _to_tensor(dmd_mats.get("x_mean"), torch.float64)
+            model.x_scale = _to_tensor(dmd_mats.get("x_scale"), torch.float64)
+            model.psi_scale = _to_tensor(dmd_mats.get("psi_scale"), torch.float64)
+            
+        model.eval()
+        
+        # Finalize expander flags
+        exp_type = str(train_args.get("expansion_type", "general"))
+        if exp_type in {"rbf", "hankel_svd"} and hasattr(model, "expander"):
+            model.expander.is_fitted = True
+            
+        if hasattr(model, "expander"):
+            if hasattr(model.expander, "expand_names"):
+                model.expand_names = model.expander.expand_names
+            if hasattr(model.expander, "state_indices"):
+                model.state_indices = model.expander.state_indices
+            if hasattr(model.expander, "expanded_dim"):
+                model.expanded_dim = model.expander.expanded_dim
+                model.latent_dim = model.expander.expanded_dim
+                
+        return model, model_name, dict(train_args)
+
+    # --- 2. Existing ML models ---
     kwargs = {
-        "state_dim": ckpt["state_dim"],
-        "expansion_degree": train_args["expansion_degree"],
+        "state_dim": ckpt.get("state_dim", 2),
+        "expansion_degree": train_args.get("expansion_degree", 3),
         "bias": str(train_args.get("bias", "true")).lower() == "true",
         "sine_cosine_expansion": str(train_args.get("sine_cosine_expansion", "false")).lower() == "true",
-        "expansion_type": train_args["expansion_type"],
-        "system": ckpt["system"] if train_args["expansion_type"] == "specific" else None,
+        "expansion_type": train_args.get("expansion_type", "general"),
+        "system": ckpt.get("system") if train_args.get("expansion_type") == "specific" else None,
         "delay_depth": int(train_args.get("delay_depth", 1)),
         "hankel_rank": train_args.get("hankel_rank", None),
         "rbf_n_centers": int(train_args.get("rbf_n_centers", 50)),
@@ -270,14 +354,10 @@ def build_model_from_checkpoint(model_path, device="cpu"):
     else:
         raise ValueError(f"Unsupported: {model_name}")
 
-    # Because ALL your ML parameters and scalers are registered buffers, 
-    # load_state_dict captures them automatically and perfectly.
     if "model_state_dict" in ckpt:
         state_dict = ckpt["model_state_dict"]
         model.load_state_dict(state_dict)
 
-    # RBF and Hankel-SVD expanders store fitted buffers in the checkpoint's
-    # state_dict, but the runtime flag still needs to be restored explicitly.
     exp_type = str(train_args.get("expansion_type", "general"))
     if exp_type in {"rbf", "hankel_svd"} and hasattr(model, "expander"):
         model.expander.is_fitted = True

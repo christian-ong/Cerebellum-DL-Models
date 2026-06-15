@@ -513,65 +513,12 @@ def main():
         print("Fitting regression_dmd...")
         model.fit(X_train, Y_train)
 
+        # ---------------------------------------------------------
+        # 1. COMPUTE & LOG METRICS FIRST! 
+        # (Guarantees W&B gets the data)
+        # ---------------------------------------------------------
         train_loss, train_rmse = compute_loader_metrics(model, train_loader, device)
         val_loss, val_rmse = compute_loader_metrics(model, val_loader, device) if val_loader is not None else (None, None)
-
-        save_kwargs = dict(
-            train_args=vars(args),
-            model="regression_dmd",
-            system=system_name,
-            state_dim=state_dim,
-            expansion_degree=args.expansion_degree,
-            bias=args.bias == "true",
-            sine_cosine_expansion=args.sine_cosine_expansion == "true",
-            expansion_type=args.expansion_type,
-            expand_names=model.expand_names,
-            system_basis=system_name if args.expansion_type == "specific" else "",
-            rollout_mode=args.regression_rollout_mode,
-            ridge=args.ridge,
-            rank=-1 if args.rank is None else args.rank,
-            normalize_state=args.normalize_state == "true",
-            normalize_lifted=args.normalize_lifted == "true",
-            delay_depth=args.delay_depth,
-            hankel_rank=-1 if args.hankel_rank is None else args.hankel_rank,
-            rbf_n_centers=args.rbf_n_centers,
-            rbf_center_selection=args.rbf_center_selection,
-            rbf_bandwidth_mode=args.rbf_bandwidth_mode,
-            rbf_knn_k=args.rbf_knn_k,
-            x_mean=model.x_mean.detach().cpu().numpy(),
-            x_scale=model.x_scale.detach().cpu().numpy(),
-            psi_scale=model.psi_scale.detach().cpu().numpy(),
-            K=model.K_fitted.detach().cpu().numpy(),
-            C=model.C_fitted.detach().cpu().numpy(),
-            K_tilde=model.K_tilde_fitted.detach().cpu().numpy(),
-            U_r=model.U_r_fitted.detach().cpu().numpy(),
-            W_reduced=model.W_reduced_fitted.detach().cpu().numpy(),
-            Lambda=model.Lambda_fitted.detach().cpu().numpy(),
-            Phi_lift=model.Phi_lift_fitted.detach().cpu().numpy(),
-            Phi_state=model.Phi_state_fitted.detach().cpu().numpy(),
-        )
-
-        if hasattr(model.expander, "state_scale"):
-            save_kwargs["expander_state_scale"] = model.expander.state_scale.detach().cpu().numpy()
-        if hasattr(model.expander, "history_scale"):
-            save_kwargs["expander_history_scale"] = model.expander.history_scale.detach().cpu().numpy()
-
-        if args.expansion_type == "rbf":
-            save_kwargs["rbf_centers"] = model.expander.centers.detach().cpu().numpy()
-            save_kwargs["rbf_sigmas"] = model.expander.sigmas.detach().cpu().numpy()
-
-        if args.expansion_type == "hankel_svd":
-            save_kwargs["hankel_mean"] = model.expander.mean.detach().cpu().numpy()
-            save_kwargs["hankel_components"] = model.expander.components.detach().cpu().numpy()
-            save_kwargs["hankel_singular_values"] = model.expander.singular_values.detach().cpu().numpy()
-
-        if model.Lambda_fitted is not None:
-            save_kwargs["Lambda"] = model.Lambda_fitted.detach().cpu().numpy()
-            save_kwargs["Phi"] = model.Phi_fitted.detach().cpu().numpy()
-
-        save_path = os.path.join(save_dir, "model.npz")
-        np.savez(save_path, **save_kwargs)
-        print(f"Saved regression_dmd checkpoint to: {save_path}")
 
         metrics = {
             "train_loss": train_loss,
@@ -580,52 +527,17 @@ def main():
             "val_onestep_rmse": val_rmse,
         }
 
-        # --- Post-save sanity check ---
-        # Re-load the saved checkpoint and recompute eval metrics to ensure
-        # what we logged matches the saved model (helps detect logging-order bugs).
-        try:
-            _model_r, _load_extras = load_saved_model(
-                model_name="regression_dmd",
-                model_path=save_path,
-                data_path=args.data_path,
-                state_dim=state_dim,
-                system=system_name,
-                device=device,
-            )
-            _model_r = _model_r.to(device)
-
-            # Recompute per-step RMSE using the same DataLoader used above
-            try:
-                from src.eval.sweep_utils import compute_loader_metrics as _clm, compute_rollout_metrics as _crm
-                _train_loss_re, _train_rmse_re = _clm(_model_r, train_loader, device)
-                _val_loss_re, _val_rmse_re = _clm(_model_r, val_loader, device)
-                _re_rollout_metrics = _crm(model=_model_r, X=val_X, device=device, eval_horizons=eval_horizons, max_trajs=args.max_val_rollout_trajs)
-
-                print(f"Recomputed (post-save) val_onestep_rmse: {_val_rmse_re}")
-                if _re_rollout_metrics is not None:
-                    for kk, vv in _re_rollout_metrics.items():
-                        print(f"Recomputed post-save {kk}: {vv}")
-
-                # Replace the primary metrics with recomputed values.
-                metrics["train_loss"] = _train_loss_re
-                metrics["train_onestep_rmse"] = _train_rmse_re
-                metrics["val_loss"] = _val_loss_re
-                metrics["val_onestep_rmse"] = _val_rmse_re
-                if _re_rollout_metrics is not None:
-                    for kk, vv in _re_rollout_metrics.items():
-                        metrics[f"val_{kk}"] = vv
-
-            except Exception as _exc:
-                print(f"Post-save recompute failed: {_exc}")
-                try:
-                    _fallback_rollout_metrics = _crm(model=model, X=val_X, device=device, eval_horizons=eval_horizons, max_trajs=args.max_val_rollout_trajs)
-                    if _fallback_rollout_metrics is not None:
-                        for kk, vv in _fallback_rollout_metrics.items():
-                            metrics[f"val_{kk}"] = vv
-                except Exception as _fallback_exc:
-                    print(f"Fallback rollout eval failed: {_fallback_exc}")
-        except Exception as _exc2:
-            print(f"Failed to reload checkpoint for post-save sanity check: {_exc2}")
+        print("Computing rollout metrics...")
+        rollout_metrics = compute_rollout_metrics(
+            model=model,
+            X=val_X,
+            device=device,
+            eval_horizons=eval_horizons,
+            max_trajs=args.max_val_rollout_trajs,
+        )
+        if rollout_metrics is not None:
+            for k, v in rollout_metrics.items():
+                metrics[f"val_{k}"] = v
 
         wandb.log(metrics, step=0)
         update_best_metrics(best_metrics, metrics, 0)
@@ -633,6 +545,41 @@ def main():
         for metric_name, data in best_metrics.items():
             wandb.summary[f"best_{metric_name}"] = data["value"]
             wandb.summary[f"best_{metric_name}_epoch"] = data["epoch"]
+
+        # ---------------------------------------------------------
+        # 2. UNIFIED PYTORCH CHECKPOINT SAVING
+        # ---------------------------------------------------------
+        def _to_np(tensor):
+            return tensor.detach().cpu().numpy() if tensor is not None else None
+
+        dmd_matrices = {
+            "K_full": _to_np(getattr(model, "K_fitted", None)),
+            "C": _to_np(getattr(model, "C_fitted", None)),
+            "K_tilde": _to_np(getattr(model, "K_tilde_fitted", None)),
+            "U_r": _to_np(getattr(model, "U_r_fitted", None)),
+            "W_reduced": _to_np(getattr(model, "W_reduced_fitted", None)),
+            "Lambda": _to_np(getattr(model, "Lambda_fitted", None)),
+            "Phi_lift": _to_np(getattr(model, "Phi_lift_fitted", None)),
+            "Phi_state": _to_np(getattr(model, "Phi_state_fitted", None)),
+            "Phi": _to_np(getattr(model, "Phi_fitted", None)),
+            "x_mean": _to_np(getattr(model, "x_mean", None)),
+            "x_scale": _to_np(getattr(model, "x_scale", None)),
+            "psi_scale": _to_np(getattr(model, "psi_scale", None)),
+        }
+
+        checkpoint = {
+            "model_state_dict": model.state_dict(),
+            "checkpoint_type": "best",
+            "train_args": vars(args),
+            "dmd_matrices": dmd_matrices,
+            "model_name": "regression_dmd",
+            "system": system_name,
+            "state_dim": state_dim,
+        }
+
+        save_path = os.path.join(save_dir, "model.pt")
+        torch.save(checkpoint, save_path)
+        print(f"Saved unified Regression_DMD checkpoint to: {save_path}")
 
         wandb.finish()
         return

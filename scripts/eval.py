@@ -150,9 +150,9 @@ def main():
     parser.add_argument("--model_path", type=str, required=True, help="Path to the saved trained model checkpoint.")
     parser.add_argument("--name", type=str, default=None, help="Optional run name override for output folders.")
     parser.add_argument("--split", type=str, default="test", choices=["test", "val"], help="Dataset split to evaluate on.")
-    parser.add_argument("--horizons", type=str, default="1,10,50", help="Comma-separated terminal prediction horizons.")
-    parser.add_argument("--rollout_horizons", type=str, default="10,50", help="Comma-separated rollout horizons.")
-    parser.add_argument("--steps", type=int, default=200, help="Steps for the standard rollout plot.")
+    parser.add_argument("--horizons", type=str, default="1,10,100", help="Comma-separated terminal prediction horizons.")
+    parser.add_argument("--rollout_horizons", type=str, default="10,100", help="Comma-separated rollout horizons.")
+    parser.add_argument("--steps", type=int, default=100, help="Steps for the standard rollout plot.")
     parser.add_argument("--traj_index", type=int, default=0, help="Which trajectory to plot.")
     parser.add_argument("--reference_data_path",type=str,default=None,help="Optional clean/reference dataset path for overlaying rollout plots.")
 

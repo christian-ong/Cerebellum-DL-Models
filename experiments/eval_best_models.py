@@ -4,9 +4,9 @@ import subprocess
 import os
 import time
 from pathlib import Path
-
+import glob
+import numpy as _np
 import torch
-
 
 MODE_VISUALIZATION_MODELS = {"ml_dmd", "regression_dmd", "ml_dmd_drop"}
 # Allow the noise-robustness sweep for all common model types so we can compare
@@ -19,10 +19,6 @@ NOISE_ROBUSTNESS_MODELS = {
     "ml_lineardynamics",
     "mlp_baseline",
 }
-
-import numpy as _np
-import glob
-
 
 def _pretty_model_name(model_name: str) -> str:
     names = {
@@ -98,8 +94,7 @@ def _subtitle_from_row(row, evaluation_rollout_mode: str | None = None) -> str:
         if rollout_mode is not None and not pd.isna(rollout_mode):
             pieces.append(f"Rollout mode {rollout_mode}")
 
-    # Update _subtitle_from_row() (Around line 74)
-    if model_name in {"ml_dmd", "ml_dmd_drop"}: # <-- CHANGE TO INCLUDE ml_dmd_drop
+    if model_name in {"ml_dmd", "ml_dmd_drop"}: 
         l1_weight = row.get("l1_weight", None)
         if l1_weight is not None and not pd.isna(l1_weight):
             try:
@@ -107,7 +102,6 @@ def _subtitle_from_row(row, evaluation_rollout_mode: str | None = None) -> str:
             except Exception:
                 pieces.append(f"L1 Weight {l1_weight}")
                 
-        # Optional: Append the biorth_weight to your plot subtitles!
         biorth_weight = row.get("biorth_weight", None)
         if biorth_weight is not None and not pd.isna(biorth_weight):
             pieces.append(f"Biorth Weight {float(biorth_weight):.3g}")
@@ -137,19 +131,14 @@ def _subtitle_from_row(row, evaluation_rollout_mode: str | None = None) -> str:
 
 def _mode_specific_run_base(run_base: str, model_name: str, rollout_mode: str | None) -> str:
     if model_name == "regression_dmd" and rollout_mode:
-        # Use the rollout mode as a direct subfolder (e.g. 'DMD' or 'linear_dynamics')
         return os.path.join(run_base, str(rollout_mode))
     return run_base
 
 
 def _infer_mode_count_from_pt_checkpoint(model_path: str):
-    """Best-effort mode-count inference for torch checkpoints.
-
-    This is used only to decide whether to add the mode-visualization command.
-    It intentionally avoids constructing the full model.
-    """
+    """Best-effort mode-count inference for torch checkpoints."""
     try:
-        ckpt = torch.load(model_path, map_location="cpu")
+        ckpt = torch.load(model_path, map_location="cpu", weights_only=False)
     except Exception:
         return None
 
@@ -212,12 +201,11 @@ def _behavior_commands(
     base_figdir,
     *,
     mode_subset_thresholds=None,
-    num_steps=100,  # <--- NEW: Accept num_steps as an argument
+    num_steps=100, 
 ):
     """Return a single eval_behavior invocation."""
     final_outdir = os.path.join(base_figdir, "behavior")
 
-    # --- NEW: Dynamically pick 3 horizons to plot for the heatmaps ---
     mid_h = max(1, num_steps // 2)
     grid_horizons = sorted(list(set([1, mid_h, num_steps])))
     grid_str = ",".join(str(h) for h in grid_horizons)
@@ -229,11 +217,11 @@ def _behavior_commands(
         "--model_path", model_path,
         "--name", run_name,
         "--split", "test",
-        "--metric_horizons", str(num_steps),         # <--- FIXED
-        "--rollout_metric_horizons", str(num_steps), # <--- FIXED
+        "--metric_horizons", str(num_steps),        
+        "--rollout_metric_horizons", str(num_steps), 
         "--metric_cap", "0",
         "--run_true_grid_heatmap",
-        "--true_grid_horizons", grid_str,            # <--- FIXED (e.g., "1,10,20")
+        "--true_grid_horizons", grid_str,            
         "--grid_resolution", "100",
         "--grid_overlay_n_trajs", "0",
         "--outdir", final_outdir,
@@ -266,7 +254,6 @@ def _mode_visualization_commands(model_name, run_name, data_path, base_figdir, n
             "--mode_order", mode_order,
             "--outdir", os.path.join(base_figdir, "modes", mode_order),
         ]
-        # --- NEW: Forward the steps if provided ---
         if num_steps is not None:
             cmd.extend(["--num_steps", str(num_steps)])
             
@@ -291,7 +278,6 @@ def _noise_robustness_commands(
     if model_name not in NOISE_ROBUSTNESS_MODELS:
         return []
 
-    # If no explicit noisy path provided, try to infer a matching noisy dataset root
     if not noisy_data_path:
         inferred = _infer_noisy_data_root_from_clean_path(clean_data_path)
         noisy_data_path = inferred
@@ -384,6 +370,20 @@ def _overview_metadata_columns():
         "normalize_state",
         "normalize_lifted",
         "eval_horizon_divisor",
+        "hidden_dim",
+        "num_layers",
+        "rank",
+        "ridge",
+        "sindy_discrete_time",
+        "sindy_poly_order",
+        "sindy_threshold",
+        "sindy_alpha",
+        "sindy_include_bias",
+        "sindy_include_interaction",
+        "sindy_diff_method",
+        "sindy_library_type",
+        "sindy_fourier_n_frequencies",
+        "sindy_specific_basis_size",
         "best_train_loss",
         "best_train_loss_epoch",
         "best_val_loss",
@@ -411,7 +411,6 @@ def _overview_metadata_columns():
         "val_rollout_rmse_h20",
         "val_rollout_rmse_h100",
     ]
-
 
 def _to_float_or_none(value):
     try:
@@ -442,11 +441,16 @@ def resolve_model_checkpoint(model_name, system, run_name):
     elif model_name == "mlp_baseline":
         folder_candidates.append("mlp_baseline")
 
-    if model_name == "regression_dmd":
-        file_candidates = ["model.npz"]
+    # ---------------------------------------------------------
+    # FIXED: Group regression_dmd with the other neural networks
+    # so it correctly prioritizes the new .pt files!
+    # ---------------------------------------------------------
+    if model_name in {"linear_baseline", "dmd_baseline", "sindy_baseline"}:
+        file_candidates = ["model.npz", "model.pkl", "model.pt"] 
     elif model_name == "hardcoded_dmd":
         file_candidates = ["model.pt", "model_best.pt"]
     else:
+        # This now catches regression_dmd, ml_dmd, ml_linop, mlp, etc.
         file_candidates = ["model_best.pt", "model.pt", "model.npz"]
 
     for folder_name in dict.fromkeys(folder_candidates):
@@ -460,26 +464,19 @@ def resolve_model_checkpoint(model_name, system, run_name):
 
 
 def _infer_noisy_data_root_from_clean_path(clean_data_path: str):
-    """Try common heuristics to locate a matching noisy-data root for a given clean data path.
-
-    Returns the inferred noisy-data path string if it appears to exist on disk, otherwise None.
-    """
     if not isinstance(clean_data_path, str) or clean_data_path.strip() == "":
         return None
 
-    # Common explicit replacement
     if "data/trajectories" in clean_data_path:
         candidate = clean_data_path.replace("data/trajectories", "data/noisy_trajectories")
         if os.path.exists(candidate):
             return candidate
 
-    # Fallback: if path contains '/trajectories/' replace with '/noisy_trajectories/'
     if "/trajectories/" in clean_data_path:
         candidate = clean_data_path.replace("/trajectories/", "/noisy_trajectories/")
         if os.path.exists(candidate):
             return candidate
 
-    # Generic sibling under data/noisy_trajectories preserving the remainder after 'data/'
     if "data/" in clean_data_path:
         suffix = clean_data_path.split("data/", 1)[1]
         candidate = os.path.join("data", "noisy_trajectories", suffix)
@@ -490,15 +487,10 @@ def _infer_noisy_data_root_from_clean_path(clean_data_path: str):
 
 
 def _infer_state_dim_from_data_path(data_path: str):
-    """Try to infer the state's dimensionality from a dataset path.
-
-    Returns an int state_dim if found, otherwise None.
-    """
     try:
         if not isinstance(data_path, str) or data_path.strip() == "":
             return None
 
-        # If a directory is provided, look for common split/npz files inside it.
         if os.path.isdir(data_path):
             candidates = [
                 os.path.join(data_path, "test.npz"),
@@ -521,9 +513,7 @@ def _infer_state_dim_from_data_path(data_path: str):
             data_file = data_path
 
         loaded = _np.load(data_file)
-        # loaded can be an array or an NpzFile-like mapping
         if hasattr(loaded, "files") and len(loaded.files) > 0:
-            # Prefer common keys
             for key in ("X", "x", "data", "trajectories", "traj", "states"):
                 if key in loaded:
                     X = loaded[key]
@@ -534,13 +524,13 @@ def _infer_state_dim_from_data_path(data_path: str):
             X = loaded
 
         if hasattr(X, "ndim"):
-            # Typical shapes: (n_samples, seq_len, state_dim) or (seq_len, state_dim)
             if X.ndim >= 2:
                 return int(X.shape[-1])
 
         return None
     except Exception:
         return None
+
 
 def run_evaluations(
     csv_path,
@@ -564,13 +554,11 @@ def run_evaluations(
     # 1. Load dataframe
     df = pd.read_csv(csv_path, low_memory=False)
     
-    # 2. The CSV is already pre-filtered by extract_wandb.py to only contain the best runs.
-    # We just pass it through directly.
+    # 2. The CSV is already pre-filtered by extract_wandb.py
     best_df = df.copy()
-    
     print(f"✅ Loaded {len(best_df)} pre-filtered model configurations.", flush=True)
 
-    # Resolve checkpoints and metadata
+    # Resolve checkpoints and metadata exactly once
     best_df["resolved_checkpoint"] = best_df.apply(
         lambda row: resolve_model_checkpoint(
             row["model_name"],
@@ -581,40 +569,23 @@ def run_evaluations(
     )
     best_df["selected_target_metric"] = target_metric
     best_df["selected_dt"] = dt_val
-    best_df["selected_num_steps"] = int(target_time / dt_val)
+    best_df["selected_num_steps"] = int(round(target_time / dt_val))
     best_df["selection_role"] = "best"
     print(f"✅ Found {len(best_df)} selected model configurations based on '{target_metric}' within requested combinations.", flush=True)
 
-    best_df = best_df.copy()
-    best_df["resolved_checkpoint"] = best_df.apply(
-        lambda row: resolve_model_checkpoint(
-            row["model_name"],
-            row["system_name"],
-            row.get("run_id", row.get("run_name")),
-        ),
-        axis=1,
-    )
-    best_df["selected_target_metric"] = target_metric
-    best_df["selected_dt"] = dt_val
-    best_df["selected_num_steps"] = int(target_time / dt_val)
-    best_df["selection_role"] = "best"
-
-    # Track skipping status so repeated runs can avoid re-evaluating the same checkpoints.
+    # Track skipping status
     best_df["skipped"] = False
     best_df["skip_reason"] = ""
 
     if "model_name" in best_df.columns and "l1_weight" in best_df.columns:
         l1_values = best_df["l1_weight"].apply(_to_float_or_none)
-        
-        # Include both ml_dmd and ml_dmd_drop for labeling
         target_models = ["ml_dmd", "ml_dmd_drop"]
         
         best_df.loc[(best_df["model_name"].isin(target_models)) & (l1_values == 0.0), "selection_role"] = "ml_dmd_l1_0"
-        # Using > 0.0 is safer than hardcoding [1e-3, 1e-2] just in case you test other weights like 1e-4
         best_df.loc[(best_df["model_name"].isin(target_models)) & (l1_values > 0.0), "selection_role"] = "ml_dmd_l1_companion"
 
-    # 3. Calculate exactly how many steps to simulate for the given physical time
-    num_steps = int(target_time / dt_val)
+    # 3. Calculate exactly how many steps to simulate
+    num_steps = int(round(target_time / dt_val))
     overview_horizons = _overview_horizons_for_dt(dt_val, target_time)
     overview_metric_horizons = overview_horizons[1:]
     overview_rows = []
@@ -632,8 +603,8 @@ def run_evaluations(
             print(f"    ⚠️ Warning: failed to load overview summary {summary_path}: {exc}", flush=True)
             return
 
-        horizons = _np.asarray(data["horizons"], dtype=int) if "horizons" in data else _np.array([], dtype=int)
-        horizon_rmse = _np.asarray(data["horizon_rmse"], dtype=float) if "horizon_rmse" in data else _np.array([], dtype=float)
+        rollout_horizons = _np.asarray(data["rollout_horizons"], dtype=int) if "rollout_horizons" in data else _np.array([], dtype=int)
+        rollout_rmse = _np.asarray(data["rollout_rmse"], dtype=float) if "rollout_rmse" in data else _np.array([], dtype=float)
 
         overview_row = {
             "dt": float(dt_val),
@@ -656,8 +627,8 @@ def run_evaluations(
 
         for h in overview_metric_horizons:
             key = f"h{int(h)}_rmse"
-            match = _np.where(horizons == int(h))[0]
-            overview_row[key] = float(horizon_rmse[int(match[0])]) if len(match) > 0 else _np.nan
+            match = _np.where(rollout_horizons == int(h))[0]
+            overview_row[key] = float(rollout_rmse[int(match[0])]) if len(match) > 0 else _np.nan
 
         overview_rows.append(overview_row)
 
@@ -671,34 +642,27 @@ def run_evaluations(
         
         print(f"\n[{idx+1}/{len(best_df)}] Evaluating: {system} | {model_name} ({row['expansion_type']}) -> Run: {run_name} ({wandb_name})", flush=True)
         
-        # Resolve the actual checkpoint file saved for this model family.
         model_path = resolve_model_checkpoint(model_name, system, run_name)
         if model_path is None:
             print(f"    ⚠️ Warning: no checkpoint found for {model_name}/{system}/{run_name}. Skipping.", flush=True)
             continue
 
-        # Pre-flight check: ensure the checkpoint is readable before creating any folders
         try:
             if str(model_path).endswith('.pt') or str(model_path).endswith('.pth'):
-                _ = torch.load(model_path, map_location="cpu")
+                # ADD weights_only=False HERE
+                _ = torch.load(model_path, map_location="cpu", weights_only=False) 
             elif str(model_path).endswith('.npz'):
                 _ = _np.load(model_path, allow_pickle=True)
         except Exception as e:
             print(f"    ⚠️ Warning: Checkpoint at {model_path} is corrupted or unreadable ({type(e).__name__}). Skipping to avoid creating empty folders.", flush=True)
             continue
 
-        # Canonical output grouping for this row. If the run root already exists,
-        # treat the whole evaluation as done and move on immediately.
         expansion_type = str(row.get("expansion_type", "none")) if row.get("expansion_type", None) is not None else "none"
         if model_name == "sindy_baseline":
             expansion_type = str(row.get("sindy_library_type", expansion_type))
 
-        # Base root should be model/system — the specific expansion folder is
-        # composed below to avoid duplicating the expansion type twice.
         base_root = os.path.join("experiments", "figures", model_name, system)
 
-
-        # Compose expansion folder with special handling for RBF and Hankel
         expansion_folder = str(expansion_type) if expansion_type is not None else "none"
         if expansion_type == "rbf":
             bandwidth = row.get("rbf_bandwidth_mode", None)
@@ -707,13 +671,11 @@ def run_evaluations(
         if expansion_type in {"hankel", "hankel_svd"}:
             expansion_folder = "hankel_svd"
 
-        # For SINDy-specific libraries, keep the actual basis size visible in the path.
         if model_name == "sindy_baseline" and expansion_folder == "specific":
             specific_basis_size = row.get("sindy_specific_basis_size")
             if specific_basis_size is not None and not pd.isna(specific_basis_size):
                 expansion_folder = os.path.join(expansion_folder, f"basis_{int(specific_basis_size)}")
 
-        # For ml_dmd, add an l1_weight subfolder (e.g., '0.0' or '1e-03'/'1e-02')
         l1_folder = None
         if model_name in {"ml_dmd", "ml_dmd_drop"}:
             l1_val = _to_float_or_none(row.get("l1_weight")) if "l1_weight" in row else None
@@ -726,7 +688,6 @@ def run_evaluations(
                     except Exception:
                         l1_folder = str(l1_val)
 
-        # Place l1 folder under the expansion folder for ml_dmd models
         final_root = os.path.join(base_root, expansion_folder)
         if l1_folder:
             final_root = os.path.join(final_root, l1_folder)
@@ -734,9 +695,9 @@ def run_evaluations(
         dt_folder = f"dt_{dt_val:.2f}"
         run_base = os.path.join(final_root, dt_folder, run_name)
 
-        summary_path_base = os.path.join(run_base, "data", "test_summary.npz")
-        if model_name != "regression_dmd" and skip_existing and not force and os.path.exists(summary_path_base):
-            print(f"    ⏭ Skipping evaluation — found successful run (test_summary.npz exists): {run_base}", flush=True)
+        summary_file = os.path.join(run_base, "data", "test_summary.npz")
+        if model_name != "regression_dmd" and skip_existing and not force and os.path.isfile(summary_file):
+            print(f"    ⏭ Skipping evaluation — found existing test summary: {summary_file}", flush=True)
             best_df.loc[idx, "skipped"] = True
             best_df.loc[idx, "skip_reason"] = "existing_run_folder"
             _collect_overview_row(
@@ -747,9 +708,6 @@ def run_evaluations(
             )
             continue
 
-        # Lightweight metadata inference: avoid instantiating full models here
-        # (those are loaded again in subprocesses). Try to extract modal info
-        # from a nearby .npz metadata file when available.
         mode_count = None
         inferred_state_dim = None
         try:
@@ -761,13 +719,11 @@ def run_evaluations(
                 state_dim_arg = int(inferred_state_dim)
                 print(f"    ℹ️ Inferred state_dim={state_dim_arg} from data_path", flush=True)
 
-            # If the checkpoint is a .npz, read it directly for metadata.
             metadata_candidates = []
             try:
                 p = Path(model_path)
                 if str(model_path).endswith('.npz'):
                     metadata_candidates.append(str(model_path))
-                # Common sibling names
                 metadata_candidates.extend([
                     str(p.with_suffix('.npz')),
                     str(p.parent / 'model.npz'),
@@ -782,7 +738,6 @@ def run_evaluations(
                 if os.path.exists(meta):
                     try:
                         md = _np.load(meta, allow_pickle=True)
-                        # Prefer explicit Phi matrix
                         if 'Phi' in md:
                             try:
                                 phi = _np.asarray(md['Phi'])
@@ -798,7 +753,6 @@ def run_evaluations(
                                 break
                             except Exception:
                                 pass
-                        # fallback to rank-like entries
                         for key in ('rank', 'expanded_dim', 'latent_dim'):
                             if key in md:
                                 try:
@@ -820,17 +774,10 @@ def run_evaluations(
             if mode_count is not None:
                 print(f"    ℹ️ Inferred mode_count={mode_count} from torch checkpoint metadata", flush=True)
 
-        # The evaluation commands
-        # Arrange figure outputs under:
-        #   model_name / system / expansion_type-or-library_type / [extra subfolder] / run_name / ...
-        # For SINDy, the meaningful bucket is `sindy_library_type` rather than the generic
-        # `expansion_type` column used by the other model families.
-
         evaluation_rollout_modes = [None]
         if model_name == "regression_dmd":
             evaluation_rollout_modes = ["DMD"]
 
-        # Scope this OUTSIDE the loop so it correctly aggregates all modes for this row
         row_skipped_all = True
 
         for evaluation_rollout_mode in evaluation_rollout_modes:
@@ -843,7 +790,6 @@ def run_evaluations(
             lock_path = os.path.join(mode_run_base, ".eval_lock")
 
             if skip_existing and not force:
-                # 1. Check if it is already fully completed
                 if os.path.exists(summary_path_mode):
                     print(f"    ⏭ Skipping evaluation mode {evaluation_rollout_mode or 'default'} — found successful run (test_summary.npz exists): {mode_run_base}", flush=True)
                     _collect_overview_row(
@@ -854,12 +800,10 @@ def run_evaluations(
                     )
                     continue
                 
-                # 2. Check if another terminal is currently working on it
                 if os.path.exists(lock_path):
                     print(f"    ⏭ Skipping evaluation mode {evaluation_rollout_mode or 'default'} — locked by another terminal: {mode_run_base}", flush=True)
                     continue
 
-            # 3. Attempt to claim the run atomically
             os.makedirs(mode_run_base, exist_ok=True)
             if not force:
                 try:
@@ -869,12 +813,9 @@ def run_evaluations(
                     print(f"    ⏭ Skipping evaluation mode {evaluation_rollout_mode or 'default'} — just locked by another terminal: {mode_run_base}", flush=True)
                     continue
 
-            # At least one mode is being handled by this terminal process
             row_skipped_all = False
 
-            # The entire script sequence and its cleanup now sit safely inside the try block
             try:
-                # --- NEW: Check our skipping conditions ---
                 is_lorenz = "lorenz" in system.lower()
                 is_sindy = (model_name == "sindy_baseline")
 
@@ -915,6 +856,7 @@ def run_evaluations(
                         "--steps", str(num_steps),
                         "--horizons", ",".join(str(h) for h in overview_horizons),
                         "--rollout_horizons", ",".join(str(h) for h in overview_metric_horizons),
+                        "--metric_cap", "0", 
                         "--outdir", os.path.join(mode_run_base, "data"),
                     ]
                 )
@@ -988,7 +930,6 @@ def run_evaluations(
                 )
 
             finally:
-                # This block will now execute cleanly at the same indentation level as the try block
                 if os.path.exists(lock_path):
                     try:
                         os.remove(lock_path)
@@ -1049,8 +990,6 @@ if __name__ == "__main__":
         print(f"No best_runs.csv files found in {args.csv}/*/")
         exit(0)
 
-    # We still use a tmp folder to pass the filtered data to run_evaluations, 
-    # but the final output goes cleanly into the model folder.
     tmp_dir = Path("experiments/wandb/tmp")
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1076,7 +1015,7 @@ if __name__ == "__main__":
                 skip_existing=args.skip_existing,
                 force=args.force,
                 noisy_data_path=args.noisy_data_path,
-                overview_csv_path=str(model_dir / "test_results_dt_0.01.csv"), # Saves inside the model folder
+                overview_csv_path=str(model_dir / "test_results_dt_0.01.csv"), 
             )
 
         if not df_005.empty:
@@ -1089,5 +1028,5 @@ if __name__ == "__main__":
                 skip_existing=args.skip_existing,
                 force=args.force,
                 noisy_data_path=args.noisy_data_path,
-                overview_csv_path=str(model_dir / "test_results_dt_0.05.csv"), # Saves inside the model folder
+                overview_csv_path=str(model_dir / "test_results_dt_0.05.csv"),
             )

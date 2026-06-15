@@ -39,7 +39,7 @@ parameters:
 
   sindy_discrete_time:
     values:
-      - "true"
+      - "false"
 
   sindy_library_type:
     values:
@@ -49,7 +49,7 @@ parameters:
     values: [3, 5, 7]
 
   sindy_fourier_n_frequencies:
-    values: [1, 2]
+    values: [3, 5, 7]
 
   sindy_threshold:
     values: [0.0, 1e-4, 1e-3]
