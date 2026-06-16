@@ -152,9 +152,6 @@ def _load_sindy_from_saved_config(model_path: str, data_path: str, state_dim: in
         specific_basis_size=specific_basis_size,
     )
 
-    # -------------------------------------------------------------
-    # THE FIX: Load frozen coefficients directly. DO NOT REFIT!
-    # -------------------------------------------------------------
     if "coefficients" in model_data:
         model.load_model(model_data["coefficients"], state_dim)
         
@@ -405,7 +402,6 @@ def load_model(
                 
                 model.Phi_state_fitted = _to_tensor(dmd_mats.get("Phi_state"), torch.complex128)
 
-                # State scaling params (backed up manually here to perfectly mirror legacy)
                 model.x_mean = _to_tensor(dmd_mats.get("x_mean"), torch.float64)
                 model.x_scale = _to_tensor(dmd_mats.get("x_scale"), torch.float64)
                 model.psi_scale = _to_tensor(dmd_mats.get("psi_scale"), torch.float64)
@@ -445,7 +441,6 @@ def load_model(
         # Ensure expander/buffer tensors are on the same device as the model
         dev = torch.device(device)
         try:
-            # common scale/buffer names that may exist
             if hasattr(model, "x_mean"):
                 model.x_mean = model.x_mean.to(dev)
             if hasattr(model, "x_scale"):
@@ -589,9 +584,7 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
 
     with torch.inference_mode():
         # --- Native Mode Subsetting for ML-DMD Models ---
-        # --- FIX: Include ml_dmd_drop in this condition ---
         if model_name in {"ml_dmd"} and mode_indices is not None:
-            # Safely infer dtype/device from model parameters when possible
             try:
                 p = next(model.parameters())
                 param_dtype = p.dtype
@@ -635,7 +628,6 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
             else:
                 from src.eval.visualize_modes import _get_expanded_indices
                 
-                # Use the bulletproof central function for ALL models
                 expanded_idx = _get_expanded_indices(mode_indices, model)
                 idx_np = np.asarray(expanded_idx, dtype=np.int64)
                 
@@ -648,19 +640,17 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
             trajectory = [x[:, :model.state_dim].squeeze(0).cpu().numpy()]
             
             for _ in range(steps):
-                # step in modal coords; guard if missing
                 if not hasattr(model, "_step_modal"):
                     warnings.warn("ML-DMD model missing _step_modal(); falling back to model.rollout()", RuntimeWarning)
-                    # fallback to standard rollout
                     return model.rollout(x0=x0, steps=steps).detach().cpu().numpy()
 
                 b = model._step_modal(b)
-                b = b * mask  # Keep masked modes exactly at 0
+                b = b * mask
                 
                 # 5. Reconstruct back to physical space using updated pipeline
                 z_norm_next = model._modal_to_latent(b)
                 z_next_phys = model._unnormalize(z_norm_next) if hasattr(model, "_unnormalize") else z_norm_next
-                # ensure real/float tensors for de_expand
+
                 if torch.is_complex(z_next_phys):
                     z_next_phys = z_next_phys.real
                 z_next_phys = z_next_phys.to(dtype=torch.float32)
@@ -671,5 +661,4 @@ def predict_rollout_from_x0(*, x0, steps, model_name, model, extras, mode_indice
             return np.array(trajectory)
             
         else:
-            # Standard rollout (already updated in your class files)
             return model.rollout(x0=x0, steps=steps).detach().cpu().numpy()

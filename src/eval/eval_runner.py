@@ -160,7 +160,6 @@ def prepare_eval_context(
     # Save training metadata in the final output directory chosen for this run.
     if save_run_metadata:
         try:
-            # Delay import of torch in case environment is minimal; torch is already imported above.
             def _extract_train_args(model_path, extras):
                 # 1) Check cached ckpt in extras (used for many torch models)
                 if isinstance(extras, dict) and "ckpt" in extras and isinstance(extras["ckpt"], dict):
@@ -212,14 +211,12 @@ def prepare_eval_context(
                     for k, v in payload.items():
                         _f.write(f"{k}: {v}\n")
 
-                # Optional: save a small PNG summary if matplotlib is available
                 try:
                     import matplotlib.pyplot as plt
 
                     lines = [f"{k}: {train_args[k]}" for k in sorted(train_args.keys())]
                     if not lines:
                         lines = ["(no train_args found)"]
-                    # Scale height with line count so long train_args dumps do not clip at the bottom.
                     fig_height = min(max(3.2, 0.16 * len(lines) + 1.3), 12.0)
                     fig, ax = plt.subplots(figsize=(7.8, fig_height))
                     ax.axis("off")
@@ -229,12 +226,10 @@ def prepare_eval_context(
                     fig.savefig(png_path, dpi=150)
                     plt.close(fig)
                 except Exception:
-                    # matplotlib not available or failed to render; ignore silently
                     pass
             except Exception as e:
                 print(f"[eval_runner] Warning: failed to save train_args payload: {e}")
         except Exception:
-            # Best-effort only; do not fail eval on metadata saving issues
             pass
 
     scales = get_state_scale_from_train_split(args.data_path)
