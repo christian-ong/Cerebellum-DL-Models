@@ -82,6 +82,7 @@ elif model_param_type == "complex":
     Phi_model, Lambda_model = get_real_representation(
         Phi_model, 
         Lambda_model, 
+        complex_pairs=complex_pair_idx,
         jordan_value=1, 
         threshold_jordan=1e-1
     )
