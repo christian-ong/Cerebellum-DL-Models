@@ -391,8 +391,17 @@ def compute_full_rollout_metrics(
     """
     Full-rollout metrics.
 
-    For ordinary models, rollout starts at t0=0.
-    For delay models, rollout starts at t0=delay_depth-1.
+    For each rollout horizon h, this computes one trajectory-level rollout RMSE
+    for each selected test trajectory:
+
+        r_i(1:h) = sqrt(mean over steps 1..h and state dimensions of error^2)
+
+    It then reports the mean of these trajectory-level RMSE values:
+
+        MeanTrajRMSE(1:h) = mean_i r_i(1:h)
+
+    This is different from pooled RMSE, where all scalar errors are pooled
+    before taking one square root.
     """
     T, _, _ = X.shape
 
@@ -401,15 +410,33 @@ def compute_full_rollout_metrics(
 
     out = {
         "rollout_horizons": np.asarray(rollout_horizons, dtype=int),
+
+        # Main reported rollout metrics: mean over trajectory-level RMSEs.
         "rollout_mse": [],
         "rollout_rmse": [],
         "rollout_nrmse": [],
+
+        # Distribution across trajectory-level RMSEs.
+        "rollout_traj_rmse_mean": [],
+        "rollout_traj_rmse_std": [],
+        "rollout_traj_rmse_median": [],
+        "rollout_traj_rmse_q25": [],
+        "rollout_traj_rmse_q75": [],
+
+        # Keep old-style pooled metrics for debugging/comparison.
+        "rollout_pooled_mse": [],
+        "rollout_pooled_rmse": [],
+        "rollout_pooled_nrmse": [],
+
+        # Keep old MSE trajectory summaries for backward compatibility.
         "rollout_traj_mse_mean": [],
         "rollout_traj_mse_std": [],
     }
 
     for h in rollout_horizons:
         traj_mse = []
+        traj_rmse = []
+        traj_nrmse = []
         all_errors = []
 
         if start0 + h >= T:
@@ -449,24 +476,66 @@ def compute_full_rollout_metrics(
 
             X_true = X_traj[start0 : start0 + h + 1]
 
+            # Exclude step 0 because the initial condition is identical.
             err = rollout[1:] - X_true[1:]
+
+            # Store pooled errors for optional comparison.
             all_errors.append(err.reshape(-1, err.shape[-1]))
-            traj_mse.append(np.mean(err ** 2))
 
-        all_errors = np.vstack(all_errors)
-        stats = _mse_rmse_nrmse_from_errors(all_errors, scale_std)
+            # One trajectory-level MSE/RMSE over steps 1..h and dimensions.
+            mse_i = float(np.mean(err ** 2))
+            rmse_i = float(np.sqrt(mse_i))
 
-        out["rollout_mse"].append(stats["mse"])
-        out["rollout_rmse"].append(stats["rmse"])
-        out["rollout_nrmse"].append(stats["nrmse"])
+            # Coordinate-wise train-normalized trajectory RMSE.
+            err_norm = err / np.maximum(scale_std[None, :], EPS)
+            nrmse_i = float(np.sqrt(np.mean(err_norm ** 2)))
+
+            traj_mse.append(mse_i)
+            traj_rmse.append(rmse_i)
+            traj_nrmse.append(nrmse_i)
+
+        traj_mse = np.asarray(traj_mse, dtype=float)
+        traj_rmse = np.asarray(traj_rmse, dtype=float)
+        traj_nrmse = np.asarray(traj_nrmse, dtype=float)
+
+        # Main metric: mean of trajectory-level RMSEs.
+        out["rollout_mse"].append(float(np.mean(traj_mse)))
+        out["rollout_rmse"].append(float(np.mean(traj_rmse)))
+        out["rollout_nrmse"].append(float(np.mean(traj_nrmse)))
+
+        out["rollout_traj_rmse_mean"].append(float(np.mean(traj_rmse)))
+        out["rollout_traj_rmse_std"].append(float(np.std(traj_rmse)))
+        out["rollout_traj_rmse_median"].append(float(np.median(traj_rmse)))
+        out["rollout_traj_rmse_q25"].append(float(np.percentile(traj_rmse, 25)))
+        out["rollout_traj_rmse_q75"].append(float(np.percentile(traj_rmse, 75)))
+
         out["rollout_traj_mse_mean"].append(float(np.mean(traj_mse)))
         out["rollout_traj_mse_std"].append(float(np.std(traj_mse)))
 
-    out["rollout_mse"] = np.asarray(out["rollout_mse"], dtype=float)
-    out["rollout_rmse"] = np.asarray(out["rollout_rmse"], dtype=float)
-    out["rollout_nrmse"] = np.asarray(out["rollout_nrmse"], dtype=float)
-    out["rollout_traj_mse_mean"] = np.asarray(out["rollout_traj_mse_mean"], dtype=float)
-    out["rollout_traj_mse_std"] = np.asarray(out["rollout_traj_mse_std"], dtype=float)
+        # Old pooled metric, kept separately.
+        all_errors = np.vstack(all_errors)
+        pooled_stats = _mse_rmse_nrmse_from_errors(all_errors, scale_std)
+
+        out["rollout_pooled_mse"].append(pooled_stats["mse"])
+        out["rollout_pooled_rmse"].append(pooled_stats["rmse"])
+        out["rollout_pooled_nrmse"].append(pooled_stats["nrmse"])
+
+    for key in [
+        "rollout_mse",
+        "rollout_rmse",
+        "rollout_nrmse",
+        "rollout_traj_rmse_mean",
+        "rollout_traj_rmse_std",
+        "rollout_traj_rmse_median",
+        "rollout_traj_rmse_q25",
+        "rollout_traj_rmse_q75",
+        "rollout_pooled_mse",
+        "rollout_pooled_rmse",
+        "rollout_pooled_nrmse",
+        "rollout_traj_mse_mean",
+        "rollout_traj_mse_std",
+    ]:
+        out[key] = np.asarray(out[key], dtype=float)
 
     return out
 

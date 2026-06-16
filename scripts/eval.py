@@ -53,14 +53,12 @@ def print_core_summary(one_step_metrics, horizon_metrics, rollout_metrics, compo
     ):
         print(f"  Horizon h={int(h):>3d}        : RMSE={float(rmse):.6e}")
 
-    print(f"Mean rollout RMSE         : {float(np.mean(rollout_metrics['rollout_rmse'])):.6e}")
+    print(f"Mean traj. rollout RMSE   : {float(np.mean(rollout_metrics['rollout_rmse'])):.6e}")
     for h, rmse in zip(
         rollout_metrics["rollout_horizons"],
         rollout_metrics["rollout_rmse"],
     ):
-        print(f"  Rollout h={int(h):>3d}        : RMSE={float(rmse):.6e}")
-
-    print(f"Composite test score      : {composite_score:.6e}")
+        print(f"  Rollout h={int(h):>3d}        : MeanTrajRMSE={float(rmse):.6e}")
 
 
 def save_rollout_example_npz(
