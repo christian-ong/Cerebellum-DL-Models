@@ -30,10 +30,6 @@ class ML_LinearDynamics(nn.Module):
         # ------------------------------------------------
         # Initialize basis expansion
         # ------------------------------------------------
-        # This creates the lifted state representation z.
-        # The expansion can now be either:
-        #   - ManualExpansion  (general / specific)
-        #   - RBFExpansion     (rbf)
         self.expander = build_expander(
             state_dim=state_dim,
             expansion_type=expansion_type,
@@ -76,13 +72,9 @@ class ML_LinearDynamics(nn.Module):
             bias=False,
         )
 
-        # Initialize close to identity.
-        # This assumes small time steps (dt small), so dynamics are near identity.
         nn.init.eye_(self.K.weight)
 
     def set_lifted_normalization_stats(self, mean, scale):
-    # For dynamical systems, we often ONLY want to scale, not shift.
-    # To follow your intuition: force mean to 0 to preserve the origin.
         self.lift_mean.fill_(0.0) 
         self.lift_scale.copy_(scale)
         
@@ -130,9 +122,8 @@ class ML_LinearDynamics(nn.Module):
     # Forward pass
     # ------------------------------------------------
     def forward(self, x):
-        # Lift state into expanded space
         z_raw = self.expander.expand(x)
-        z = self._normalize(z_raw) # Normalize BEFORE K
+        z = self._normalize(z_raw)
         z_next = self.K(z)
         z_next_physical = self._unnormalize(z_next)
         x_next = self.expander.de_expand(z_next_physical)
@@ -143,7 +134,6 @@ class ML_LinearDynamics(nn.Module):
     # ------------------------------------------------
 
     def compute_loss(self, x, x_next_true, future_x=None):
-        # compute_loss fix
         z_raw = self.expander.expand(x)
         x_next_for_expander = self._build_next_delay_input(x, x_next_true)
         z_next_true_raw = self.expander.expand(x_next_for_expander)
@@ -154,8 +144,6 @@ class ML_LinearDynamics(nn.Module):
         z_next_pred = self._advance_z(z_norm)
         z_next_physical = self._unnormalize(z_next_pred)
 
-        # You can keep 1-step lift and state as MSE, or change to Smooth L1. 
-        # MSE is usually fine for 1-step because it doesn't compound.
         loss_lift = torch.mean((z_next_pred - z_next_true_norm)**2)
         loss_state = nn.MSELoss()(self.expander.de_expand(z_next_physical), x_next_true)
 

@@ -243,8 +243,7 @@ class ManualExpansion(nn.Module):
             self._compiled_basis = [self._compile_basis(expr) for expr in self.expand_names]
 
         # --------------------------------------------------
-        # Track where the ORIGINAL state variables are located
-        # inside the expanded basis
+        # Track where the ORIGINAL state variables are located inside the expanded basis
         # --------------------------------------------------
         if self.expansion_type == "general":
             target_names = [f"x{i+1}" for i in range(self.state_dim)]
@@ -260,7 +259,6 @@ class ManualExpansion(nn.Module):
 
         self.state_indices = [self.expand_names.index(name) for name in target_names]
 
-        # --- ADD THIS: Buffer to store the physical state scaling ---
         self.register_buffer("state_scale", torch.ones(self.state_dim, dtype=torch.float32))
 
     def fit_state_scaler(self, x: torch.Tensor):
@@ -314,7 +312,6 @@ class ManualExpansion(nn.Module):
             for fn in self._compiled_basis:
                 expanded_features.append(fn(var_dict))
         else:
-            # --- ADD THIS: Scale down the state before raising to high powers ---
             x_scaled = x / self.state_scale
 
             for basis in self.expanded_basis:
@@ -323,7 +320,6 @@ class ManualExpansion(nn.Module):
 
                     for dim, power in enumerate(basis):
                         if power > 0:
-                            # --- REMOVE THE CLAMP! Just use the scaled base ---
                             base = x_scaled[:, dim] 
                             term = term * (base ** power)
 
@@ -393,10 +389,8 @@ class DelayExpansion(nn.Module):
             for i in range(self.state_dim):
                 self.expand_names.append(f"x{i+1}{suffix}")
 
-        # --- NEW: Add History Scaler ---
         self.register_buffer("history_scale", torch.ones(self.history_dim, dtype=torch.float32))
 
-    # --- NEW: Add the scaler method ---
     def fit_state_scaler(self, x: torch.Tensor):
         H = self._to_2d_tensor(x)
         max_abs = torch.max(torch.abs(H), dim=0)[0]
@@ -447,7 +441,6 @@ class DelayExpansion(nn.Module):
     def expand(self, x):
         H = self._to_2d_tensor(x)
         
-        # --- NEW: Scale state ---
         H_scaled = H / self.history_scale
 
         if self.bias:
@@ -460,7 +453,6 @@ class DelayExpansion(nn.Module):
         offset = 1 if self.bias else 0
         raw_history_scaled = x_expanded[:, offset:]
         
-        # --- NEW: Unscale state ---
         raw_history = raw_history_scaled * self.history_scale
         
         return raw_history[:, : self.state_dim]
@@ -544,10 +536,8 @@ class HankelSVDDelayExpansion(nn.Module):
             "singular_values",
             torch.zeros(self.rank, dtype=torch.float64),
         )
-        # --- NEW: Add History Scaler ---
         self.register_buffer("history_scale", torch.ones(self.history_dim, dtype=torch.float64))
 
-    # --- NEW: Add the scaler method ---
     def fit_state_scaler(self, x: torch.Tensor):
         H = self._to_2d_history(x)
         max_abs = torch.max(torch.abs(H), dim=0)[0]
@@ -558,8 +548,6 @@ class HankelSVDDelayExpansion(nn.Module):
     def _to_2d_history(self, x):
         if not torch.is_tensor(x):
             x = torch.as_tensor(x)
-
-        # x = x.to(dtype=torch.float64)
 
         if x.ndim == 1:
             x = x.unsqueeze(0)
@@ -603,7 +591,6 @@ class HankelSVDDelayExpansion(nn.Module):
         """
         H = self._to_2d_history(X_delay).to(dtype=torch.float64)
 
-        # --- NEW: Scale data before computing SVD ---
         H = H / self.history_scale.to(device=H.device, dtype=H.dtype)
 
         if H.shape[0] < self.rank:
@@ -644,7 +631,6 @@ class HankelSVDDelayExpansion(nn.Module):
         components = self.components.to(dtype=H.dtype, device=H.device)
         scale = self.history_scale.to(dtype=H.dtype, device=H.device)
 
-        # --- NEW: Scale state before projection ---
         H = H / scale
 
         Hc = H - mean if self.center else H
@@ -670,7 +656,6 @@ class HankelSVDDelayExpansion(nn.Module):
 
         H_hat_scaled = z @ components + mean
         
-        # --- NEW: Restore physical units ---
         H_hat = H_hat_scaled * scale
 
         out = H_hat[:, : self.state_dim]
@@ -756,7 +741,6 @@ class RBFExpansion(nn.Module):
 
         self._build_feature_metadata()
 
-        # --- NEW: Add State Scaler ---
         self.register_buffer("state_scale", torch.ones(self.state_dim, dtype=torch.float32))
     
     def fit_state_scaler(self, x: torch.Tensor):
@@ -897,7 +881,6 @@ class RBFExpansion(nn.Module):
         
         X = self._to_2d_tensor(X_train)
         
-        # --- NEW: Scale data before finding centers and sigmas ---
         X_scaled = X / self.state_scale
 
         if self.center_selection == "random":
@@ -944,7 +927,6 @@ class RBFExpansion(nn.Module):
             [optional bias, raw state, gaussian RBF features]
         """
         x = self._to_2d_tensor(x)
-        # --- NEW: Scale state ---
         x_scaled = x / self.state_scale
 
         feats = []
@@ -953,7 +935,7 @@ class RBFExpansion(nn.Module):
             feats.append(torch.ones(x.shape[0], 1, dtype=x.dtype, device=x.device))
 
         if self.include_state:
-            feats.append(x_scaled) # Append scaled state to match ManualExpansion!
+            feats.append(x_scaled)
 
         # Compute RBFs against the scaled state
         feats.append(self._rbf_features(x_scaled))
@@ -968,7 +950,6 @@ class RBFExpansion(nn.Module):
         if not self.include_state:
             raise RuntimeError("de_expand() requires include_state=True.")
         
-        # --- NEW: Restore physical units ---
         extracted = x_expanded[:, self.state_indices]
         out = extracted * self.state_scale
         if torch.is_complex(out):

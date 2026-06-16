@@ -203,7 +203,7 @@ class Regression_DMD(nn.Module):
         # Build scale from the current state portion x(t), then repeat for all delays.
         if self.delay_depth > 1:
             x_current = x[:, :self.state_dim]
-            target_size = x.shape[1]  # Final scale size must match x's full width
+            target_size = x.shape[1]
         else:
             x_current = x
             target_size = x_current.shape[1]
@@ -267,7 +267,6 @@ class Regression_DMD(nn.Module):
         device = self.psi_scale.device
         C = torch.zeros((self.state_dim, self.expanded_dim), dtype=torch.float64, device=device)
         
-        # Pull the internal scale tensor used during expansion if it exists
         if hasattr(self.expander, "state_scale"):
             internal_scale = self.expander.state_scale
         elif hasattr(self.expander, "history_scale"):
@@ -278,7 +277,6 @@ class Regression_DMD(nn.Module):
         for i, idx in enumerate(self.state_indices):
             scale_factor = self.psi_scale[idx].item()
             
-            # If the expander applied an internal scaling layer, map it back out here
             if internal_scale is not None:
                 scale_factor *= internal_scale[i].item()
                 
@@ -457,7 +455,6 @@ class Regression_DMD(nn.Module):
         C = self.C_fitted.to(device=z_next.device, dtype=lifted_dtype)
         x_next_n = z_next @ C.T
         
-        # C_fitted outputs ONLY the head (state_dim). We must shift it for delay!
         x_next_head = self._denormalize_x(x_next_n)
         if self.delay_depth > 1:
             return torch.cat([x_next_head, x[:, :-self.state_dim]], dim=1)
@@ -472,7 +469,7 @@ class Regression_DMD(nn.Module):
         self._validate_delay_rollout_input(x0, caller="_rollout_linear_dynamics")
         x = x0.clone()
 
-        traj = [x[:, :self.state_dim].clone()] # ONLY STORE THE HEAD
+        traj = [x[:, :self.state_dim].clone()]
 
         for _ in range(steps):
             x = self._predict_one_step(x)
@@ -570,7 +567,6 @@ class Regression_DMD(nn.Module):
             traj = [x0[:, :self.state_dim].clone()]
 
         for k in range(1, steps + 1):
-            # Dropped modes stay exactly zero!
             b_k = (Lambda ** k).unsqueeze(0) * b0 # (N, r)
             
             if return_modal:

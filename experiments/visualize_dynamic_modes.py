@@ -35,7 +35,7 @@ if args.model_name not in {"ml_dmd", "regression_dmd"}:
 # Settings
 n_top_modes = 20
 grid_res = 100
-order_modes_by = args.mode_order # "original", "magnitude", "phase", "mse", "init_energy", "time_int_energy" || TODO: "quality", "power"
+order_modes_by = args.mode_order # "original", "magnitude", "phase", "mse", "init_energy", "time_int_energy"
 
 # Load test trajectories to find true boundaries and system name dynamically
 test_data_path = resolve_split_npz_path(args.data_path, "test")
@@ -115,9 +115,6 @@ if args.model_name in {"regression_dmd"}:
     W_model = np.linalg.pinv(Phi_model).T
 else:
     Phi_model, Lambda_model, W_model, K_model, V, W,  = get_koopman_eigensystem(model)
-    
-    # ---> CRITICAL FIX: The neural network stores W with modes as rows. 
-    # Transpose it so modes are columns for NumPy operations! <---
     W_model = W_model.T
 
 num_modes = Lambda_model.shape[0]
@@ -236,18 +233,15 @@ with torch.no_grad():
     
     if hasattr(model.expander, "delay_depth") and model.expander.delay_depth > 1:
         q = model.expander.delay_depth
-        # ---> FIX: Use repeat() to tile the states as [x,y,x,y] instead of [x,x,y,y]
         dummy_history = dummy_t.repeat(1, q) 
     else:
         dummy_history = dummy_t
         
-    # FIX: Regression DMD requires external state normalization before expansion
     if hasattr(model, "_normalize_x"):
         dummy_history = model._normalize_x(dummy_history)
         
     grid_points_expanded = safe_expand(model, dummy_history)
         
-    # --- FIX: Must scale the latent grid before passing to W! ---
     if hasattr(model, "_normalize"):
         grid_points_expanded = model._normalize(grid_points_expanded)
     elif hasattr(model, "psi_scale"):
@@ -270,7 +264,6 @@ elif order_modes_by == "contribution":
     with torch.no_grad():
         n_trajectories = min(3, trajectories.shape[1])
         
-        # ---> FIX: Properly format history for delay models BEFORE expanding! <---
         if hasattr(model, "expander") and hasattr(model.expander, "delay_depth") and model.expander.delay_depth > 1:
             q = model.expander.delay_depth
             hist_list = []
@@ -280,8 +273,7 @@ elif order_modes_by == "contribution":
             x = torch.as_tensor(x_packed.reshape(-1, x_packed.shape[-1]), dtype=torch.float32)
         else:
             x = torch.as_tensor(trajectories[:, :n_trajectories, :].reshape(-1, state_dim), dtype=torch.float32)
-            
-        # ---> FIX: Regression DMD requires external state normalization <---
+
         if hasattr(model, "_normalize_x"):
             x = model._normalize_x(x)
             
@@ -308,7 +300,6 @@ elif order_modes_by == "contribution":
         
         if hasattr(model, "C_fitted"):
             C_mat = model.C_fitted.detach().cpu().numpy()
-            # ---> FIX: Slice the delay history away before scaling <---
             state_vec = (C_mat @ phi_j)[:model.state_dim] 
             if hasattr(model, "x_scale"):
                 state_vec = state_vec * model.x_scale[:model.state_dim].detach().cpu().numpy()
@@ -370,7 +361,7 @@ elif order_modes_by == "magnitude":
         "indices_analytic": sorted_idx_analytic
     }
 
-elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven sorting criterias
+elif order_modes_by in ["mse", "init_energy", "time_int_energy"]:
     if order_modes_by == "mse":
         n_trajectories = 3
         n_steps = trajectories.shape[0] 
@@ -378,10 +369,10 @@ elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven 
 
         sorted_idx_model, mode_mses = modes_by_mse(
             model=model,
-            Phi=Phi_model_complex,       # <--- FIX: Use Complex
-            Lambda=Lambda_model_complex, # <--- FIX: Use Complex
+            Phi=Phi_model_complex,
+            Lambda=Lambda_model_complex,
             real_traj=calculate_trajectories,
-            W=W_model_complex            # <--- FIX: Use Complex
+            W=W_model_complex
         )
         scores_model = mode_mses
         for pair in complex_pair_idx:
@@ -398,8 +389,7 @@ elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven 
                 x = torch.as_tensor(np.concatenate(hist_list, axis=-1), dtype=torch.float32)
             else:
                 x = torch.as_tensor(trajectories[0,:,:], dtype=torch.float32)
-            
-            # ---> FIX: External normalization for Regression DMD <---
+
             if hasattr(model, "_normalize_x"):
                 x = model._normalize_x(x)
                 
@@ -430,8 +420,7 @@ elif order_modes_by in ["mse", "init_energy", "time_int_energy"]: # data-driven 
                 x = torch.as_tensor(x_packed.reshape(-1, x_packed.shape[-1]), dtype=torch.float32)
             else:
                 x = torch.as_tensor(trajectories.reshape(-1, state_dim), dtype=torch.float32)
-            
-            # ---> FIX: External normalization for Regression DMD <---
+
             if hasattr(model, "_normalize_x"):
                 x = model._normalize_x(x)
             
@@ -465,7 +454,6 @@ else:
 sorting = sorting_info[order_modes_by]
 orig_complex_pair_idx = complex_pair_idx.copy()
 
-# ---> FIX: Sanitize sort indices to keep 2x2 rotation blocks together and in order <---
 new_indices_model = []
 added = set()
 
@@ -490,7 +478,6 @@ for idx in sorting["indices_model"]:
         added.add(idx)
         
 sorting["indices_model"] = np.array(new_indices_model, dtype=int)
-# --------------------------------------------------------------------------------
 
 # update complex pair indices to reflect sorting
 sorted_complex_pair_idx = []
@@ -503,11 +490,10 @@ complex_pair_idx = sorted_complex_pair_idx
 sorted_data = {
     "model": {
         "complex": {
-            # Use np.ix_ for safer, slightly faster 2D NumPy permutation
             "Lambda": Lambda_model_complex[np.ix_(sorting["indices_model"], sorting["indices_model"])],
             "Phi": Phi_model_complex[:, sorting["indices_model"]],
             "W": W_model_complex[:, sorting["indices_model"]],
-            "K": K_model, # <--- FIX: Do not sort the transition operator!
+            "K": K_model,
             "scores": sorting["scores_model"][sorting["indices_model"]],
             "indeces": sorting["indices_model"],
             "complex_pairs": complex_pair_idx,
@@ -516,7 +502,7 @@ sorted_data = {
             "Lambda": Lambda_model[np.ix_(sorting["indices_model"], sorting["indices_model"])],
             "Phi": Phi_model[:, sorting["indices_model"]],
             "W": W_model[:, sorting["indices_model"]],
-            "K": K_model, # <--- FIX: Do not sort the transition operator!
+            "K": K_model,
             "scores": sorting["scores_model"][sorting["indices_model"]],
             "indeces": sorting["indices_model"],
             "complex_pairs": complex_pair_idx,
@@ -525,7 +511,7 @@ sorted_data = {
     "analytic": {
         "Lambda": Lambda_analytic[sorting["indices_analytic"]],
         "Phi": Phi_analytic[:, sorting["indices_analytic"]],
-        "K_d": K_d_analytic, # <--- FIX: Do not sort the transition operator!
+        "K_d": K_d_analytic,
         "scores": sorting["scores_analytic"][sorting["indices_analytic"]],
         "indeces": sorting["indices_analytic"],
     }
@@ -543,7 +529,6 @@ n_steps = trajectories.shape[0]
 delay_depth = int(getattr(model.expander, "delay_depth", 1)) if hasattr(model, "expander") else 1
 
 if args.num_steps is not None:
-    # We need args.num_steps PLUS the delay history to roll out properly
     trunc_len = min(args.num_steps + delay_depth, n_steps)
     plot_trajectories = trajectories[:trunc_len, :n_trajectories, :]
 else:
@@ -623,7 +608,6 @@ plot_eigenfunctions(
 n_trajectories = 4
 n_modes = range(1, n_top_modes+1) 
 
-# --- FIX: Slice to match target_time + delay_depth ---
 if args.num_steps is not None:
     trunc_len = min(args.num_steps + delay_depth, trajectories.shape[0])
     trunc_trajectories = trajectories[:trunc_len, :n_trajectories, :]
@@ -670,7 +654,6 @@ if supports_truncated_rollout:
         contrib = np.asarray(diag.get("state_contribution", []), dtype=float)
         if contrib.size == 0:
             try:
-                # FIX: Use the natively UNSORTED scores array so original matrix indices map correctly!
                 contrib = np.asarray(sorting["scores_model"], dtype=float)
             except (NameError, KeyError, TypeError):
                 return None
@@ -686,7 +669,6 @@ if supports_truncated_rollout:
         total_contrib = float(np.sum(contrib))
         if total_contrib <= 1e-12: return 0.0
         
-        # Now valid_idx correctly extracts the massive scores of the top modes
         return float(np.sum(contrib[valid_idx]) / total_contrib)
 
     # 2. Run loop over targets
@@ -705,8 +687,7 @@ if supports_truncated_rollout:
 
         mode_idx = np.asarray(current_subset, dtype=int)
         actual_n = len(mode_idx)
-        
-        # Check if we already evaluated this count (e.g., if 10% happens to be 5 modes, which is already in 1-10)
+
         if any(s['n_modes'] == actual_n for s in summary_stats):
             continue
             

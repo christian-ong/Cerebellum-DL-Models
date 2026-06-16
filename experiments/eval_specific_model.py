@@ -4,7 +4,6 @@ import numpy as np
 import os
 from pathlib import Path
 
-# Import your existing, robust evaluation engine
 from experiments.eval_best_models import run_evaluations
 
 def main():
@@ -13,8 +12,6 @@ def main():
     parser.add_argument("--expansion", type=str, required=True, help="e.g., specific, general, rbf, hankel_svd")
     parser.add_argument("--system", type=str, required=True, help="e.g., closed_large, vanderpol, lorenz")
     parser.add_argument("--dt", type=float, default=0.01, help="Timestep to filter for (e.g., 0.01 or 0.05). Default: 0.01")
-    
-    # --- NEW: Top K argument ---
     parser.add_argument("--top_k", type=int, default=1, help="Number of top models to evaluate. Default: 1")
     
     # Standard evaluation arguments

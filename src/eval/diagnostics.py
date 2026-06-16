@@ -83,7 +83,6 @@ def _infer_mode_count(model_name: str, model, extras: Dict[str, Any]) -> Optiona
     if model_name not in {"regression_dmd", "ml_dmd"}:
         return None
 
-    # ---> FIX: Always trust the explicitly learned matrices first <---
     if hasattr(model, "Lambda") and getattr(model, "Lambda", None) is not None:
         try:
             return int(model.Lambda.shape[0])
@@ -102,7 +101,6 @@ def _infer_mode_count(model_name: str, model, extras: Dict[str, Any]) -> Optiona
         except Exception:
             pass
 
-    # Fallbacks:
     candidates = [
         getattr(model, "expanded_dim", None),
         getattr(model, "latent_dim", None),
@@ -150,9 +148,6 @@ def _get_expanded_indices(mode_indices, model):
     elif hasattr(model, "Lambda"):
         L = model.Lambda.detach().cpu().numpy()
         if L.ndim == 2:
-            # ---> REAL FIX: Stop grouping the entire tridiagonal matrix! <---
-            # Look ONLY for adjacent 2x2 rotation blocks (complex pairs) by 
-            # checking for skew-symmetric off-diagonals and similar diagonals.
             for i in list(expanded_idx):
                 # Check forward pair
                 if i < L.shape[0] - 1:
@@ -186,9 +181,8 @@ def _mode_subset_indices_for_fraction(diag, fraction, total_modes, model):
     n_modes = int(np.ceil(frac * total_modes))
     n_modes = min(max(n_modes, 1), total_modes)
     
-    # --- FIX: Pass model instead of diag.get("lambdas") ---
     raw_idx = np.asarray(diag["order_contrib"][:n_modes], dtype=int)
-    expanded_idx = _get_expanded_indices(raw_idx, model)  # <-- Changed
+    expanded_idx = _get_expanded_indices(raw_idx, model)
     
     return np.asarray(expanded_idx, dtype=int), pct_label, len(expanded_idx)
 
@@ -266,7 +260,6 @@ def _build_mode_subset_heatmap_specs(
             diag = compute_mode_diagnostics(model, X_states)
             contrib_order = diag.get("order_contrib", None)
     except Exception as e:
-        # ---> FIX: Surface errors instead of failing silently <---
         print(f"\n[diagnostics] WARNING: Failed to compute mode diagnostics for subset heatmaps: {e}")
         diag = None
         contrib_order = None
@@ -288,7 +281,6 @@ def _build_mode_subset_heatmap_specs(
         })
 
     if not specs or specs[-1]["name"] != "all":
-        # FIXED: Add the total_modes count to the "Full model" title
         specs.append({
             "name": "all", 
             "title": f"Full model ({total_modes} modes)", 
@@ -398,7 +390,6 @@ def _pretty_expansion_type(expansion_type: Any) -> Optional[str]:
 
 def _format_expansion_parameters(model_name: str, model, train_args: Dict[str, Any], expansion_type: Optional[str]) -> List[str]:
     params: List[str] = []
-    # Normalize expansion_type for case-insensitive checks
     expansion_type_norm = str(expansion_type).strip().lower() if expansion_type is not None else ""
 
     if expansion_type_norm in {"general", "specific"}:
@@ -481,7 +472,6 @@ def _format_expansion_parameters(model_name: str, model, train_args: Dict[str, A
             except (TypeError, ValueError):
                 params.append(f"L1 Weight {l1_weight}")
                 
-        # Handle Biorth parameter plotting
         biorth_weight = _first_nonempty(
             train_args.get("biorth_weight", None),
             getattr(model, "biorth_weight", None),
@@ -517,14 +507,12 @@ def format_model_label(model_name: str, model, extras: Dict[str, Any], system: O
     if system_name is not None:
         pieces.append(_pretty_system_name(str(system_name)))
 
-    # --- FIX: Skip expansion formatting for MLP ---
     if model_name != "mlp_baseline":
         expansion_type = _first_nonempty(
             getattr(model, "expansion_type", None),
             train_args.get("expansion_type", None),
         )
-        
-        # --- FIX: Safe degree extraction (Use None as default so we don't shadow train_args) ---
+
         try:
             deg_val = _first_nonempty(
                 getattr(model, "expansion_degree", None), 
@@ -534,12 +522,8 @@ def format_model_label(model_name: str, model, extras: Dict[str, Any], system: O
         except (TypeError, ValueError):
             deg = 1
 
-        # Intercept General Expansion with Degree <= 1
         if str(expansion_type).lower() == "general" and deg <= 1:
             pieces.append("No Expansion")
-            
-            # Pass a dummy string so _format_expansion_parameters skips "deg 1"
-            # but STILL successfully checks for "+ Trig" or "Delay" tags!
             pieces.extend(_format_expansion_parameters(model_name, model, train_args, "linear_override"))
         else:
             pretty_expansion_type = _pretty_expansion_type(expansion_type)
@@ -1351,14 +1335,12 @@ def plot_true_grid_heatmap_grid(
     cbar_err.ax.tick_params(labelleft=False, labelright=True, left=False, right=True)
     _format_three_tick_colorbar(cbar_err, vmin, vmax, use_log)
 
-    # TIGHTEN PADDING: Reduce padding on the colorbar axes to bring them left
     cax_err.tick_params(pad=1, axis='y')
     cax_traj.tick_params(pad=1, axis='y')
 
     # --------------------------------------------------
     # Trajectory colorbar
     # --------------------------------------------------
-    # FIXED: Check the new list length, and grab vmin/vmax from the first trajectory
     if traj_line_for_cbar is not None and len(traj_color_infos) > 0:
         cbar_traj = fig.colorbar(traj_line_for_cbar, cax=cax_traj)
         cbar_traj.set_label(
@@ -1376,7 +1358,6 @@ def plot_true_grid_heatmap_grid(
             False,
         )
     else:
-        # hide unused axis cleanly
         cax_traj.axis("off")
 
     # --------------------------------------------------
@@ -1385,7 +1366,6 @@ def plot_true_grid_heatmap_grid(
     # warnings with the custom GridSpec + colorbar axes.
     # --------------------------------------------------
 
-    # ADDED: Global legend placed neatly in the middle above the plots
     if dx_grid is not None and dy_grid is not None:
         legend_elements = [
             Line2D([0], [0], color="red", lw=1.5, linestyle="--", label=r"$\dot{x}_1 = 0$"),
@@ -1486,7 +1466,6 @@ def run_diagnostics(
         grid_resolution=grid_resolution,
     )
     
-    # Safely extract the base directory if data_path is already a .npz file
     if data_path.endswith('.npz'):
         base_dir = os.path.dirname(data_path)
         normal_path = data_path
@@ -1530,7 +1509,7 @@ def run_diagnostics(
         system=system,
         model_label=model_label,
         figdir=figdir,
-        trajectory_overlay=X_trajs if overlay_true_trajectory_on_grid else None, # pass X_trajs here
+        trajectory_overlay=X_trajs if overlay_true_trajectory_on_grid else None,
         trajectory_overlays=overlay_trajs,
         force_linear_error_scale=force_linear_true_grid_error_scale,
         data_path=data_path,
@@ -1550,7 +1529,6 @@ def run_diagnostics(
         subset_specs = []
 
     if subset_specs:
-        # --- FIX: Ensure manual mode indices also bring their complex partners ---
         for spec in subset_specs:
             if "mode_indices" in spec and spec["mode_indices"] is not None:
                 orig_len = len(spec["mode_indices"])
@@ -1560,7 +1538,6 @@ def run_diagnostics(
                 # Update title dynamically if we had to stitch a pair back together
                 if "Manual" in str(spec.get("title", "")) and len(expanded) != orig_len:
                     spec["title"] = f"Manual modes ({len(expanded)})"
-        # ------------------------------------
         
         grid_results_all = compute_true_grid_heatmap_grid(
             data_path=data_path,

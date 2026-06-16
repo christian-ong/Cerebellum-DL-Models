@@ -193,9 +193,6 @@ def _get_expanded_indices(mode_indices, model):
     elif hasattr(model, "Lambda"):
         L = model.Lambda.detach().cpu().numpy()
         if L.ndim == 2:
-            # ---> REAL FIX: Stop grouping the entire tridiagonal matrix! <---
-            # Look ONLY for adjacent 2x2 rotation blocks (complex pairs) by 
-            # checking for skew-symmetric off-diagonals and similar diagonals.
             for i in list(expanded_idx):
                 # Check forward pair
                 if i < L.shape[0] - 1:
@@ -239,10 +236,8 @@ def rollout_model(model, x0, steps, *, model_name=None, extras=None, rollout_mod
             if rollout_mode in {"DMD", "projected_DMD"}:
                 idx_np = clean_mode_indices(mode_indices)
                 
-                # --- FIX: UNIVERSAL MODE COUPLING PROTECTION (REGRESSION DMD) ---
                 if idx_np is not None:
                     idx_np = np.array(_get_expanded_indices(idx_np, model), dtype=np.int64)
-                # ----------------------------------------------------------------
                 
                 kwargs["mode_indices"] = idx_np
             out = model.rollout(x0, steps=steps, **kwargs)

@@ -5,7 +5,7 @@ from src.models.expander import SPECIFIC_BASES
 
 try:
     import pysindy as ps
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:
     ps = None
 
 
@@ -154,8 +154,6 @@ class SINDyBaseline:
         def final_fn(X):
             return mega_eval(X, np.sin, np.cos)
             
-        # Returning as a 1-item list ensures it plugs perfectly 
-        # into your existing `cols = [fn(x_2d) for ...]` rollout logic!
         return [final_fn]
     # --------------------------------------------------
     # Specific library helpers
@@ -373,7 +371,6 @@ class SINDyBaseline:
         )
         self.powers = self._get_fast_powers(self.feature_library, state_dim)
         
-        # --- NEW: Compile fallback features if powers returns None ---
         if self.powers is None:
             self._compiled_pysindy_fns = self._compile_pysindy_features(self.feature_names_list)
         else:
@@ -399,7 +396,6 @@ class SINDyBaseline:
         self.feature_names_list = lib.get_feature_names([f"x{i}" for i in range(state_dim)])
         self.powers = self._get_fast_powers(lib, state_dim)
         
-        # --- YOU JUST NEED TO ADD THESE 4 LINES HERE TOO! ---
         if self.powers is None:
             self._compiled_pysindy_fns = self._compile_pysindy_features(self.feature_names_list)
         else:
@@ -419,14 +415,13 @@ class SINDyBaseline:
         coef_T = self.saved_coefficients.T
         local_powers = self.powers
 
-        # --- 1. The SPECIFIC Library Loop ---
+        # 1. The SPECIFIC Library Loop
         if self.library_type == "specific":
             if self.discrete_time:
                 traj = np.zeros((steps + 1, x0.shape[0]))
                 traj[0] = x0
                 curr_x = x0
                 for i in range(1, steps + 1):
-                    # Specific basis uses its own fast transform
                     feat = self._specific_transform(curr_x)[0]
                     curr_x = feat @ coef_T
                     traj[i] = curr_x
@@ -440,7 +435,7 @@ class SINDyBaseline:
 
             return odeint(rhs, x0, t)
 
-        # --- 2. The STANDARD PySINDy Library Loop ---
+        # 2. The STANDARD PySINDy Library Loop
         lib = self.feature_library
 
         if self.discrete_time:
@@ -451,7 +446,6 @@ class SINDyBaseline:
                 if local_powers is not None:
                     feat = np.prod(np.power(curr_x, local_powers), axis=1)
                 elif getattr(self, "_compiled_pysindy_fns", None) is not None:
-                    # --- ADDED THIS ELIF TO THE CORRECT DISCRETE LOOP ---
                     x_2d = curr_x[None, :]
                     cols = [fn(x_2d) for fn in self._compiled_pysindy_fns]
                     feat = np.column_stack(cols)[0]
@@ -459,11 +453,9 @@ class SINDyBaseline:
                     try:
                         feat = lib.transform(curr_x[None, :])[0]
                     except Exception:
-                        # Fallback: try to compute polynomial features directly when possible
                         if self.library_type in {"polynomial", "poly_fourier"}:
                             feat = self._compute_polynomial_features(curr_x)
                         else:
-                            # As a last resort, use zeros to avoid hanging
                             feat = np.zeros((self.saved_coefficients.shape[1],), dtype=float)
                 curr_x = feat @ coef_T
                 traj[i] = curr_x
@@ -475,7 +467,6 @@ class SINDyBaseline:
             if local_powers is not None:
                 feat = np.prod(np.power(x_state, local_powers), axis=1)
             elif getattr(self, "_compiled_pysindy_fns", None) is not None:
-                # --- NEW: Blazing fast NumPy compilation ---
                 x_2d = x_state[None, :]
                 cols = [fn(x_2d) for fn in self._compiled_pysindy_fns]
                 feat = np.column_stack(cols)[0]

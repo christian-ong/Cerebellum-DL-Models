@@ -68,11 +68,10 @@ def train_onestep(
         model.set_lifted_normalization_stats(mean, scale)
         model._lift_stats_initialized = True
 
-    # 1. Fit the MaxAbs state scaler (supports both Koopman Expanders and standard MLPs)
+    # Fit the MaxAbs state scaler (supports both Koopman Expanders and standard MLPs)
     has_expander_scaler = hasattr(model, "expander") and hasattr(model.expander, "fit_state_scaler")
     has_model_scaler = hasattr(model, "fit_state_scaler")
 
-    # --- NEW: Only fit if not already initialized by train.py ---
     if not getattr(model, "_state_scaler_initialized", False):
         if has_expander_scaler or has_model_scaler:
             all_x = []
@@ -89,9 +88,10 @@ def train_onestep(
             
             model._state_scaler_initialized = True
 
-    # 2. THEN, calculate the lifted stats using the newly safe, bounded polynomials
+    # Calculate the lifted stats using the newly safe, bounded polynomials
     initialize_lifted_normalization(model, train_loader)
 
+    # Adam optimizer
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=lr,
@@ -100,15 +100,14 @@ def train_onestep(
 
     warmup_epochs = min(5, max(1, int(epochs)))
 
-    # 1. Warmup Phase: Linearly scale up to the initial lr
+    # Warmup Phase: Linearly scale up to the initial lr
     warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
         optimizer,
         start_factor=0.1,
         total_iters=warmup_epochs,
     )
 
-    # 2/3. If there are epochs after warmup, add a cosine decay phase.
-    # For short debug runs (e.g. epochs <= warmup), keep warmup-only scheduling.
+    # Cosine Annealing scheduler after warmup
     if int(epochs) > warmup_epochs:
         cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
@@ -230,7 +229,6 @@ def train_onestep(
         model.current_epoch = epoch
         model.train()
 
-        # Set rollout horizon for this epoch
         if rollout_horizon is not None:
             model.rollout_horizon = int(rollout_horizon)
 
@@ -270,7 +268,6 @@ def train_onestep(
             else:
                 y_hat = model(x)
                 loss = loss_fn(y_hat, y)
-                # Baselines that do not expose component losses only report state loss.
                 loss_dict = {"state": loss.item()}
 
             # -------------------
@@ -295,13 +292,9 @@ def train_onestep(
 
         preferred_order = [
             "state",
-            "lift",       # Added lift to track the base Koopman loss
-            "rollout",    # Added rollout
-            "phi_ortho",
-            "unit",
-            "manifold",   # Replaced old lam_* keys with the new structural keys
-            "same_sign",
-            "lam_sp",
+            "lift",
+            "rollout",
+            "unit"
         ]
         ordered_comp_keys = [k for k in preferred_order if k in avg_comps]
         ordered_comp_keys.extend(sorted(k for k in avg_comps if k not in preferred_order))
@@ -344,7 +337,7 @@ def train_onestep(
 
                     batch_size = xv.size(0)
                     val_loss_acc += batch_l.item() * batch_size
-                    # Track state loss separately for scheduler
+
                     state_loss = batch_loss_dict.get("state", batch_l.item())
                     val_state_loss_acc += state_loss * batch_size
                     n_val += batch_size

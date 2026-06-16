@@ -3,10 +3,6 @@ import glob
 import pandas as pd
 import numpy as np
 
-# ---------------------------------------------------------
-# Set your "Solved" threshold here! 
-# 1e-2 is visually indistinguishable. 1e-3 is mathematical perfection.
-# ---------------------------------------------------------
 SOLVED_THRESHOLD = 1e-2
 
 def _pretty_model_name(model_name: str) -> str:
@@ -27,7 +23,7 @@ def format_latex_scientific(val, is_solved=False, is_best=False):
         return "-"
     val_str = f"{val:.2e}"
     base, exp = val_str.split('e')
-    exp = int(exp) # removes leading zeros like -04 -> -4
+    exp = int(exp)
     
     # Base mathematical string
     inner_str = f"{base} \\times 10^{{{exp}}}"
@@ -57,8 +53,6 @@ def format_param_cell(row):
     if pd.isna(row['target_rmse']):
         return "-"
         
-    # Note: 'model' is already passed through _pretty_model_name before this runs,
-    # so the values here are 'nn-edmd', 'nn-linop', 'mlp', 'sindy', 'edmd', etc.
     model = str(row.get('model_name', '')).lower()
     exp_type = str(row.get('expansion_type', 'none')).lower()
 
@@ -132,7 +126,6 @@ def format_param_cell(row):
                 lines.append("Specific Basis")
             else:
                 deg = row.get('expansion_degree')
-                # CHANGED: Now uses "General Expansion" instead of "Polynomial Expansion"
                 lines.append("General Expansion")
                 if pd.notna(deg): lines.append(f"Degree: {int(deg)}")
         
@@ -156,7 +149,7 @@ def format_param_cell(row):
     if not lines:
         lines.append("Default Parameters")
 
-    # 1. ALWAYS show dt at the very bottom
+    # ALWAYS show dt at the very bottom
     dt_val = row.get('dt')
     if pd.notna(dt_val):
         lines.append(f"dt: {dt_val}")
@@ -194,7 +187,6 @@ def build_latex_table(pivot_df, caption, label, is_param_table=False):
     added_systems = set()
     first_group = True
     
-    # NEW: Define a light, semi-transparent line for row separation
     light_line = "\\arrayrulecolor{black!20}\\midrule\\arrayrulecolor{black}"
     
     for sys_names in categories:
@@ -258,7 +250,6 @@ if __name__ == "__main__":
     best_runs['model_name'] = best_runs['model_name'].apply(_pretty_model_name)
     best_runs['system_name'] = best_runs['system_name'].str.replace("_", " ").str.title()
 
-    # --- NEW: Compute row minimums to find the best model per system ---
     # Use idxmin() to strictly pick the FIRST occurrence of the minimum, breaking exact ties
     best_idx = best_runs.groupby('system_name')['target_rmse'].idxmin()
     best_runs['is_best'] = best_runs.index.isin(best_idx)

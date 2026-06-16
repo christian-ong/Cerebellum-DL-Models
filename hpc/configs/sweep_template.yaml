@@ -22,35 +22,38 @@ command:
 parameters:
   model:
     values:
-      - ml_linear_dynamics
+      - ml_dmd
 
   data_path:
     values:
       - data/trajectories/nonlinear/vanderpol/dt_0.01
-      - data/trajectories/nonlinear/lotka_volterra/dt_0.01
-      - data/trajectories/nonlinear/duffing/dt_0.01
-      - data/trajectories/nonlinear/lorenz/dt_0.01
 
   lr:
-    values: [1e-2, 1e-3, 1e-4, 1e-5]
-
-  expansion_degree:
-    values: [3, 5, 7]
-  
-  rollout_horizon:
-    values: [10, 20, 50]
-
-  weight_decay:
-    values: [0.0]
+    values: [1e-3]
 
   batch_size:
     values: [2048]
 
+  weight_decay:
+    values: [0.0]
+
+  rollout_horizon:
+    values: [10, 20, 50] 
+
+  biorth_weight:
+    values: [0.1, 1.0, 10.0]
+
   expansion_type:
     values: ["general"]
 
+  expansion_degree:
+    values: [3]
+  
   sine_cosine_expansion:
-    values: ["false"]
+    values: ["true"]
 
+  l1_weight:
+    values: [1e-3, 1e-2, 1e-1]
+  
   bias:
     values: ["true"]

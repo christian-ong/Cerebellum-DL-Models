@@ -32,10 +32,6 @@ class ML_DMD(nn.Module):
         # ------------------------------------------------
         # Initialize basis expansion
         # ------------------------------------------------
-        # This creates the lifted state representation z.
-        # The expansion can now be either:
-        #   - ManualExpansion  (general / specific)
-        #   - RBFExpansion     (rbf)
         self.expander = build_expander(
             state_dim=state_dim,
             expansion_type=expansion_type,
@@ -69,14 +65,14 @@ class ML_DMD(nn.Module):
         # ------------------------------------------------
         # Eigenvector matrix Φ
         # ------------------------------------------------
-        # Columns correspond to Koopman modes.
-        # Initialized close to identity for stability.
         self.Phi = nn.Parameter(
             torch.eye(self.latent_dim)
             + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
         )
 
-        # --- NEW: Left Eigenvector matrix (acts as Phi inverse) ---
+        # ------------------------------------------------
+        # Left eigenvector matrix W (acts as Φ^-1)
+        # ------------------------------------------------
         self.W = nn.Parameter(
             torch.eye(self.latent_dim)
             + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
@@ -85,17 +81,12 @@ class ML_DMD(nn.Module):
         # ------------------------------------------------
         # Eigenvalue matrix Λ
         # ------------------------------------------------
-        # We allow Λ to be a full matrix instead of diagonal.
-        # This allows the model to represent complex eigenvalue
-        # pairs using real-valued 2×2 blocks.
         self.Lambda = nn.Parameter(
             torch.eye(self.latent_dim)
             + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
         )
 
     def set_lifted_normalization_stats(self, mean, scale):
-    # For dynamical systems, we often ONLY want to scale, not shift.
-    # To follow your intuition: force mean to 0 to preserve the origin.
         self.lift_mean.fill_(0.0) 
         self.lift_scale.copy_(scale)
 
@@ -115,7 +106,6 @@ class ML_DMD(nn.Module):
 
     def get_Phi_inv(self):
         """Return the LEARNED left eigenvector matrix (acts as Phi inverse)."""
-        # FIX: Expose the learned W matrix instead of calculating the exact inverse
         return self.W
 
     def get_Lambda(self):
@@ -124,13 +114,10 @@ class ML_DMD(nn.Module):
 
     def get_K(self):
         """Return the lifted Koopman operator: K = Phi Lambda W"""
-        # This will now correctly use self.W because we updated get_Phi_inv
         Phi_inv = self.get_Phi_inv()
         return self.Phi @ self.Lambda @ Phi_inv
 
-    # Standardize these three helpers in ML_DMD_FREE
     def _get_modal_coords(self, z):
-            # Direct matrix multiplication instead of matrix inversion!
             return z @ self.W.mT
 
     def _step_modal(self, b):
@@ -195,7 +182,6 @@ class ML_DMD(nn.Module):
         z_norm = self._normalize(z_raw)
         z_next_true_norm = self._normalize(z_next_true_raw)
 
-        # Use helper for consistency
         b_curr = self._get_modal_coords(z_norm)
         b_next = self._step_modal(b_curr)
         z_next_pred = self._modal_to_latent(b_next)
@@ -234,11 +220,11 @@ class ML_DMD(nn.Module):
         col_norms = torch.linalg.norm(phi_phys, dim=0)
         loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
 
-        # --- NEW: Bi-Orthogonality Penalty (Forces W to act as Phi^-1) ---
+        # Bi-Orthogonality Penalty (Forces W to act as Phi^-1)
         I_target = torch.eye(self.latent_dim, device=x.device)
         loss_biortho = torch.mean((self.Phi @ self.W - I_target)**2)
 
-        # --- UPDATED: Tridiagonal L1 Sparsity Penalty ---
+        # Tridiagonal L1 Sparsity Penalty
         lam = self.get_Lambda() if hasattr(self, "get_Lambda") else self.Lambda
         
         # Mask everything EXCEPT the main diagonal, super-diagonal, and sub-diagonal
@@ -267,7 +253,7 @@ class ML_DMD(nn.Module):
             "state": loss_state.item(),
             "rollout": loss_rollout.item(),
             "unit": loss_unit_length.item(),
-            "biortho": loss_biortho.item(),   # <--- Track it in W&B
+            "biortho": loss_biortho.item(),
             "sparsity": loss_sparsity.item(), 
         }
 

@@ -42,7 +42,6 @@ def _subtitle_from_row(row, evaluation_rollout_mode: str | None = None) -> str:
 
     model_name = str(row.get("model_name", ""))
     
-    # --- FIX: Skip expansion formatting for MLP ---
     if model_name != "mlp_baseline":
         expansion_type = row.get("expansion_type", None)
         if expansion_type is not None and not pd.isna(expansion_type):
@@ -437,16 +436,11 @@ def resolve_model_checkpoint(model_name, system, run_name):
     elif model_name == "mlp_baseline":
         folder_candidates.append("mlp_baseline")
 
-    # ---------------------------------------------------------
-    # FIXED: Group regression_dmd with the other neural networks
-    # so it correctly prioritizes the new .pt files!
-    # ---------------------------------------------------------
     if model_name in {"linear_baseline", "dmd_baseline", "sindy_baseline"}:
         file_candidates = ["model.npz", "model.pkl", "model.pt"] 
     elif model_name == "hardcoded_dmd":
         file_candidates = ["model.pt", "model_best.pt"]
     else:
-        # This now catches regression_dmd, ml_dmd, ml_linop, mlp, etc.
         file_candidates = ["model_best.pt", "model.pt", "model.npz"]
 
     for folder_name in dict.fromkeys(folder_candidates):
@@ -645,7 +639,6 @@ def run_evaluations(
 
         try:
             if str(model_path).endswith('.pt') or str(model_path).endswith('.pth'):
-                # ADD weights_only=False HERE
                 _ = torch.load(model_path, map_location="cpu", weights_only=False) 
             elif str(model_path).endswith('.npz'):
                 _ = _np.load(model_path, allow_pickle=True)

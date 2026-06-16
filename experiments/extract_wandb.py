@@ -30,18 +30,12 @@ def main():
     # 2. FLATTEN & PROCESS
     df = pd.json_normalize(rows, sep="_")
     
-    # =====================================================================
-    # --- ADD THIS BLOCK TO RENAME THE MODEL IN THE EXTRACTED DATA ---
-    # 1. Replace exact cell matches (fixes 'config_model' etc.)
     df = df.replace({"ml_dmd_drop": "ml_dmd"})
-    
-    # 2. Replace substrings inside strings and lists (fixes 'group', 'tags', 'run_name')
     for col in df.select_dtypes(include=['object']):
         df[col] = df[col].apply(
             lambda x: x.replace("ml_dmd_drop", "ml_dmd") if isinstance(x, str) else 
                       [i.replace("ml_dmd_drop", "ml_dmd") if isinstance(i, str) else i for i in x] if isinstance(x, list) else x
         )
-    # =====================================================================
 
     os.makedirs("experiments/wandb", exist_ok=True)
     df.to_csv("experiments/wandb/wandb_all_runs.csv", index=False)

@@ -85,7 +85,6 @@ def _safe_matmul(A, B, clip_abs=1e30):
     try:
         return A_s @ B_s
     except Exception:
-        # On any failure, return zeros of expected shape
         out_shape = (A_s.shape[0], B_s.shape[1]) if A_s.ndim == 2 and B_s.ndim == 2 else np.zeros((0,))
         return np.zeros(out_shape, dtype=complex if np.iscomplexobj(A_s) or np.iscomplexobj(B_s) else float)
 
@@ -108,7 +107,6 @@ def build_model_from_checkpoint(model_path, device="cpu"):
     rollout_mode_override = os.environ.get("EVAL_REGRESSION_ROLLOUT_MODE")
     dev = torch.device(device)
 
-    # Helper for safe tensor loading across both formats
     def _safe_tensor(val, dtype):
         if val is None or (isinstance(val, np.ndarray) and val.dtype == object and val.item() is None):
             return None
@@ -227,7 +225,6 @@ def build_model_from_checkpoint(model_path, device="cpu"):
     # ---------------------------------------------------------
     # PyTorch Checkpoints (.pt) 
     # ---------------------------------------------------------
-    # Added weights_only=False to allow numpy matrices to load safely
     ckpt = torch.load(model_path, map_location=device, weights_only=False)
     
     model_name = ckpt.get("model", ckpt.get("model_name", "ml_dmd"))
@@ -265,11 +262,8 @@ def build_model_from_checkpoint(model_path, device="cpu"):
             rbf_knn_k=int(train_args.get("rbf_knn_k", 5)),
         ).to(device)
 
-        # Magically restores the internal Expander buffers!
         if "model_state_dict" in ckpt:
             model.load_state_dict(ckpt["model_state_dict"])
-            
-        # Re-hydrate the numpy matrices safely
         if "dmd_matrices" in ckpt:
             dmd_mats = ckpt["dmd_matrices"]
 
@@ -776,7 +770,6 @@ def find_complex_pairs(
         block_scores = []
         n_modes = len(Lambda)
 
-        # ---> FIX: Global search across ALL possible (i, j) pairs!
         for i in range(n_modes):
             for j in range(i + 1, n_modes):
                 a = Lambda[i, i]
@@ -855,10 +848,6 @@ def rotation_blocks_to_complex(Lambda, Phi, complex_pair_idx, W=None):
         if discriminant >= 0:
             # Leave Jordan blocks and real pairs strictly alone
             continue
-            
-        # ---> FIX: Exact Similarity Transform (P^-1 Lambda P) <---
-        # Applying this to the full row/column guarantees any off-diagonal 
-        # couplings the network learned are preserved perfectly in complex space!
         
         # 1. Transform Lambda (Left multiply by P^-1 on rows)
         row_i = Lambda_complex[i, :].copy()
@@ -906,25 +895,19 @@ def plot_transition_matrices(matrices, title, model_expansion_names, analytic_ex
         ax.set_title(subtitle, fontsize=13)
         fig.colorbar(im, ax=ax, fraction=0.038, pad=0.018)
         
-        # Model or analytic expansion names (for x/y ticks)
         expansion_names = model_expansion_names if "model" in subtitle.lower() else analytic_expansion_names
 
-        # --- Corrected X Ticks ---
         if "K" in subtitle:
             # K maps basis functions to basis functions (Square Matrix)
             ax.set_xticks(range(len(expansion_names)))
             ax.set_xticklabels(expansion_names, rotation=60, fontsize=8)
         else:
-            # Remove x-labels for Phi (modes) and Lambda (modes)
             ax.set_xticks([])
 
-        # --- Corrected Y Ticks ---
         if "K" in subtitle or "Phi" in subtitle:
-            # Both K and Phi rows index the basis functions (Observables)
             ax.set_yticks(range(len(expansion_names)))
             ax.set_yticklabels(expansion_names, fontsize=8)
         else:
-            # Remove y-labels for Lambda (modes)
             ax.set_yticks([])
 
         # Dynamically scale font size based on matrix dimension
@@ -1056,7 +1039,6 @@ def plot_koopman_mode_rollout(
         
     real_traj_input_t = torch.as_tensor(real_traj_input, dtype=torch.float32, device=device)
     
-    # ---> FIX: Normalize physical state before expansion <---
     if hasattr(model, "_normalize_x"):
         real_traj_input_scaled = model._normalize_x(real_traj_input_t)
     else:
@@ -1089,13 +1071,10 @@ def plot_koopman_mode_rollout(
         else:
             init_input = init_conditions
         
-        # ---> FIX: Rollout in physical space to ensure dimensions match W
         rollout_phys = model.rollout(init_input, steps=n_steps_valid-1)
         x_rollout = rollout_phys.detach() if hasattr(rollout_phys, "detach") else torch.as_tensor(rollout_phys)
         x_rollout_np = x_rollout.cpu().numpy()
         
-        # Safely extract exactly the future steps (n_steps_valid - 1)
-        # model.rollout typically includes the initial condition, making it steps+1 long.
         future_steps = n_steps_valid - 1
         if future_steps > 0:
             x_rollout_future = x_rollout_np[-future_steps:]
@@ -1231,13 +1210,12 @@ def plot_eigenfunctions(
     eigenfunction_vals = grid_points_expanded @ W
 
     # Compute complex pairs for annotation
-    complex_pairs = [sorted([int(i+1), int(j+1)]) for i, j in complex_pair_idx] # 1-based index and internal sort
+    complex_pairs = [sorted([int(i+1), int(j+1)]) for i, j in complex_pair_idx]
 
     grid_n = int(np.sqrt(len(grid_points)))
     extent = [grid_points[:,0].min(), grid_points[:,0].max(), grid_points[:,1].min(), grid_points[:,1].max()]
     num_modes = eigenfunction_vals.shape[1]
 
-    # --- FIX 1: Adjust figsize to give the 4 rows enough vertical space to be square ---
     fig_width = max(6.0, 3.0 * num_modes)
     fig, axes = plt.subplots(4, num_modes, figsize=(fig_width, 11.0))
     
@@ -1245,10 +1223,8 @@ def plot_eigenfunctions(
     if num_modes == 1:
         axes = axes[:, np.newaxis]
     
-    # --- FIX: Track visible pairs dynamically ---
     visible_pair_counter = 1
     pair_to_stars = {}
-    # --------------------------------------------
 
     for mode_idx in range(num_modes):
         data_map = {
@@ -1282,7 +1258,6 @@ def plot_eigenfunctions(
             ax = axes[i, mode_idx]
             im = ax.imshow(data.reshape(grid_n, grid_n), extent=extent, origin="lower", cmap=cmap, aspect='auto')
             
-            # --- FIX 2: Force the subplot box to be a perfect square ---
             ax.set_box_aspect(1)
             
             ax.set_title(f"{label}")
@@ -1331,7 +1306,6 @@ def modes_by_mse(model, Phi, Lambda, real_traj, W=None):
         
     real_traj_input_t = torch.as_tensor(real_traj_input, dtype=torch.float32, device=device)
     
-    # ---> FIX: Normalize physical state before expansion <---
     if hasattr(model, "_normalize_x"):
         real_traj_input_scaled = model._normalize_x(real_traj_input_t)
     else:
@@ -1340,7 +1314,6 @@ def modes_by_mse(model, Phi, Lambda, real_traj, W=None):
     expanded_traj_flattened = safe_expand(model, real_traj_input_scaled).cpu().numpy()
     expanded_traj = expanded_traj_flattened.reshape(n_steps_valid, n_trajs, -1)
     
-    # --- Normalize initial conditions so W projection is accurate ---
     expanded_init_conditions = torch.as_tensor(expanded_traj[0, :, :], dtype=torch.float32)
     if hasattr(model, "_normalize"):
         expanded_init_conditions = model._normalize(expanded_init_conditions)
@@ -1379,7 +1352,6 @@ def modes_by_mse(model, Phi, Lambda, real_traj, W=None):
         z_i = np.einsum('tn,d->tnd', b_i, phi_i) 
         
         if np.iscomplexobj(z_i):
-            # FIX: Multiply genuinely complex modes by 2 to account for the conjugate partner
             if np.abs(np.imag(Lambda[i, i])) > 1e-6:
                 z_i = 2 * z_i.real
             else:
@@ -1390,8 +1362,6 @@ def modes_by_mse(model, Phi, Lambda, real_traj, W=None):
         if hasattr(model, "_unnormalize"):
             z_i_unnorm = model._unnormalize(z_i_tensor)
         elif hasattr(model, "psi_scale"):
-            # FIX: Regression DMD's C_fitted natively expects normalized inputs. 
-            # Do NOT multiply by psi_scale!
             z_i_unnorm = z_i_tensor 
         else:
             z_i_unnorm = z_i_tensor
@@ -1414,8 +1384,6 @@ def modes_by_mse(model, Phi, Lambda, real_traj, W=None):
             x_i_pred_t = x_i_pred_t_flat.reshape(T_steps, N_traj, -1)
             
         x_i_pred = x_i_pred_t.detach().cpu().numpy()
-        
-        # ---> FIX: Strip delay history from Regression DMD prediction <---
         x_i_pred = x_i_pred[:, :, :state_dim]
         
         # 5. MSE against the true physical trajectory
@@ -1425,7 +1393,6 @@ def modes_by_mse(model, Phi, Lambda, real_traj, W=None):
     # Sort lowest error to highest
     ranked_indices = np.argsort(mode_mses)[::1]
     
-    # ---> THIS RETURN WAS MISSING <---
     return ranked_indices, mode_mses
 
 def _get_expanded_indices(mode_indices, model):
@@ -1451,9 +1418,6 @@ def _get_expanded_indices(mode_indices, model):
     elif hasattr(model, "Lambda"):
         L = model.Lambda.detach().cpu().numpy()
         if L.ndim == 2:
-            # ---> REAL FIX: Stop grouping the entire tridiagonal matrix! <---
-            # Look ONLY for adjacent 2x2 rotation blocks (complex pairs) by 
-            # checking for skew-symmetric off-diagonals and similar diagonals.
             for i in list(expanded_idx):
                 # Check forward pair
                 if i < L.shape[0] - 1:
@@ -1524,7 +1488,6 @@ def truncated_rollout(
             
     z0_norm_np = z0_norm.detach().cpu().numpy()
     
-    # Project using the PASSED-IN, sorted W matrix!
     b_t = z0_norm_np @ W 
     
     # ---------------------------------------------------------
@@ -1536,8 +1499,6 @@ def truncated_rollout(
     if mode_indices is None:
         mode_indices = list(range(min(n_modes, latent_dim)))
     
-    # We no longer need _get_expanded_indices because Phi/Lambda/W are already 
-    # perfectly formatted as diagonal complex pairs by the main script!
     mask[mode_indices] = 1.0
     b_t = b_t * mask
 
@@ -1564,11 +1525,8 @@ def truncated_rollout(
             
             # Unnormalize latent
             if hasattr(model, "_unnormalize"):
-                # ML DMD requires un-scaling before de-expanding
                 z_unnorm = model._unnormalize(z_norm_tensor)
             elif hasattr(model, "psi_scale"):
-                # FIX: Regression DMD's C_fitted natively expects normalized inputs. 
-                # Do NOT multiply by psi_scale!
                 z_unnorm = z_norm_tensor 
             else:
                 z_unnorm = z_norm_tensor
