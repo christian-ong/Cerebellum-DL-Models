@@ -11,6 +11,8 @@ import textwrap
 
 
 from src.eval.model_io import predict_rollout_from_x0
+from src.eval.model_io import supports_mode_subset_rollout
+from src.eval.noise_robustness import compute_mode_diagnostics
 from src.eval.delay_utils import (
     get_model_delay_depth,
     make_backward_delay_x0_from_current_states,
@@ -76,18 +78,236 @@ def get_phase_dims(system: str, state_dim: int) -> Tuple[int, int]:
     return 0, 1
 
 
+def _infer_mode_count(model_name: str, model, extras: Dict[str, Any]) -> Optional[int]:
+    """Best-effort inference of the available modal dimension for mode-subset comparisons."""
+    if model_name not in {"regression_dmd", "ml_dmd"}:
+        return None
+
+    # ---> FIX: Always trust the explicitly learned matrices first <---
+    if hasattr(model, "Lambda") and getattr(model, "Lambda", None) is not None:
+        try:
+            return int(model.Lambda.shape[0])
+        except Exception:
+            pass
+            
+    if hasattr(model, "Lambda_fitted") and getattr(model, "Lambda_fitted", None) is not None:
+        try:
+            return int(model.Lambda_fitted.shape[0])
+        except Exception:
+            pass
+            
+    if hasattr(model, "Phi_lift_fitted") and getattr(model, "Phi_lift_fitted", None) is not None:
+        try:
+            return int(model.Phi_lift_fitted.shape[1])
+        except Exception:
+            pass
+
+    # Fallbacks:
+    candidates = [
+        getattr(model, "expanded_dim", None),
+        getattr(model, "latent_dim", None),
+        getattr(model, "rank", None),
+    ]
+
+    train_args = _get_train_args(extras)
+    for key in ("rank", "latent_dim", "expanded_dim", "expansion_degree"):
+        if key in train_args:
+            candidates.append(train_args.get(key))
+
+    for value in candidates:
+        try:
+            if value is None:
+                continue
+            count = int(value)
+            if count > 0:
+                return count
+        except Exception:
+            continue
+
+    return None
+
+
+def _get_expanded_indices(mode_indices, model):
+    if mode_indices is None or len(mode_indices) == 0:
+        return mode_indices
+        
+    expanded_idx = set(mode_indices)
+    
+    # 1. Complex diagonal models (Regression DMD)
+    if hasattr(model, "Lambda_fitted"):
+        L = model.Lambda_fitted.detach().cpu().numpy()
+        L_diag = np.diag(L) if L.ndim == 2 else L
+        if np.iscomplexobj(L_diag):
+            for i in mode_indices:
+                if abs(L_diag[i].imag) > 1e-6:
+                    diffs = np.abs(L_diag - L_diag[i].conj())
+                    diffs[i] = np.inf
+                    conj_idx = int(np.argmin(diffs))
+                    if diffs[conj_idx] < 1e-4:
+                        expanded_idx.add(conj_idx)
+                        
+    # 2. Real block matrices (ML DMD)
+    elif hasattr(model, "Lambda"):
+        L = model.Lambda.detach().cpu().numpy()
+        if L.ndim == 2:
+            # ---> REAL FIX: Stop grouping the entire tridiagonal matrix! <---
+            # Look ONLY for adjacent 2x2 rotation blocks (complex pairs) by 
+            # checking for skew-symmetric off-diagonals and similar diagonals.
+            for i in list(expanded_idx):
+                # Check forward pair
+                if i < L.shape[0] - 1:
+                    a, b = L[i, i], L[i, i+1]
+                    c, d = L[i+1, i], L[i+1, i+1]
+                    if abs(b) > 1e-3 and abs(c) > 1e-3 and np.sign(b) != np.sign(c) and abs(a - d) < 1e-3:
+                        expanded_idx.add(i+1)
+                # Check backward pair
+                if i > 0:
+                    a, b = L[i-1, i-1], L[i-1, i]
+                    c, d = L[i, i-1], L[i, i]
+                    if abs(b) > 1e-3 and abs(c) > 1e-3 and np.sign(b) != np.sign(c) and abs(a - d) < 1e-3:
+                        expanded_idx.add(i-1)
+            
+    return sorted(list(expanded_idx))
+
+def _mode_subset_indices_for_fraction(diag, fraction, total_modes, model):
+    if fraction is None or total_modes <= 0:
+        return None, None, None
+
+    raw_fraction = float(fraction)
+    pct_value = raw_fraction * 100.0 if raw_fraction <= 1.0 else raw_fraction
+    pct_value = float(np.clip(pct_value, 0.0, 100.0))
+    frac = pct_value / 100.0
+
+    if np.isclose(pct_value, round(pct_value)):
+        pct_label = str(int(round(pct_value)))
+    else:
+        pct_label = (f"{pct_value:.3f}".rstrip("0").rstrip(".")).replace(".", "p")
+
+    n_modes = int(np.ceil(frac * total_modes))
+    n_modes = min(max(n_modes, 1), total_modes)
+    
+    # --- FIX: Pass model instead of diag.get("lambdas") ---
+    raw_idx = np.asarray(diag["order_contrib"][:n_modes], dtype=int)
+    expanded_idx = _get_expanded_indices(raw_idx, model)  # <-- Changed
+    
+    return np.asarray(expanded_idx, dtype=int), pct_label, len(expanded_idx)
+
+
+def _mode_subset_specs_for_fractions(diag, fractions, total_modes, model):
+    specs = []
+    by_mode_count = {}
+    contrib = np.asarray(diag.get("state_contribution", []), dtype=float)
+    total_contrib = float(np.sum(contrib)) if contrib.size > 0 else 0.0
+
+    for fraction in fractions or []:
+        contrib_idx, pct_label, n_modes = _mode_subset_indices_for_fraction(diag, fraction, total_modes, model)
+        if contrib_idx is None or pct_label is None:
+            continue
+
+        if total_contrib > 0 and np.isfinite(total_contrib):
+            actual_score = float(np.sum(contrib[np.asarray(contrib_idx, dtype=int)]) / total_contrib)
+        else:
+            actual_score = None
+
+        spec = by_mode_count.get(n_modes)
+        if spec is None:
+            spec = {
+                "pct_labels": [pct_label],
+                "mode_indices": contrib_idx,
+                "n_modes": n_modes,
+                "actual_score": actual_score,
+            }
+            by_mode_count[n_modes] = spec
+            specs.append(spec)
+        else:
+            spec["pct_labels"].append(pct_label)
+            if spec.get("actual_score") is None and actual_score is not None:
+                spec["actual_score"] = actual_score
+
+    return specs
+
+
+def _build_mode_subset_heatmap_specs(
+    *,
+    model_name: str,
+    model,
+    extras: Dict[str, Any],
+    mode_subset_thresholds: Optional[List[float]],
+    mode_subset_indices: Optional[List[int]],
+    X_states: Optional[np.ndarray] = None,
+) -> List[Dict[str, object]]:
+    """Build heatmap columns for mode-subset comparisons and append the full model last."""
+    specs: List[Dict[str, object]] = []
+    total_modes = _infer_mode_count(model_name, model, extras)
+
+    if total_modes is None or total_modes <= 0:
+        return [{"name": "all", "title": "Full model", "mode_indices": None}]
+
+    requested_thresholds = [float(t) for t in (mode_subset_thresholds or []) if float(t) > 0]
+
+    if mode_subset_indices:
+        if mode_subset_indices:
+            idx = [int(i) for i in mode_subset_indices if 0 <= int(i) < total_modes]
+            if idx:
+                specs.append({
+                    "name": "manual",
+                    "title": f"Manual modes ({len(idx)})",
+                    "mode_indices": np.asarray(idx, dtype=int),
+                })
+        return specs + [{"name": "all", "title": "Full model", "mode_indices": None}]
+
+    if not requested_thresholds:
+        requested_thresholds = [0.01, 0.05, 0.10, 0.25, 0.50, 1.0]
+
+    contrib_order = None
+    diag = None
+    try:
+        if X_states is not None:
+            diag = compute_mode_diagnostics(model, X_states)
+            contrib_order = diag.get("order_contrib", None)
+    except Exception as e:
+        # ---> FIX: Surface errors instead of failing silently <---
+        print(f"\n[diagnostics] WARNING: Failed to compute mode diagnostics for subset heatmaps: {e}")
+        diag = None
+        contrib_order = None
+
+    if diag is None or contrib_order is None:
+        return [{"name": "all", "title": "Full model", "mode_indices": None}]
+
+    for spec in _mode_subset_specs_for_fractions(diag, requested_thresholds, total_modes, model):
+        pct_text = ", ".join(f"{pct}%" for pct in spec["pct_labels"])
+        actual_score = spec.get("actual_score")
+        if actual_score is not None:
+            title = f"{spec['n_modes']} Modes ({pct_text}) | C={actual_score:.3f}"
+        else:
+            title = f"{spec['n_modes']} Modes ({pct_text})"
+        specs.append({
+            "name": f"pct_{spec['n_modes']}",
+            "title": title,
+            "mode_indices": np.asarray(spec["mode_indices"], dtype=int),
+        })
+
+    if not specs or specs[-1]["name"] != "all":
+        # FIXED: Add the total_modes count to the "Full model" title
+        specs.append({
+            "name": "all", 
+            "title": f"Full model ({total_modes} modes)", 
+            "mode_indices": None
+        })
+
+    return specs
+
+
 def _pretty_model_name(model_name: str) -> str:
     names = {
-        "linear_baseline": "Linear baseline",
-        "dmd_baseline": "DMD baseline",
-        "regression_dmd": "Regression DMD",
-        "ml_lineardynamics": "ML linear dynamics",
-        "ml_dmd": "ML-DMD",
-        "ml_dmd_free": "ML-DMD",
-        "ml_dmd_band": "ML-DMD",
-        "hardcoded_dmd": "Hardcoded DMD",
-        "mlp_baseline": "MLP baseline",
-        "sindy_baseline": "SINDy baseline",
+        "linear_baseline": "LSTSQ",
+        "dmd_baseline": "DMD",
+        "regression_dmd": "EDMD",
+        "ml_lineardynamics": "NN-LINOP",
+        "ml_dmd": "NN-EDMD",
+        "hardcoded_dmd": "DMD",
+        "mlp_baseline": "MLP",
+        "sindy_baseline": "SINDy",
     }
     return names.get(model_name, model_name.replace("_", " ").title())
 
@@ -160,81 +380,73 @@ def _first_nonempty(*values):
     return None
 
 
-def format_model_label(model_name: str, model, extras: Dict[str, Any]) -> str:
-    """
-    Build a compact, model-agnostic label for plot titles.
+def _pretty_expansion_type(expansion_type: Any) -> Optional[str]:
+    value = _first_nonempty(expansion_type)
+    if value is None:
+        return None
 
-    Intentionally excludes basis / expansion_type from the title because it is
-    not always meaningful across model families and can make titles too long.
+    normalized = str(value).strip().lower()
+    mapping = {
+        "general": "General",
+        "specific": "Specific",
+        "rbf": "RBF",
+        "hankel": "Hankel",
+        "hankel_svd": "Hankel",
+    }
+    return mapping.get(normalized, str(value).replace("_", " ").title())
 
-    Prioritizes:
-    - degree / expansion degree
-    - rank / latent rank / Hankel rank
-    - rollout mode
-    - delay depth when relevant
-    - a few ML architecture params when relevant
-    """
-    pieces = [_pretty_model_name(model_name)]
-    train_args = _get_train_args(extras)
 
-    # -------------------------------
-    # Shared/common params
-    # -------------------------------
-    degree = _first_nonempty(
-        getattr(model, "expansion_degree", None),
-        train_args.get("expansion_degree", None),
-        train_args.get("degree", None),
-    )
+def _format_expansion_parameters(model_name: str, model, train_args: Dict[str, Any], expansion_type: Optional[str]) -> List[str]:
+    params: List[str] = []
+    # Normalize expansion_type for case-insensitive checks
+    expansion_type_norm = str(expansion_type).strip().lower() if expansion_type is not None else ""
 
-    rank = _first_nonempty(
-        getattr(model, "rank", None),
-        getattr(model, "latent_dim", None) if model_name in {"ml_dmd", "ml_dmd_free", "ml_dmd_band"} else None,
-        train_args.get("rank", None),
-        train_args.get("hankel_rank", None),
-    )
-
-    rollout_mode = _first_nonempty(
-        extras.get("rollout_mode", None),
-        getattr(model, "rollout_mode", None),
-        train_args.get("regression_rollout_mode", None),
-        train_args.get("rollout_mode", None),
-    )
-
-    delay_depth = _first_nonempty(
-        getattr(model, "delay_depth", None),
-        getattr(getattr(model, "expander", None), "delay_depth", None),
-        train_args.get("delay_depth", None),
-    )
-
-    if degree is not None:
-        pieces.append(f"deg={degree}")
-
-    if rank is not None:
-        pieces.append(f"rank={rank}")
-
-    if rollout_mode is not None:
-        pieces.append(f"rollout={rollout_mode}")
-
-    if delay_depth not in {None, "1"}:
-        pieces.append(f"delay={delay_depth}")
-
-    # -------------------------------
-    # ML-specific architecture params
-    # -------------------------------
-    if model_name in {"ml_lineardynamics", "ml_dmd", "ml_dmd_free", "ml_dmd_band", "hardcoded_dmd"}:
-        hidden_dim = _first_nonempty(
-            getattr(model, "hidden_dim", None),
-            train_args.get("hidden_dim", None),
+    if expansion_type_norm in {"general", "specific"}:
+        degree = _first_nonempty(
+            getattr(model, "expansion_degree", None),
+            train_args.get("expansion_degree", None),
+            train_args.get("degree", None),
         )
-        num_layers = _first_nonempty(
-            getattr(model, "num_layers", None),
-            train_args.get("num_layers", None),
+        if degree is not None:
+            params.append(f"Degree {degree}")
+    if expansion_type_norm == "rbf":
+        bandwidth_mode = _first_nonempty(
+            getattr(model, "rbf_bandwidth_mode", None),
+            train_args.get("rbf_bandwidth_mode", None),
         )
+        if bandwidth_mode is not None:
+            normalized_mode = str(bandwidth_mode).strip().lower()
+            if normalized_mode == "global":
+                params.append("Global")
+            elif normalized_mode == "knn":
+                knn_k = _first_nonempty(
+                    getattr(model, "rbf_knn_k", None),
+                    train_args.get("rbf_knn_k", None),
+                )
+                params.append(f"KNN K{knn_k}" if knn_k is not None else "KNN")
+            else:
+                params.append(str(bandwidth_mode).replace("_", " ").title())
 
-        if hidden_dim is not None:
-            pieces.append(f"hidden={hidden_dim}")
-        if num_layers is not None:
-            pieces.append(f"layers={num_layers}")
+        centers = _first_nonempty(
+            getattr(model, "rbf_n_centers", None),
+            train_args.get("rbf_n_centers", None),
+        )
+        if centers is not None:
+            params.append(f"N Centers {centers}")
+
+    if expansion_type_norm in {"hankel", "hankel_svd"}:
+        depth = _first_nonempty(
+            getattr(model, "delay_depth", None),
+            train_args.get("delay_depth", None),
+        )
+        rank = _first_nonempty(
+            getattr(model, "hankel_rank", None),
+            train_args.get("hankel_rank", None),
+        )
+        if depth is not None:
+            params.append(f"Depth {depth}")
+        if rank is not None:
+            params.append(f"Rank {rank}")
 
     if model_name == "mlp_baseline":
         hidden_dim = _first_nonempty(
@@ -245,38 +457,98 @@ def format_model_label(model_name: str, model, extras: Dict[str, Any]) -> str:
             getattr(model, "num_layers", None),
             train_args.get("num_layers", None),
         )
-
         if hidden_dim is not None:
-            pieces.append(f"hidden={hidden_dim}")
+            params.append(f"Hidden Dim {hidden_dim}")
         if num_layers is not None:
-            pieces.append(f"layers={num_layers}")
+            params.append(f"Num Layers {num_layers}")
 
-    # -------------------------------
-    # SINDy-specific params
-    # -------------------------------
     if model_name == "sindy_baseline":
-        poly_order = _first_nonempty(
-            getattr(model, "poly_order", None),
-            train_args.get("sindy_poly_order", None),
-            train_args.get("poly_order", None),
+        library_type = _first_nonempty(
+            getattr(model, "library_type", None),
+            train_args.get("sindy_library_type", None),
         )
-        threshold = _first_nonempty(
-            getattr(model, "threshold", None),
-            train_args.get("sindy_threshold", None),
-            train_args.get("threshold", None),
-        )
-        alpha = _first_nonempty(
-            getattr(model, "alpha", None),
-            train_args.get("sindy_alpha", None),
-            train_args.get("alpha", None),
-        )
+        if library_type is not None:
+            params.append(f"Library type {library_type}")
 
-        if poly_order is not None:
-            pieces.append(f"poly={poly_order}")
-        if threshold is not None:
-            pieces.append(f"threshold={threshold}")
-        if alpha is not None:
-            pieces.append(f"alpha={alpha}")
+    if model_name in {"ml_dmd"}:
+        l1_weight = _first_nonempty(
+            train_args.get("l1_weight", None),
+            getattr(model, "l1_weight", None),
+        )
+        if l1_weight is not None:
+            try:
+                params.append(f"L1 Weight {float(l1_weight):.3g}")
+            except (TypeError, ValueError):
+                params.append(f"L1 Weight {l1_weight}")
+                
+        # Handle Biorth parameter plotting
+        biorth_weight = _first_nonempty(
+            train_args.get("biorth_weight", None),
+            getattr(model, "biorth_weight", None),
+        )
+        if biorth_weight is not None:
+            try:
+                params.append(f"Biorth Weight {float(biorth_weight):.3g}")
+            except (TypeError, ValueError):
+                params.append(f"Biorth Weight {biorth_weight}")
+
+    if model_name == "regression_dmd":
+        rollout_mode = _first_nonempty(
+            getattr(model, "rollout_mode", None),
+            train_args.get("regression_rollout_mode", None),
+            train_args.get("rollout_mode", None),
+        )
+        if rollout_mode is not None:
+            params.append(f"Rollout mode {rollout_mode}")
+
+    return params
+
+
+def format_model_label(model_name: str, model, extras: Dict[str, Any], system: Optional[str] = None) -> str:
+    pieces = [_pretty_model_name(model_name)]
+    train_args = _get_train_args(extras)
+
+    system_name = _first_nonempty(
+        system,
+        getattr(model, "system", None),
+        train_args.get("system", None),
+        train_args.get("system_name", None),
+    )
+    if system_name is not None:
+        pieces.append(_pretty_system_name(str(system_name)))
+
+    # --- FIX: Skip expansion formatting for MLP ---
+    if model_name != "mlp_baseline":
+        expansion_type = _first_nonempty(
+            getattr(model, "expansion_type", None),
+            train_args.get("expansion_type", None),
+        )
+        
+        # --- FIX: Safe degree extraction (Use None as default so we don't shadow train_args) ---
+        try:
+            deg_val = _first_nonempty(
+                getattr(model, "expansion_degree", None), 
+                train_args.get("expansion_degree", None)
+            )
+            deg = int(deg_val) if deg_val is not None else 1
+        except (TypeError, ValueError):
+            deg = 1
+
+        # Intercept General Expansion with Degree <= 1
+        if str(expansion_type).lower() == "general" and deg <= 1:
+            pieces.append("No Expansion")
+            
+            # Pass a dummy string so _format_expansion_parameters skips "deg 1"
+            # but STILL successfully checks for "+ Trig" or "Delay" tags!
+            pieces.extend(_format_expansion_parameters(model_name, model, train_args, "linear_override"))
+        else:
+            pretty_expansion_type = _pretty_expansion_type(expansion_type)
+            if pretty_expansion_type is not None:
+                pieces.append(pretty_expansion_type)
+    
+            pieces.extend(_format_expansion_parameters(model_name, model, train_args, expansion_type))
+    else:
+        pieces.extend(_format_expansion_parameters(model_name, model, train_args, None))
 
     return " | ".join(pieces)
 
@@ -504,15 +776,15 @@ def plot_error_vs_horizon(
     horizons = np.asarray(horizon_metrics["horizons"], dtype=int)
     rmse = np.asarray(horizon_metrics["horizon_rmse"], dtype=float)
 
-    plt.figure(figsize=(8, 5))
+    plt.figure(figsize=(10.8, 5.2))
     plt.plot(horizons, rmse, marker="o", linewidth=1.8, markersize=4)
     plt.xlabel("Prediction horizon")
     plt.ylabel("RMSE")
-    plt.title(f"Error vs prediction horizon\n{model_label}")
+    plt.title(f"Error vs prediction horizon\n{_wrap_model_label(model_label, width=72)}")
     if logy:
         plt.yscale("log")
     plt.grid(True, alpha=0.3)
-    plt.tight_layout()
+    plt.tight_layout(rect=(0, 0, 1, 0.955))
     plt.savefig(os.path.join(figdir, "error_vs_horizon.png"), dpi=220)
     plt.close()
 
@@ -525,14 +797,14 @@ def plot_rollout_error_summary(
     horizons = np.asarray(rollout_metrics["rollout_horizons"], dtype=int)
     rmse = np.asarray(rollout_metrics["rollout_rmse"], dtype=float)
 
-    plt.figure(figsize=(8, 5))
+    plt.figure(figsize=(10.8, 5.2))
     plt.plot(horizons, rmse, marker="o", linewidth=1.8, markersize=4)
     plt.xlabel("Rollout horizon")
     plt.ylabel("RMSE")
-    plt.title(f"Full-rollout error summary\n{model_label}")
+    plt.title(f"Full-rollout error summary\n{_wrap_model_label(model_label, width=72)}")
     plt.yscale("log")
     plt.grid(True, alpha=0.3)
-    plt.tight_layout()
+    plt.tight_layout(rect=(0, 0, 1, 0.955))
     plt.savefig(os.path.join(figdir, "rollout_error_distribution.png"), dpi=220)
     plt.close()
 
@@ -819,6 +1091,9 @@ def _wrap_model_label(model_label: str, width: int = 65) -> str:
     """
     Wrap long model labels onto multiple lines so the suptitle does not overflow.
     """
+    if model_label.startswith("MLP"):
+        return model_label
+
     return "\n".join(textwrap.wrap(model_label, width=width, break_long_words=False))
 
 
@@ -835,6 +1110,14 @@ def plot_true_grid_heatmap_grid(
     filename: str = "true_grid_error_heatmap_grid.png",
     force_linear_error_scale: bool = False,
     data_path: Optional[str] = None,
+    wspace: float = 0.24,
+    title_fontsize: int = 17,
+    subtitle_fontsize: int = 13,
+    cbar_label_fontsize: int = 12,
+    top_margin: float = 0.88,
+    colorbar_pad_cols: tuple[float, ...] = (0.03, 0.07, 0.03),
+    colorbar_axis_widths: tuple[float, float] = (0.05, 0.05),
+    legend_y: float = 0.91,
 ) -> None:
     n_rows = len(horizons)
     n_cols = len(heatmap_specs)
@@ -871,13 +1154,24 @@ def plot_true_grid_heatmap_grid(
     # - heatmap columns
     # - error colorbar
     # - trajectory colorbar
+    effective_wspace = max(wspace, 0.40 if n_cols >= 3 else 0.24)
+
+    if len(colorbar_pad_cols) == 2:
+        cbar_pad_left = float(colorbar_pad_cols[0])
+        cbar_pad_middle = float(colorbar_pad_cols[1])
+        cbar_pad_right = cbar_pad_left
+    else:
+        cbar_pad_left = float(colorbar_pad_cols[0])
+        cbar_pad_middle = float(colorbar_pad_cols[1])
+        cbar_pad_right = float(colorbar_pad_cols[2])
+
     gs = GridSpec(
         nrows=n_rows,
-        ncols=n_cols + 4,
+        ncols=n_cols + 5,
         figure=fig,
-        # heatmaps | spacer | error cbar | spacer | trajectory cbar
-        width_ratios=[1.0] * n_cols + [0.08, 0.045, 0.22, 0.065],
-        wspace=0.10,
+        # heatmaps | spacer | error cbar | spacer | trajectory cbar | right spacer
+        width_ratios=[1.0] * n_cols + [cbar_pad_left, colorbar_axis_widths[0], cbar_pad_middle, colorbar_axis_widths[1], cbar_pad_right],
+        wspace=effective_wspace,
         hspace=0.25,
     )
 
@@ -894,15 +1188,23 @@ def plot_true_grid_heatmap_grid(
     first_grid = grid_results[horizons[0]][first_spec_name]
     dims = tuple(first_grid["dims"].tolist())
 
-    traj_color_info = None
-    if trajectory_overlay is not None:
-        traj_color_info = _build_reference_trajectory_color_info(trajectory_overlay, dims)
-
     traj_cmap = mcolors.LinearSegmentedColormap.from_list(
         "traj_overlay_pink",
         ["#f8d4ff", "#f39cf6", "#ec5be8", "#d81b9c", "#a0006d"],
         N=256,
     )
+
+    mesh_for_cbar = None
+    traj_line_for_cbar = None
+
+    # FIXED: Handle a list of multiple real trajectories
+    traj_color_infos = []
+    if trajectory_overlay is not None:
+        if isinstance(trajectory_overlay, list):
+            for t in trajectory_overlay:
+                traj_color_infos.append(_build_reference_trajectory_color_info(t, dims))
+        else:
+            traj_color_infos.append(_build_reference_trajectory_color_info(trajectory_overlay, dims))
 
     mesh_for_cbar = None
     traj_line_for_cbar = None
@@ -973,27 +1275,29 @@ def plot_true_grid_heatmap_grid(
                         zorder=2,
                     )
 
-            if traj_color_info is not None:
-                ax.plot(
-                    traj_color_info["points"][:, 0],
-                    traj_color_info["points"][:, 1],
-                    color="white",
-                    linewidth=2.0,
-                    alpha=0.10,
-                    zorder=3,
-                )
-                lc = LineCollection(
-                    traj_color_info["segments"],
-                    cmap=traj_cmap,
-                    norm=traj_color_info["norm"],
-                    linewidth=1.7,
-                    alpha=0.95,
-                    zorder=4,
-                )
-                lc.set_array(traj_color_info["values"])
-                ax.add_collection(lc)
-                if traj_line_for_cbar is None:
-                    traj_line_for_cbar = lc
+            # FIXED: Loop through and plot all 20 colored trajectories
+            if traj_color_infos:
+                for t_info in traj_color_infos:
+                    ax.plot(
+                        t_info["points"][:, 0],
+                        t_info["points"][:, 1],
+                        color="white",
+                        linewidth=2.0,
+                        alpha=0.10,
+                        zorder=3,
+                    )
+                    lc = LineCollection(
+                        t_info["segments"],
+                        cmap=traj_cmap,
+                        norm=t_info["norm"],
+                        linewidth=1.7,
+                        alpha=0.95,
+                        zorder=4,
+                    )
+                    lc.set_array(t_info["values"])
+                    ax.add_collection(lc)
+                    if traj_line_for_cbar is None:
+                        traj_line_for_cbar = lc
 
             if dx_grid is not None and dy_grid is not None:
                 ax.contour(
@@ -1015,23 +1319,11 @@ def plot_true_grid_heatmap_grid(
                     zorder=5,
                 )
 
-                if row == 0 and col == 0:
-                    legend_elements = [
-                        Line2D([0], [0], color="red", lw=1.5, linestyle="--", label=r"$\dot{x}_1 = 0$"),
-                        Line2D([0], [0], color="orange", lw=1.5, linestyle="--", label=r"$\dot{x}_2 = 0$"),
-                    ]
-                    ax.legend(
-                        handles=legend_elements,
-                        loc="upper right",
-                        framealpha=0.95,
-                        fontsize="small",
-                    )
-
             ax.set_xlim(grid_data["xlim"])
             ax.set_ylim(grid_data["ylim"])
 
             if row == 0:
-                ax.set_title(spec_title, fontsize=13)
+                ax.set_title(spec_title, fontsize=subtitle_fontsize)
 
             if col == 0:
                 ax.set_ylabel(f"pred_horizon = {h}\n\nx{i + 1}", fontsize=12)
@@ -1047,26 +1339,27 @@ def plot_true_grid_heatmap_grid(
     # Suptitle with wrapped model label
     # --------------------------------------------------
     wrapped_label = _wrap_model_label(model_label, width=70)
-    fig.suptitle(
-        f"{_pretty_system_name(system)} — true-grid error heatmaps\n{wrapped_label}",
-        fontsize=17,
-        y=0.985,
-    )
+    fig.suptitle(f"True-grid error heatmaps\n{wrapped_label}", fontsize=title_fontsize, y=0.965)
 
     # --------------------------------------------------
     # Error colorbar
     # --------------------------------------------------
     cbar_err = fig.colorbar(mesh_for_cbar, cax=cax_err)
-    cbar_err.set_label("Terminal h-step RMSE", fontsize=12, labelpad=12)
+    cbar_err.set_label("Terminal h-step RMSE", fontsize=cbar_label_fontsize, labelpad=12)
     cbar_err.ax.yaxis.set_label_position("right")
     cbar_err.ax.yaxis.tick_right()
     cbar_err.ax.tick_params(labelleft=False, labelright=True, left=False, right=True)
     _format_three_tick_colorbar(cbar_err, vmin, vmax, use_log)
 
+    # TIGHTEN PADDING: Reduce padding on the colorbar axes to bring them left
+    cax_err.tick_params(pad=1, axis='y')
+    cax_traj.tick_params(pad=1, axis='y')
+
     # --------------------------------------------------
     # Trajectory colorbar
     # --------------------------------------------------
-    if traj_line_for_cbar is not None and traj_color_info is not None:
+    # FIXED: Check the new list length, and grab vmin/vmax from the first trajectory
+    if traj_line_for_cbar is not None and len(traj_color_infos) > 0:
         cbar_traj = fig.colorbar(traj_line_for_cbar, cax=cax_traj)
         cbar_traj.set_label(
             "Reference trajectory\nper-step displacement",
@@ -1078,8 +1371,8 @@ def plot_true_grid_heatmap_grid(
         cbar_traj.ax.tick_params(labelleft=False, labelright=True, left=False, right=True)
         _format_three_tick_colorbar(
             cbar_traj,
-            traj_color_info["vmin"],
-            traj_color_info["vmax"],
+            traj_color_infos[0]["vmin"],
+            traj_color_infos[0]["vmax"],
             False,
         )
     else:
@@ -1088,9 +1381,25 @@ def plot_true_grid_heatmap_grid(
 
     # --------------------------------------------------
     # Final layout:
-    # leave extra space at top for long 2-line title
+    # use explicit margins instead of tight_layout to avoid
+    # warnings with the custom GridSpec + colorbar axes.
     # --------------------------------------------------
-    fig.tight_layout(rect=[0.02, 0.02, 0.98, 0.93])
+
+    # ADDED: Global legend placed neatly in the middle above the plots
+    if dx_grid is not None and dy_grid is not None:
+        legend_elements = [
+            Line2D([0], [0], color="red", lw=1.5, linestyle="--", label=r"$\dot{x}_1 = 0$"),
+            Line2D([0], [0], color="orange", lw=1.5, linestyle="--", label=r"$\dot{x}_2 = 0$"),
+        ]
+        fig.legend(
+            handles=legend_elements,
+            loc="upper center",
+            bbox_to_anchor=(0.5, legend_y),
+            ncol=2,
+            framealpha=0.95,
+        )
+
+    fig.subplots_adjust(left=0.06, right=0.98, bottom=0.07, top=top_margin)
 
     out_path = os.path.join(figdir, filename)
     fig.savefig(out_path, dpi=240, bbox_inches="tight")
@@ -1120,15 +1429,14 @@ def run_diagnostics(
     overlay_true_trajectory_on_grid: bool = True,
     grid_overlay_n_trajs: int = 1,
     force_linear_true_grid_error_scale: bool = False,
-    mode_subset_sizes: Optional[List[int]] = None,
-    mode_subset_strategy: str = "amplitude",
+    mode_subset_thresholds: Optional[List[float]] = None,
     mode_subset_indices: Optional[List[int]] = None,
     linear_error_scale: bool = False,
     **kwargs,
 ) -> None:
     os.makedirs(figdir, exist_ok=True)
 
-    model_label = format_model_label(model_name, model, extras)
+    model_label = format_model_label(model_name, model, extras, system=system)
 
     plot_error_vs_horizon(
         horizon_metrics=horizon_metrics,
@@ -1146,26 +1454,63 @@ def run_diagnostics(
     if not run_true_grid_heatmap:
         return
 
+    supports_subset_rollout = supports_mode_subset_rollout(model_name, model, extras)
+
     horizons_to_plot = [1] if true_grid_heatmap_horizons is None else list(true_grid_heatmap_horizons)
 
-    # Keep one column for now: all modes.
-    # If you later want mode subsets again, it is easy to extend this.
-    heatmap_specs = [
-        {"name": "all", "title": "Full model", "mode_indices": None},
-    ]
+    heatmap_specs = _build_mode_subset_heatmap_specs(
+        model_name=model_name,
+        model=model,
+        extras=extras,
+        mode_subset_thresholds=mode_subset_thresholds,
+        mode_subset_indices=mode_subset_indices,
+        X_states=X,
+    )
 
-    grid_results = compute_true_grid_heatmap_grid(
+    # --------------------------------------------------
+    # First: always produce a "full model" only figure
+    # --------------------------------------------------
+    full_specs = [s for s in heatmap_specs if str(s.get("name")) == "all"]
+    if not full_specs and len(heatmap_specs) > 0:
+        # fallback: use the last spec as full
+        full_specs = [heatmap_specs[-1]]
+
+    grid_results_full = compute_true_grid_heatmap_grid(
         data_path=data_path,
         X=X,
         horizons=horizons_to_plot,
-        heatmap_specs=heatmap_specs,
+        heatmap_specs=full_specs,
         model_name=model_name,
         model=model,
         extras=extras,
         grid_resolution=grid_resolution,
     )
+    
+    # Safely extract the base directory if data_path is already a .npz file
+    if data_path.endswith('.npz'):
+        base_dir = os.path.dirname(data_path)
+        normal_path = data_path
+    else:
+        base_dir = data_path
+        normal_path = os.path.join(data_path, "test.npz")
+    
+    # Check potential paths for the long dataset
+    long_path_t10 = os.path.join(base_dir + "_T10", "test.npz")
+    long_path_sub = os.path.join(base_dir, "long", "test.npz")
+    
+    if os.path.exists(long_path_t10):
+        raw_data = np.load(long_path_t10, allow_pickle=True)
+    elif os.path.exists(long_path_sub):
+        raw_data = np.load(long_path_sub, allow_pickle=True)
+    else:
+        raw_data = np.load(normal_path, allow_pickle=True)
 
-    X_traj = X[:, traj_id, :]
+    X_raw = raw_data["X"]
+    if X_raw.ndim == 2:
+        X_raw = X_raw[:, None, :]
+    n_real = min(10, X_raw.shape[1])
+    X_trajs = [X_raw[:, i, :] for i in range(n_real)]
+
     overlay_trajs = (
         select_overlay_trajectories(
             X=X,
@@ -1177,15 +1522,72 @@ def run_diagnostics(
         else None
     )
 
+    # plot: full-model only
     plot_true_grid_heatmap_grid(
-        grid_results=grid_results,
+        grid_results=grid_results_full,
         horizons=horizons_to_plot,
-        heatmap_specs=heatmap_specs,
+        heatmap_specs=full_specs,
         system=system,
         model_label=model_label,
         figdir=figdir,
-        trajectory_overlay=X_traj if overlay_true_trajectory_on_grid else None,
+        trajectory_overlay=X_trajs if overlay_true_trajectory_on_grid else None, # pass X_trajs here
         trajectory_overlays=overlay_trajs,
         force_linear_error_scale=force_linear_true_grid_error_scale,
         data_path=data_path,
+        filename="true_grid_error_heatmap_grid_full.png",
+        legend_y=0.925,
     )
+
+    # If there are additional mode-subset specs, produce a second combined figure.
+    # Exclude the full-model column here because it was already rendered above.
+    subset_specs = [spec for spec in heatmap_specs if str(spec.get("name")) != "all"]
+    if subset_specs and not supports_subset_rollout:
+        rollout_mode = extras.get("rollout_mode", "DMD")
+        print(
+            f"[diagnostics] Skipping mode-subset true-grid heatmaps for rollout mode '{rollout_mode}' "
+            f"because mode_indices are not supported."
+        )
+        subset_specs = []
+
+    if subset_specs:
+        # --- FIX: Ensure manual mode indices also bring their complex partners ---
+        for spec in subset_specs:
+            if "mode_indices" in spec and spec["mode_indices"] is not None:
+                orig_len = len(spec["mode_indices"])
+                expanded = _get_expanded_indices(spec["mode_indices"], model)
+                spec["mode_indices"] = np.asarray(expanded, dtype=int)
+                
+                # Update title dynamically if we had to stitch a pair back together
+                if "Manual" in str(spec.get("title", "")) and len(expanded) != orig_len:
+                    spec["title"] = f"Manual modes ({len(expanded)})"
+        # ------------------------------------
+        
+        grid_results_all = compute_true_grid_heatmap_grid(
+            data_path=data_path,
+            X=X,
+            horizons=horizons_to_plot,
+            heatmap_specs=subset_specs,
+            model_name=model_name,
+            model=model,
+            extras=extras,
+            grid_resolution=grid_resolution,
+        )
+
+        plot_true_grid_heatmap_grid(
+            grid_results=grid_results_all,
+            horizons=horizons_to_plot,
+            heatmap_specs=subset_specs,
+            system=system,
+            model_label=model_label,
+            figdir=figdir,
+            trajectory_overlay=X_trajs if overlay_true_trajectory_on_grid else None,
+            trajectory_overlays=overlay_trajs,
+            force_linear_error_scale=force_linear_true_grid_error_scale,
+            data_path=data_path,
+            filename="true_grid_error_heatmap_grid_with_subsets.png",
+            wspace=0.16,
+            colorbar_pad_cols=(0.001, 0.006, 0.001),
+            colorbar_axis_widths=(0.08, 0.08),
+            subtitle_fontsize=11,
+            legend_y=0.928,
+        )

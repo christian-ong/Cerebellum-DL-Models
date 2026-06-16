@@ -2,6 +2,7 @@ import os
 from typing import Dict, List, Optional
 
 import numpy as np
+import warnings
 from src.data_generation.load_data import resolve_split_npz_path
 
 from src.eval.model_io import predict_rollout_from_x0
@@ -79,13 +80,31 @@ def _mse_rmse_nrmse_from_errors(errors: np.ndarray, scale: np.ndarray) -> Dict[s
     scale shape: (d,)
     """
     sq = errors ** 2
-    mse_per_dim = np.mean(sq, axis=0)
+    if sq.size == 0:
+        d = scale.shape[0]
+        mse_per_dim = np.full((d,), np.nan)
+        rmse_per_dim = np.full((d,), np.nan)
+        nrmse_per_dim = np.full((d,), np.nan)
+        mse = float(np.nan)
+        rmse = float(np.nan)
+        nrmse = float(np.nan)
+        return {
+            "mse": mse,
+            "rmse": rmse,
+            "nrmse": nrmse,
+            "mse_per_dim": mse_per_dim,
+            "rmse_per_dim": rmse_per_dim,
+            "nrmse_per_dim": nrmse_per_dim,
+        }
+
+    # Use nan-safe means to avoid warnings when slices are empty
+    mse_per_dim = np.nanmean(sq, axis=0)
     rmse_per_dim = np.sqrt(mse_per_dim)
     nrmse_per_dim = rmse_per_dim / np.maximum(scale, EPS)
 
-    mse = float(np.mean(mse_per_dim))
+    mse = float(np.nanmean(mse_per_dim))
     rmse = float(np.sqrt(mse))
-    nrmse = float(np.sqrt(np.mean((rmse_per_dim / np.maximum(scale, EPS)) ** 2)))
+    nrmse = float(np.sqrt(np.nanmean((rmse_per_dim / np.maximum(scale, EPS)) ** 2)))
 
     return {
         "mse": mse,
@@ -156,6 +175,14 @@ def build_rollout_cache(
                 model=model,
                 extras=extras,
             )
+
+            # Skip rollouts that produce NaN/Inf values to avoid downstream overflows
+            if not np.all(np.isfinite(rollout)):
+                warnings.warn(
+                    f"Skipping rollout starting at t0={t0} for traj_id={traj_id} due to NaN/Inf in predictions",
+                    RuntimeWarning,
+                )
+                continue
 
             rollouts.append(rollout)
 
@@ -229,6 +256,14 @@ def compute_one_step_metrics(
                     extras=extras,
                 )
 
+                # Skip one-step rollouts that produce NaN/Inf
+                if not np.all(np.isfinite(rollout)):
+                    warnings.warn(
+                        f"Skipping one-step rollout at t0={t0} for traj_id={traj_id} due to NaN/Inf in predictions",
+                        RuntimeWarning,
+                    )
+                    continue
+
                 err = rollout[1] - X_traj[t0 + 1]
                 err_list.append(err)
                 traj_sq_err.append(np.mean(err ** 2))
@@ -237,9 +272,9 @@ def compute_one_step_metrics(
             per_traj_mse.append(np.mean(traj_sq_err))
 
     if len(err_list) == 0:
-        raise ValueError("No valid one-step prediction errors were computed.")
-
-    errors = np.asarray(err_list)
+        errors = np.empty((0, scale_std.shape[0]))
+    else:
+        errors = np.asarray(err_list)
     stats = _mse_rmse_nrmse_from_errors(errors, scale_std)
 
     return {
@@ -327,6 +362,14 @@ def compute_horizon_metrics(
                     extras=extras,
                 )
 
+                # Skip rollouts that produce NaN/Inf values to avoid downstream overflows
+                if not np.all(np.isfinite(rollout)):
+                    warnings.warn(
+                        f"Skipping rollout starting at t0={t0} for traj_id={traj_id} due to NaN/Inf in predictions",
+                        RuntimeWarning,
+                    )
+                    continue
+
                 for h in horizons:
                     err = rollout[h] - X_traj[t0 + h]
                     per_h_errors[h].append(err)
@@ -347,9 +390,9 @@ def compute_horizon_metrics(
 
     for h in horizons:
         if len(per_h_errors[h]) == 0:
-            raise ValueError(f"No valid horizon errors computed for h={h}.")
-
-        errors = np.asarray(per_h_errors[h])
+            errors = np.empty((0, scale_std.shape[0]))
+        else:
+            errors = np.asarray(per_h_errors[h])
         stats = _mse_rmse_nrmse_from_errors(errors, scale_std)
 
         horizon_mse.append(stats["mse"])
@@ -391,17 +434,8 @@ def compute_full_rollout_metrics(
     """
     Full-rollout metrics.
 
-    For each rollout horizon h, this computes one trajectory-level rollout RMSE
-    for each selected test trajectory:
-
-        r_i(1:h) = sqrt(mean over steps 1..h and state dimensions of error^2)
-
-    It then reports the mean of these trajectory-level RMSE values:
-
-        MeanTrajRMSE(1:h) = mean_i r_i(1:h)
-
-    This is different from pooled RMSE, where all scalar errors are pooled
-    before taking one square root.
+    For ordinary models, rollout starts at t0=0.
+    For delay models, rollout starts at t0=delay_depth-1.
     """
     T, _, _ = X.shape
 
@@ -410,33 +444,15 @@ def compute_full_rollout_metrics(
 
     out = {
         "rollout_horizons": np.asarray(rollout_horizons, dtype=int),
-
-        # Main reported rollout metrics: mean over trajectory-level RMSEs.
         "rollout_mse": [],
         "rollout_rmse": [],
         "rollout_nrmse": [],
-
-        # Distribution across trajectory-level RMSEs.
-        "rollout_traj_rmse_mean": [],
-        "rollout_traj_rmse_std": [],
-        "rollout_traj_rmse_median": [],
-        "rollout_traj_rmse_q25": [],
-        "rollout_traj_rmse_q75": [],
-
-        # Keep old-style pooled metrics for debugging/comparison.
-        "rollout_pooled_mse": [],
-        "rollout_pooled_rmse": [],
-        "rollout_pooled_nrmse": [],
-
-        # Keep old MSE trajectory summaries for backward compatibility.
         "rollout_traj_mse_mean": [],
         "rollout_traj_mse_std": [],
     }
 
     for h in rollout_horizons:
         traj_mse = []
-        traj_rmse = []
-        traj_nrmse = []
         all_errors = []
 
         if start0 + h >= T:
@@ -474,68 +490,37 @@ def compute_full_rollout_metrics(
                     extras=extras,
                 )
 
+            # Skip rollouts that produce NaN/Inf values
+            if not np.all(np.isfinite(rollout)):
+                warnings.warn(
+                    f"Skipping full-rollout for traj_id={traj_id} horizon={h} due to NaN/Inf in predictions",
+                    RuntimeWarning,
+                )
+                continue
+
             X_true = X_traj[start0 : start0 + h + 1]
 
-            # Exclude step 0 because the initial condition is identical.
             err = rollout[1:] - X_true[1:]
-
-            # Store pooled errors for optional comparison.
             all_errors.append(err.reshape(-1, err.shape[-1]))
+            traj_mse.append(np.mean(err ** 2))
 
-            # One trajectory-level MSE/RMSE over steps 1..h and dimensions.
-            mse_i = float(np.mean(err ** 2))
-            rmse_i = float(np.sqrt(mse_i))
+        if len(all_errors) == 0:
+            all_errors = np.empty((0, scale_std.shape[0]))
+        else:
+            all_errors = np.vstack(all_errors)
+        stats = _mse_rmse_nrmse_from_errors(all_errors, scale_std)
 
-            # Coordinate-wise train-normalized trajectory RMSE.
-            err_norm = err / np.maximum(scale_std[None, :], EPS)
-            nrmse_i = float(np.sqrt(np.mean(err_norm ** 2)))
-
-            traj_mse.append(mse_i)
-            traj_rmse.append(rmse_i)
-            traj_nrmse.append(nrmse_i)
-
-        traj_mse = np.asarray(traj_mse, dtype=float)
-        traj_rmse = np.asarray(traj_rmse, dtype=float)
-        traj_nrmse = np.asarray(traj_nrmse, dtype=float)
-
-        # Main metric: mean of trajectory-level RMSEs.
-        out["rollout_mse"].append(float(np.mean(traj_mse)))
-        out["rollout_rmse"].append(float(np.mean(traj_rmse)))
-        out["rollout_nrmse"].append(float(np.mean(traj_nrmse)))
-
-        out["rollout_traj_rmse_mean"].append(float(np.mean(traj_rmse)))
-        out["rollout_traj_rmse_std"].append(float(np.std(traj_rmse)))
-        out["rollout_traj_rmse_median"].append(float(np.median(traj_rmse)))
-        out["rollout_traj_rmse_q25"].append(float(np.percentile(traj_rmse, 25)))
-        out["rollout_traj_rmse_q75"].append(float(np.percentile(traj_rmse, 75)))
-
+        out["rollout_mse"].append(stats["mse"])
+        out["rollout_rmse"].append(stats["rmse"])
+        out["rollout_nrmse"].append(stats["nrmse"])
         out["rollout_traj_mse_mean"].append(float(np.mean(traj_mse)))
         out["rollout_traj_mse_std"].append(float(np.std(traj_mse)))
 
-        # Old pooled metric, kept separately.
-        all_errors = np.vstack(all_errors)
-        pooled_stats = _mse_rmse_nrmse_from_errors(all_errors, scale_std)
-
-        out["rollout_pooled_mse"].append(pooled_stats["mse"])
-        out["rollout_pooled_rmse"].append(pooled_stats["rmse"])
-        out["rollout_pooled_nrmse"].append(pooled_stats["nrmse"])
-
-    for key in [
-        "rollout_mse",
-        "rollout_rmse",
-        "rollout_nrmse",
-        "rollout_traj_rmse_mean",
-        "rollout_traj_rmse_std",
-        "rollout_traj_rmse_median",
-        "rollout_traj_rmse_q25",
-        "rollout_traj_rmse_q75",
-        "rollout_pooled_mse",
-        "rollout_pooled_rmse",
-        "rollout_pooled_nrmse",
-        "rollout_traj_mse_mean",
-        "rollout_traj_mse_std",
-    ]:
-        out[key] = np.asarray(out[key], dtype=float)
+    out["rollout_mse"] = np.asarray(out["rollout_mse"], dtype=float)
+    out["rollout_rmse"] = np.asarray(out["rollout_rmse"], dtype=float)
+    out["rollout_nrmse"] = np.asarray(out["rollout_nrmse"], dtype=float)
+    out["rollout_traj_mse_mean"] = np.asarray(out["rollout_traj_mse_mean"], dtype=float)
+    out["rollout_traj_mse_std"] = np.asarray(out["rollout_traj_mse_std"], dtype=float)
 
     return out
 

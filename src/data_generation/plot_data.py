@@ -132,24 +132,24 @@ def plot_trajectories_from_array(
         for i in range(n_traj):
             color = colors[i % len(colors)]
             plt.plot(X[:, i, 0], X[:, i, 1], lw=1.2, color=color)
-            # plt.scatter(
-            #     x0s[i, 0], x0s[i, 1],
-            #     color=color,
-            #     s=35,
-            #     edgecolor="black",
-            #     linewidth=0.5,
-            #     zorder=3,
-            # )
+            plt.scatter(
+                x0s[i, 0], x0s[i, 1],
+                color=color,
+                s=35,
+                edgecolor="black",
+                linewidth=0.5,
+                zorder=3,
+            )
 
         plt.xlabel("x", fontsize=12)
         plt.ylabel("y", fontsize=12)
         plt.xticks(fontsize=12)
         plt.yticks(fontsize=12)
         plt.title(
-            f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories{split_title}",
+            f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories",
             fontsize=16,
         )
-        plt.axis("equal")
+        # plt.axis("equal")
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.savefig(f"{outdir}/{system_name}{split_suffix}_trajectories.png", dpi=300)
@@ -180,22 +180,22 @@ def plot_trajectories_from_array(
                     color=color,
                 )
 
-                # plt.scatter(
-                #     x0s[i, dim1],
-                #     x0s[i, dim2],
-                #     color=color,
-                #     s=35,
-                #     edgecolor="black",
-                #     linewidth=0.5,
-                #     zorder=3,
-                # )
+                plt.scatter(
+                    x0s[i, dim1],
+                    x0s[i, dim2],
+                    color=color,
+                    s=35,
+                    edgecolor="black",
+                    linewidth=0.5,
+                    zorder=3,
+                )
 
             plt.xlabel(label1, fontsize=12)
             plt.ylabel(label2, fontsize=12)
             plt.xticks(fontsize=12)
             plt.yticks(fontsize=12)
             plt.title(
-                f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories {label1}-{label2}{split_title}", fontsize=16
+                f"{system_name.replace('_',' ').title()} — RK4 simulated trajectories {label1}-{label2}", fontsize=16
             )
 
             # plt.axis("equal")

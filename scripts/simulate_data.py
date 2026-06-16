@@ -112,6 +112,78 @@ python -m scripts.simulate_data --system duffing --T_train 15.0 --n_traj_train 4
 python -m scripts.simulate_data --system lorenz --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05
 
 --------------------------------------------------
+Noisy evaluation data for noise robustness
+--------------------------------------------------
+# dt = 0.01
+python -m scripts.simulate_data --system inward_spiral --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system inward_spiral_cw --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system harmonic_oscillator --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system saddle_point --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system degenerate_node --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system closed_small --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system closed_large --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system closed_trig_small --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system closed_trig_medium --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system closed_trig_large --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system vanderpol --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system lotka_volterra --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system pendulum --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system duffing --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system lorenz --T_train 3.0 --n_traj_train 400 --T_val 3.0 --n_traj_val 40 --T_test 3.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+
+# dt = 0.05
+python -m scripts.simulate_data --system inward_spiral --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system inward_spiral_cw --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system harmonic_oscillator --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system saddle_point --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system degenerate_node --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system closed_small --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system closed_large --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system closed_trig_small --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system closed_trig_medium --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system closed_trig_large --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system vanderpol --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system lotka_volterra --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system pendulum --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system duffing --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+python -m scripts.simulate_data --system lorenz --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 15.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05 --outdir data/noisy_trajectories --observation_noise_std 0.01 --noise_mode relative --noise_splits test --noise_seed 123
+
+--------------------------------------------------
+Very long test trajectories
+--------------------------------------------------
+python -m scripts.simulate_data --system inward_spiral --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system inward_spiral_cw --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system harmonic_oscillator --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system saddle_point --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system degenerate_node --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system closed_small --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system closed_large --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system closed_trig_small --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system closed_trig_medium --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system closed_trig_large --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system vanderpol --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system lotka_volterra --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system pendulum --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system duffing --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+python -m scripts.simulate_data --system lorenz --T_train 3.0  --n_traj_train 400 --T_val 3.0  --n_traj_val 40  --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.01 --name dt_0.01_T10
+
+python -m scripts.simulate_data --system inward_spiral --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system inward_spiral_cw --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system harmonic_oscillator --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system saddle_point --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system degenerate_node --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system closed_small --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system closed_large --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system closed_trig_small --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system closed_trig_medium --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system closed_trig_large --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system vanderpol --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system lotka_volterra --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system pendulum --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system duffing --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+python -m scripts.simulate_data --system lorenz --T_train 15.0 --n_traj_train 400 --T_val 15.0 --n_traj_val 40 --T_test 10.0 --n_traj_test 40 --max_rollout_horizon 100 --dt 0.05 --name dt_0.05_T10
+
+--------------------------------------------------
 Output
 --------------------------------------------------
 
@@ -873,9 +945,9 @@ def main():
         os.makedirs(debug_outdir, exist_ok=True)
 
         debug_splits = [
-            ("train", "train", args.n_traj_train, args.T_train),
-            ("val", "eval", args.n_traj_val, args.T_val),
-            ("test", "test", args.n_traj_test, args.T_test),
+            ("train", "train", args.n_traj_train, TRAIN_T),
+            ("val", "eval", args.n_traj_val, EVAL_T),
+            ("test", "test", args.n_traj_test, TEST_T),
         ]
 
         state_dim = None
@@ -969,7 +1041,7 @@ def main():
                 state_dim=state_dim,
                 system_name=args.system,
                 xlim=(-1.5, 1.5),
-                ylim=(-1.5, 1.5),
+                ylim=(-1.0, 2.5),
                 outdir=debug_outdir,
             )
 
@@ -979,7 +1051,7 @@ def main():
                 f=f,
                 state_dim=state_dim,
                 system_name=args.system,
-                xlim=(-2.5, 2.5),
+                xlim=(-1.5, 5.0),
                 ylim=(-2.0, 2.0),
                 outdir=debug_outdir,
             )    

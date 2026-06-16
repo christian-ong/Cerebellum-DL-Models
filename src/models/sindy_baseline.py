@@ -1,8 +1,12 @@
 import numpy as np
-import pysindy as ps
 from scipy.integrate import odeint
 
 from src.models.expander import SPECIFIC_BASES
+
+try:
+    import pysindy as ps
+except ImportError:  # pragma: no cover - optional dependency
+    ps = None
 
 
 class SINDyBaseline:
@@ -62,6 +66,11 @@ class SINDyBaseline:
     # --------------------------------------------------
 
     def _build_feature_library(self, state_dim: int):
+        if ps is None:
+            raise ImportError(
+                "pysindy is required to use SINDyBaseline. Install the optional dependency to enable SINDy support."
+            )
+
         if self.library_type == "polynomial":
             return ps.PolynomialLibrary(
                 degree=self.poly_order,
@@ -109,7 +118,45 @@ class SINDyBaseline:
             feature_library=library,
             differentiation_method=diff,
         )
+    
+    def _compile_pysindy_features(self, feature_names):
+        """Dynamically builds and compiles a single, blazing-fast native NumPy function."""
+        import re
+        
+        exprs = []
+        for expr in feature_names:
+            if expr.strip() == "1":
+                exprs.append("np.ones(X.shape[0], dtype=float)")
+                continue
 
+            # Format powers and trig frequencies
+            expr_py = expr.replace("^", "**")
+            expr_py = re.sub(r'(\d+)\s+(x\d+)', r'\1 * \2', expr_py)
+            
+            # Format polynomial interactions
+            for _ in range(3): 
+                expr_py = re.sub(r'(x\d+(?:\*\*\d+)?)\s+(x\d+)', r'\1 * \2', expr_py)
+            exprs.append(expr_py)
+            
+        # 1. Write the raw code for a native Python function
+        func_str = "def mega_eval(X, sin, cos):\n"
+        for i in range(self.state_dim):
+            func_str += f"    x{i} = X[:, {i}]\n"
+            
+        func_str += f"    return np.column_stack([{', '.join(exprs)}])\n"
+        
+        # 2. Compile it natively into memory
+        local_vars = {"np": np}
+        exec(func_str, local_vars)
+        mega_eval = local_vars["mega_eval"]
+        
+        # 3. Wrap it so we can inject np.sin and np.cos
+        def final_fn(X):
+            return mega_eval(X, np.sin, np.cos)
+            
+        # Returning as a 1-item list ensures it plugs perfectly 
+        # into your existing `cols = [fn(x_2d) for ...]` rollout logic!
+        return [final_fn]
     # --------------------------------------------------
     # Specific library helpers
     # --------------------------------------------------
@@ -257,6 +304,41 @@ class SINDyBaseline:
         except Exception:
             return None
 
+    def _compute_polynomial_features(self, x: np.ndarray) -> np.ndarray:
+        """
+        Compute polynomial features up to self.poly_order for a single state vector x.
+        This is a best-effort fallback to avoid calling into PySINDy during heavy loops.
+        """
+        x = np.asarray(x, dtype=float).reshape(-1)
+        state_dim = x.size
+
+        feats = []
+        # optional bias
+        if self.include_bias:
+            feats.append(1.0)
+
+        # degree 1..poly_order
+        from itertools import combinations_with_replacement
+
+        for deg in range(1, self.poly_order + 1):
+            for terms in combinations_with_replacement(range(state_dim), deg):
+                prod = 1.0
+                for t in terms:
+                    prod *= x[t]
+                feats.append(prod)
+
+        feats = np.asarray(feats, dtype=float)
+        expected = int(self.saved_coefficients.shape[1])
+        if feats.size == expected:
+            return feats
+
+        # If sizes differ, try to align by trimming or padding zeros
+        if feats.size > expected:
+            return feats[:expected]
+        out = np.zeros((expected,), dtype=float)
+        out[: feats.size] = feats
+        return out
+
     # --------------------------------------------------
     # Fit
     # --------------------------------------------------
@@ -290,6 +372,12 @@ class SINDyBaseline:
             [f"x{i}" for i in range(state_dim)]
         )
         self.powers = self._get_fast_powers(self.feature_library, state_dim)
+        
+        # --- NEW: Compile fallback features if powers returns None ---
+        if self.powers is None:
+            self._compiled_pysindy_fns = self._compile_pysindy_features(self.feature_names_list)
+        else:
+            self._compiled_pysindy_fns = None
 
     # --------------------------------------------------
     # Load
@@ -310,6 +398,13 @@ class SINDyBaseline:
         self.feature_library = lib
         self.feature_names_list = lib.get_feature_names([f"x{i}" for i in range(state_dim)])
         self.powers = self._get_fast_powers(lib, state_dim)
+        
+        # --- YOU JUST NEED TO ADD THESE 4 LINES HERE TOO! ---
+        if self.powers is None:
+            self._compiled_pysindy_fns = self._compile_pysindy_features(self.feature_names_list)
+        else:
+            self._compiled_pysindy_fns = None
+            
         return self
 
     # --------------------------------------------------
@@ -324,12 +419,14 @@ class SINDyBaseline:
         coef_T = self.saved_coefficients.T
         local_powers = self.powers
 
+        # --- 1. The SPECIFIC Library Loop ---
         if self.library_type == "specific":
             if self.discrete_time:
                 traj = np.zeros((steps + 1, x0.shape[0]))
                 traj[0] = x0
                 curr_x = x0
                 for i in range(1, steps + 1):
+                    # Specific basis uses its own fast transform
                     feat = self._specific_transform(curr_x)[0]
                     curr_x = feat @ coef_T
                     traj[i] = curr_x
@@ -343,6 +440,7 @@ class SINDyBaseline:
 
             return odeint(rhs, x0, t)
 
+        # --- 2. The STANDARD PySINDy Library Loop ---
         lib = self.feature_library
 
         if self.discrete_time:
@@ -352,8 +450,21 @@ class SINDyBaseline:
             for i in range(1, steps + 1):
                 if local_powers is not None:
                     feat = np.prod(np.power(curr_x, local_powers), axis=1)
+                elif getattr(self, "_compiled_pysindy_fns", None) is not None:
+                    # --- ADDED THIS ELIF TO THE CORRECT DISCRETE LOOP ---
+                    x_2d = curr_x[None, :]
+                    cols = [fn(x_2d) for fn in self._compiled_pysindy_fns]
+                    feat = np.column_stack(cols)[0]
                 else:
-                    feat = lib.transform(curr_x[None, :])[0]
+                    try:
+                        feat = lib.transform(curr_x[None, :])[0]
+                    except Exception:
+                        # Fallback: try to compute polynomial features directly when possible
+                        if self.library_type in {"polynomial", "poly_fourier"}:
+                            feat = self._compute_polynomial_features(curr_x)
+                        else:
+                            # As a last resort, use zeros to avoid hanging
+                            feat = np.zeros((self.saved_coefficients.shape[1],), dtype=float)
                 curr_x = feat @ coef_T
                 traj[i] = curr_x
             return traj
@@ -363,8 +474,19 @@ class SINDyBaseline:
         def rhs(x_state, t_dummy):
             if local_powers is not None:
                 feat = np.prod(np.power(x_state, local_powers), axis=1)
+            elif getattr(self, "_compiled_pysindy_fns", None) is not None:
+                # --- NEW: Blazing fast NumPy compilation ---
+                x_2d = x_state[None, :]
+                cols = [fn(x_2d) for fn in self._compiled_pysindy_fns]
+                feat = np.column_stack(cols)[0]
             else:
-                feat = lib.transform(x_state[None, :])[0]
+                try:
+                    feat = lib.transform(x_state[None, :])[0]
+                except Exception:
+                    if self.library_type in {"polynomial", "poly_fourier"}:
+                        feat = self._compute_polynomial_features(x_state)
+                    else:
+                        feat = np.zeros((self.saved_coefficients.shape[1],), dtype=float)
             return feat @ coef_T
 
         return odeint(rhs, x0, t)

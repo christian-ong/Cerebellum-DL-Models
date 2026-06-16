@@ -1,3 +1,10 @@
+"""
+Experiment-facing wrapper for the noise robustness suite.
+
+This keeps noise-evaluation outputs under experiments/figures when launched
+directly or from eval_best_models.py.
+"""
+
 import argparse
 import csv
 import os
@@ -82,11 +89,12 @@ def main():
     parser.add_argument("--name", type=str, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--csv_path", type=str, default=None)
+    parser.add_argument("--outdir", type=str, default=None)
 
     args = parser.parse_args()
 
-    # Allow baseline and learned models alike; modal subset plots are skipped automatically
-    # when the model does not expose Phi/Lambda-style coordinates.
+    # Allow running the noise-robustness suite for any model. For non-modal
+    # models the modal diagnostics and subset evaluations will be skipped.
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -109,8 +117,8 @@ def main():
 
     run_name = args.name or infer_run_name(args.model_path)
 
-    outdir = os.path.join(
-        "data",
+    outdir = args.outdir or os.path.join(
+        "experiments",
         "figures",
         args.model,
         system,
@@ -161,14 +169,7 @@ def main():
 
     csv_path = args.csv_path
     if csv_path is None:
-        csv_path = os.path.join(
-            "data",
-            "figures",
-            args.model,
-            system,
-            "noise_robustness",
-            "summary.csv",
-        )
+        csv_path = os.path.join(outdir, "summary.csv")
 
     extra = {
         "run_name": run_name,

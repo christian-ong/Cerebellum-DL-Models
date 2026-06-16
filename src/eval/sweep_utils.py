@@ -6,6 +6,7 @@ from src.models.ml_dmd import ML_DMD
 from src.models.regression_dmd import Regression_DMD
 from src.models.mlp_baseline import MLP_BlackBox
 from src.models.sindy_baseline import SINDyBaseline
+from src.models.regression_dmd import Regression_DMD
 
 def build_run_name(args, system_name, run_id=None):
     parts = [system_name, args.model]
@@ -63,7 +64,8 @@ def build_model(args, state_dim, system_name, device):
             rbf_bandwidth_mode=getattr(args, "rbf_bandwidth_mode", "knn"),
             rbf_knn_k=getattr(args, "rbf_knn_k", 5),
             l1_weight=getattr(args, "l1_weight", 1e-6),
-        ).to(device)
+            biorth_weight=getattr(args, "biorth_weight", 0.1),
+        ).to(device)        
 
     elif args.model == "regression_dmd":
         model = Regression_DMD(
@@ -115,6 +117,18 @@ def build_model(args, state_dim, system_name, device):
 
 
 def _predict_next_batch(model, x, device):
+    if isinstance(model, Regression_DMD):
+        try:
+            return model(x)
+        except Exception:
+            # Best-effort fallback for edge cases where batched prediction
+            # is unavailable for a loaded checkpoint.
+            preds = []
+            for xi in x:
+                rollout = model.rollout(xi.detach().cpu().numpy(), 1)
+                preds.append(torch.as_tensor(rollout[1], device=device, dtype=x.dtype))
+            return torch.stack(preds, dim=0)
+
     if isinstance(model, torch.nn.Module):
         return model(x)
 
@@ -219,6 +233,13 @@ def compute_rollout_metrics(
 
     results = {"rollout_failed": 0.0}
 
+    # If no model provided, mark rollouts as failed and return NaNs to avoid calling None.rollout
+    if model is None:
+        results["rollout_failed"] = 1.0
+        for h in eval_horizons:
+            results[f"rollout_rmse_h{h}"] = np.nan
+        return results
+
     with torch.no_grad():
         x0, start_idx = _build_rollout_initial_state(model, X)
         max_h = min(max_h, T - 1 - start_idx)
@@ -230,6 +251,7 @@ def compute_rollout_metrics(
             model.eval()
             rollout_pred = model.rollout(x0, max_h)
         else:
+            # non-torch models may implement single-trajectory rollout; leave rollout_pred None
             rollout_pred = None
 
         if rollout_pred is not None:

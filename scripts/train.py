@@ -318,6 +318,7 @@ def main():
     parser.add_argument("--normalize_state", type=str.lower, choices=["true", "false"], default="false")
     parser.add_argument("--normalize_lifted", type=str.lower, choices=["true", "false"], default="true")
     parser.add_argument("--l1_weight", type=float, default=1e-6, help="L1 regularization weight for regression DMD")
+    parser.add_argument("--biorth_weight", type=float, default=0.1, help="Weight for bi-orthogonality regularization")
     parser.add_argument("--regression_rollout_mode",type=str,default="DMD",choices=["linear_dynamics", "DMD","projected_DMD"],help="Default rollout mode for regression_dmd checkpoints.")
     
     parser.add_argument("--delay_depth", type=int, default=1, help="Number of stacked delay coordinates to use when expansion_type='delay'.")
@@ -398,7 +399,7 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
 
     # Load datasets
-    is_ml_model = args.model in {"ml_lineardynamics", "ml_dmd"}
+    is_ml_model = args.model in {"ml_lineardynamics", "ml_dmd", "mlp_baseline"}
 
     # Determine rollout horizon used to RESERVE future steps when constructing the dataset.
     # This is separate from `--rollout_horizon` which is used only in the loss computation.
@@ -613,6 +614,11 @@ def main():
             svd_energy_cumulative=model.svd_energy_fitted.detach().cpu().numpy(),
         )
 
+        if hasattr(model.expander, "state_scale"):
+            save_kwargs["expander_state_scale"] = model.expander.state_scale.detach().cpu().numpy()
+        if hasattr(model.expander, "history_scale"):
+            save_kwargs["expander_history_scale"] = model.expander.history_scale.detach().cpu().numpy()
+
         if args.expansion_type == "rbf":
             save_kwargs["rbf_centers"] = model.expander.centers.detach().cpu().numpy()
             save_kwargs["rbf_sigmas"] = model.expander.sigmas.detach().cpu().numpy()
@@ -705,7 +711,7 @@ def main():
             rbf_knn_k=args.rbf_knn_k,
             hankel_rank=args.hankel_rank,
         ).to(device)
-    
+
     elif args.model == "ml_dmd":
         model = ML_DMD(
             state_dim=state_dim,
@@ -721,6 +727,7 @@ def main():
             rbf_knn_k=args.rbf_knn_k,
             hankel_rank=args.hankel_rank,
             l1_weight=args.l1_weight,
+            biorth_weight=args.biorth_weight,
         ).to(device)
 
     elif args.model == "mlp_baseline":

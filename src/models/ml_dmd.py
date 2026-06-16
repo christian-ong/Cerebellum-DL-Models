@@ -19,6 +19,7 @@ class ML_DMD(nn.Module):
         rbf_knn_k=5,
         hankel_rank=None,
         l1_weight=1e-6,
+        biorth_weight=0.1,
     ):
 
         super().__init__()
@@ -56,6 +57,7 @@ class ML_DMD(nn.Module):
         self.expanded_dim = self.expander.expanded_dim
         self.latent_dim = self.expanded_dim
         self.l1_weight = l1_weight
+        self.biorth_weight = biorth_weight
         self.rollout_horizon = 20
 
         # ------------------------------------------------
@@ -70,6 +72,12 @@ class ML_DMD(nn.Module):
         # Columns correspond to Koopman modes.
         # Initialized close to identity for stability.
         self.Phi = nn.Parameter(
+            torch.eye(self.latent_dim)
+            + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
+        )
+
+        # --- NEW: Left Eigenvector matrix (acts as Phi inverse) ---
+        self.W = nn.Parameter(
             torch.eye(self.latent_dim)
             + 0.001 * torch.randn(self.latent_dim, self.latent_dim)
         )
@@ -106,27 +114,24 @@ class ML_DMD(nn.Module):
         return self.Phi
 
     def get_Phi_inv(self):
-        """Return pseudo-inverse of Phi."""
-        return torch.linalg.pinv(self.Phi, rcond=1e-6) 
+        """Return the LEARNED left eigenvector matrix (acts as Phi inverse)."""
+        # FIX: Expose the learned W matrix instead of calculating the exact inverse
+        return self.W
 
     def get_Lambda(self):
         """Return the learned Lambda matrix."""
         return self.Lambda
 
     def get_K(self):
-        """Return the lifted Koopman operator: K = Phi Lambda Phi^{-1}"""
+        """Return the lifted Koopman operator: K = Phi Lambda W"""
+        # This will now correctly use self.W because we updated get_Phi_inv
         Phi_inv = self.get_Phi_inv()
         return self.Phi @ self.Lambda @ Phi_inv
 
-    def get_eigenvalues(self):
-        """Eigenvalues of the lifted Koopman operator."""
-        K = self.get_K()
-        return torch.linalg.eigvals(K)
-
     # Standardize these three helpers in ML_DMD_FREE
     def _get_modal_coords(self, z):
-        I_eps = 1e-6 * torch.eye(self.latent_dim, device=self.Phi.device)
-        return torch.linalg.solve(self.Phi + I_eps, z.mT).mT
+            # Direct matrix multiplication instead of matrix inversion!
+            return z @ self.W.mT
 
     def _step_modal(self, b):
         return b @ self.Lambda.mT
@@ -224,31 +229,37 @@ class ML_DMD(nn.Module):
 
                 loss_rollout /= (horizon - 1)
 
-        # Structural constraints (keep existing code)
+        # Structural constraints
         phi_phys = self.get_Phi()
         col_norms = torch.linalg.norm(phi_phys, dim=0)
         loss_unit_length = torch.mean((col_norms - 1.0) ** 2)
 
-        # --- NEW: Off-Diagonal L1 Sparsity Penalty ---
-        # Get the full Lambda matrix
+        # --- NEW: Bi-Orthogonality Penalty (Forces W to act as Phi^-1) ---
+        I_target = torch.eye(self.latent_dim, device=x.device)
+        loss_biortho = torch.mean((self.Phi @ self.W - I_target)**2)
+
+        # --- UPDATED: Tridiagonal L1 Sparsity Penalty ---
         lam = self.get_Lambda() if hasattr(self, "get_Lambda") else self.Lambda
         
-        # Create a boolean mask for everything EXCEPT the main diagonal
-        off_diag_mask = ~torch.eye(self.latent_dim, dtype=torch.bool, device=lam.device)
+        # Mask everything EXCEPT the main diagonal, super-diagonal, and sub-diagonal
+        off_diag_mask = torch.ones_like(lam, dtype=torch.bool)
+        idx = torch.arange(self.latent_dim)
+        off_diag_mask[idx, idx] = False # Spare main diagonal
+        if self.latent_dim > 1:
+            off_diag_mask[idx[:-1], idx[1:]] = False # Spare super-diagonal
+            off_diag_mask[idx[1:], idx[:-1]] = False # Spare sub-diagonal
         
-        # Sum the absolute values of the off-diagonal elements
         loss_sparsity = torch.sum(torch.abs(lam[off_diag_mask]))
         # ---------------------------------------------
 
         # Total loss
-        # Note: You can tune the 1e-3 weight on loss_sparsity. 
-        # If the matrix stays too dense, increase it. If the physics break, decrease it.
         loss = (
               1.0 * loss_state 
             + 1.0 * loss_rollout
             + 0.01 * loss_lift 
             + 1e-5 * loss_unit_length
-            + self.l1_weight * loss_sparsity  # Add the sparsity penalty
+            + self.biorth_weight * loss_biortho
+            + self.l1_weight * loss_sparsity  
         )
 
         loss_dict = {
@@ -256,7 +267,8 @@ class ML_DMD(nn.Module):
             "state": loss_state.item(),
             "rollout": loss_rollout.item(),
             "unit": loss_unit_length.item(),
-            "sparsity": loss_sparsity.item(), # Track it!
+            "biortho": loss_biortho.item(),   # <--- Track it in W&B
+            "sparsity": loss_sparsity.item(), 
         }
 
         return (loss, loss_dict)
@@ -265,7 +277,7 @@ class ML_DMD(nn.Module):
     # Rollout simulation
     # ------------------------------------------------
 
-    def rollout(self, x0, steps):
+    def rollout(self, x0, steps, return_modal=False, return_latent=False):
         if not torch.is_tensor(x0):
             x0 = torch.tensor(
                 x0,
@@ -301,15 +313,32 @@ class ML_DMD(nn.Module):
         else:
             x_curr0 = x
 
-        traj = [x_curr0.squeeze(0)]
-        
         # 1. Expand the state to latent space exactly ONCE
         z = self.expander.expand(x)
         z_norm = self._normalize(z)
         b = self._get_modal_coords(z_norm) # SOLVE ONCE
+        
+        # Store initial state based on return type requested
+        if return_modal:
+            traj = [b.squeeze(0)]
+        elif return_latent:
+            z_initial = self._modal_to_latent(b)
+            z_initial_phys = self._unnormalize(z_initial)
+            traj = [z_initial_phys.squeeze(0)]
+        else:
+            traj = [x_curr0.squeeze(0)]
+
         for _ in range(steps):
             b = self._step_modal(b)   # MATMUL LOOP
-            z = self._modal_to_latent(b)
-            z_phys = self._unnormalize(z) # MUST unnormalize before de-expanding
-            traj.append(self.expander.de_expand(z_phys).squeeze(0))
+            
+            if return_modal:
+                traj.append(b.squeeze(0))
+            else:
+                z = self._modal_to_latent(b)
+                z_phys = self._unnormalize(z) # MUST unnormalize before de-expanding
+                if return_latent:
+                    traj.append(z_phys.squeeze(0))
+                else:
+                    traj.append(self.expander.de_expand(z_phys).squeeze(0))
+                    
         return torch.stack(traj)

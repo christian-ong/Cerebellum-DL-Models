@@ -26,8 +26,6 @@ MODEL_CHOICES = [
     "ml_dmd",
     "ml_linear_dynamics",
     "ml_lineardynamics",
-    "ml_dmd_free",
-    "ml_dmd_band",
     "mlp_baseline",
     "sindy_baseline",
 ]
@@ -87,6 +85,7 @@ def prepare_eval_context(
     subdir: Optional[str] = None,
     need_cache: bool = False,
     max_horizon_for_cache: Optional[int] = None,
+    save_run_metadata: bool = True,
 ):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -103,9 +102,140 @@ def prepare_eval_context(
     )
 
     run_name = infer_run_name(args.model_path, explicit_name=getattr(args, "name", None))
-    base_figdir = os.path.join("data", "figures", args.model, system, run_name)
-    figdir = base_figdir if subdir is None else os.path.join(base_figdir, subdir)
+    outdir_arg = getattr(args, "outdir", None)
+    if outdir_arg:
+        figdir = outdir_arg
+        norm_outdir = os.path.normpath(outdir_arg)
+        # Keep one canonical run-root even when scripts write into nested folders
+        # like .../run_name/data (formerly 'eval') or .../run_name/behavior/final.
+        if norm_outdir.endswith(os.path.join("behavior", "final")):
+            base_figdir = os.path.dirname(os.path.dirname(norm_outdir))
+        else:
+            tail = os.path.basename(norm_outdir)
+            if tail in {"data", "rollout", "noise_robustness", "modes", "behavior"}:
+                base_figdir = os.path.dirname(norm_outdir)
+            else:
+                base_figdir = norm_outdir
+    else:
+        base_figdir = os.path.join(os.environ.get("EVAL_BASE_DIR", "data/figures"), args.model, system)
+        expansion_type = getattr(model, "expansion_type", None)
+
+        expansion_folder = str(expansion_type) if expansion_type is not None else "none"
+        if expansion_type == "rbf":
+            train_args = extras.get("train_args", {}) if isinstance(extras, dict) else {}
+            bandwidth = getattr(model, "rbf_bandwidth_mode", None) or train_args.get("rbf_bandwidth_mode", None)
+            bw = str(bandwidth).strip().lower() if bandwidth is not None and not (isinstance(bandwidth, float) and np.isnan(bandwidth)) else "global"
+            expansion_folder = os.path.join("rbf", "global" if bw == "global" else "knn")
+        if expansion_type in {"hankel", "hankel_svd"}:
+            expansion_folder = "hankel_svd"
+
+        base_figdir = os.path.join(base_figdir, expansion_folder)
+
+        if args.model in {"ml_dmd"}:
+            l1_weight = None
+            try:
+                l1_weight = getattr(model, "l1_weight", None)
+            except Exception:
+                l1_weight = None
+            if l1_weight is None and isinstance(extras, dict):
+                l1_weight = extras.get("train_args", {}).get("l1_weight")
+            if l1_weight is not None:
+                try:
+                    l1_value = float(l1_weight)
+                    if l1_value == 0.0:
+                        base_figdir = os.path.join(base_figdir, "l1_0.0")
+                    else:
+                        base_figdir = os.path.join(base_figdir, f"l1_{l1_value:.0e}")
+                except Exception:
+                    base_figdir = os.path.join(base_figdir, str(l1_weight))
+
+        base_figdir = os.path.join(base_figdir, run_name)
+        figdir = base_figdir if subdir is None else os.path.join(base_figdir, subdir)
+
+    if outdir_arg:
+        figdir = outdir_arg
+
     os.makedirs(figdir, exist_ok=True)
+    os.makedirs(base_figdir, exist_ok=True)
+    # Save training metadata in the final output directory chosen for this run.
+    if save_run_metadata:
+        try:
+            # Delay import of torch in case environment is minimal; torch is already imported above.
+            def _extract_train_args(model_path, extras):
+                # 1) Check cached ckpt in extras (used for many torch models)
+                if isinstance(extras, dict) and "ckpt" in extras and isinstance(extras["ckpt"], dict):
+                    return extras["ckpt"].get("train_args", {}) or {}
+
+                # 2) Try loading torch checkpoint if file looks like a torch checkpoint
+                if os.path.exists(model_path):
+                    try:
+                        if model_path.endswith(".pt") or model_path.endswith(".pth"):
+                            ck = torch.load(model_path, map_location="cpu")
+                            if isinstance(ck, dict):
+                                return ck.get("train_args", {}) or {}
+                    except Exception:
+                        pass
+
+                    # 3) Try numpy checkpoint (baselines, SINDy, DMD)
+                    try:
+                        data = np.load(model_path, allow_pickle=True)
+                        if "train_args" in data:
+                            return dict(data["train_args"].item()) if hasattr(data["train_args"], "item") else data["train_args"]
+                        # Some older checkpoints may store args as individual keys; gather common fields
+                        keys = [k for k in data.files if k.startswith("exp") or k in {"alpha", "threshold", "poly_order", "rbf_centers"}]
+                        if keys:
+                            out = {k: (data[k].item() if getattr(data[k], "shape", ()) == () else data[k].tolist()) for k in keys}
+                            return out
+                    except Exception:
+                        pass
+
+                return {}
+
+            train_args = _extract_train_args(args.model_path, extras)
+            # Minimal payload with provenance
+            payload = {
+                "train_args": train_args,
+                "model_path": args.model_path,
+                "data_path": args.data_path,
+                "model": args.model,
+                "run_name": infer_run_name(args.model_path, explicit_name=getattr(args, "name", None)),
+            }
+
+            # Write JSON and plain-text versions
+            try:
+                json_path = os.path.join(figdir, "train_args.json")
+                with open(json_path, "w", encoding="utf-8") as _f:
+                    json.dump(payload, _f, indent=2)
+
+                txt_path = os.path.join(figdir, "train_args.txt")
+                with open(txt_path, "w", encoding="utf-8") as _f:
+                    for k, v in payload.items():
+                        _f.write(f"{k}: {v}\n")
+
+                # Optional: save a small PNG summary if matplotlib is available
+                try:
+                    import matplotlib.pyplot as plt
+
+                    lines = [f"{k}: {train_args[k]}" for k in sorted(train_args.keys())]
+                    if not lines:
+                        lines = ["(no train_args found)"]
+                    # Scale height with line count so long train_args dumps do not clip at the bottom.
+                    fig_height = min(max(3.2, 0.16 * len(lines) + 1.3), 12.0)
+                    fig, ax = plt.subplots(figsize=(7.8, fig_height))
+                    ax.axis("off")
+                    ax.text(0.01, 0.99, "\n".join(lines), fontsize=8, family="monospace", va="top", clip_on=False)
+                    fig.subplots_adjust(left=0.03, right=0.99, top=0.99, bottom=0.04)
+                    png_path = os.path.join(figdir, "train_args.png")
+                    fig.savefig(png_path, dpi=150)
+                    plt.close(fig)
+                except Exception:
+                    # matplotlib not available or failed to render; ignore silently
+                    pass
+            except Exception as e:
+                print(f"[eval_runner] Warning: failed to save train_args payload: {e}")
+        except Exception:
+            # Best-effort only; do not fail eval on metadata saving issues
+            pass
 
     scales = get_state_scale_from_train_split(args.data_path)
     scale_std = scales["std"]
@@ -166,7 +296,21 @@ def maybe_load_npz(path: str, *, description: str):
 
 
 def maybe_load_core_summary(ctx: EvalContext):
-    return maybe_load_npz(get_core_summary_path(ctx), description="core summary")
+    candidates = [
+        get_core_summary_path(ctx),
+        os.path.join(ctx.base_figdir, "data", f"{ctx.split}_summary.npz"),
+        os.path.join(ctx.figdir, f"{ctx.split}_summary.npz"),
+    ]
+
+    seen = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        data = maybe_load_npz(path, description="core summary")
+        if data is not None:
+            return data
+    return None
 
 
 def maybe_load_rollout_example(ctx: EvalContext, traj_index: int):

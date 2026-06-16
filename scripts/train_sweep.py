@@ -14,6 +14,7 @@ from src.eval.sweep_utils import (
     compute_loader_metrics,
     compute_rollout_metrics,
 )
+from src.eval.model_io import load_model as load_saved_model
 from src.train.train_onestep_sweep import train_onestep_sweep
 from src.models.regression_dmd import Regression_DMD
 from src.models.linear_baseline import fit_linear_map, rollout_linear_map
@@ -131,6 +132,7 @@ def main():
     parser.add_argument("--rbf_knn_k", type=int, default=5, help="k for k-nearest-center bandwidth when expansion_type='rbf'.")
     parser.add_argument("--load_rbf_from", type=str, default=None, help="Path to a model file to load fixed RBF centers from.")
     parser.add_argument("--l1_weight", type=float, default=1e-6, help="L1 regularization weight for regression DMD")
+    parser.add_argument("--biorth_weight", type=float, default=0.1, help="Weight for bi-orthogonality regularization")
 
     parser.add_argument("--sindy_discrete_time", type=str.lower, choices=["true", "false"], default="false")
     parser.add_argument("--sindy_poly_order", type=int, default=3)
@@ -403,6 +405,16 @@ def main():
     # Model
     model = build_model(args, state_dim, system_name, device)
 
+    # Ensure models without buffers (e.g. Regression_DMD) expose a device-valued
+    # buffer so Regression_DMD._to_tensor can detect the correct device at runtime.
+    # This avoids moving inputs to CPU incorrectly when calling model(x).
+    try:
+        if isinstance(model, torch.nn.Module) and len(list(model.buffers())) == 0:
+            model.register_buffer("_device_marker", torch.zeros(1, device=device))
+    except Exception:
+        # Best-effort; if registration fails, continue — training may still work.
+        pass
+
     if args.model == "sindy_baseline":
         print("Fitting SINDy baseline...")
 
@@ -501,6 +513,10 @@ def main():
         print("Fitting regression_dmd...")
         model.fit(X_train, Y_train)
 
+        # ---------------------------------------------------------
+        # 1. COMPUTE & LOG METRICS FIRST! 
+        # (Guarantees W&B gets the data)
+        # ---------------------------------------------------------
         train_loss, train_rmse = compute_loader_metrics(model, train_loader, device)
         val_loss, val_rmse = compute_loader_metrics(model, val_loader, device) if val_loader is not None else (None, None)
 
@@ -511,6 +527,7 @@ def main():
             "val_onestep_rmse": val_rmse,
         }
 
+        print("Computing rollout metrics...")
         rollout_metrics = compute_rollout_metrics(
             model=model,
             X=val_X,
@@ -525,67 +542,50 @@ def main():
         wandb.log(metrics, step=0)
         update_best_metrics(best_metrics, metrics, 0)
 
-        save_kwargs = dict(
-            train_args=vars(args),
-            model="regression_dmd",
-            system=system_name,
-            state_dim=state_dim,
-            expansion_degree=args.expansion_degree,
-            bias=args.bias == "true",
-            sine_cosine_expansion=args.sine_cosine_expansion == "true",
-            expansion_type=args.expansion_type,
-            expand_names=model.expand_names,
-            system_basis=system_name if args.expansion_type == "specific" else "",
-            rollout_mode=args.regression_rollout_mode,
-            ridge=args.ridge,
-            rank=-1 if args.rank is None else args.rank,
-            normalize_state=args.normalize_state == "true",
-            normalize_lifted=args.normalize_lifted == "true",
-            delay_depth=args.delay_depth,
-            hankel_rank=-1 if args.hankel_rank is None else args.hankel_rank,
-            rbf_n_centers=args.rbf_n_centers,
-            rbf_center_selection=args.rbf_center_selection,
-            rbf_bandwidth_mode=args.rbf_bandwidth_mode,
-            rbf_knn_k=args.rbf_knn_k,
-            x_mean=model.x_mean.detach().cpu().numpy(),
-            x_scale=model.x_scale.detach().cpu().numpy(),
-            psi_scale=model.psi_scale.detach().cpu().numpy(),
-            K=model.K_fitted.detach().cpu().numpy(),
-            C=model.C_fitted.detach().cpu().numpy(),
-            K_tilde=model.K_tilde_fitted.detach().cpu().numpy(),
-            U_r=model.U_r_fitted.detach().cpu().numpy(),
-            W_reduced=model.W_reduced_fitted.detach().cpu().numpy(),
-            Lambda=model.Lambda_fitted.detach().cpu().numpy(),
-            Phi_lift=model.Phi_lift_fitted.detach().cpu().numpy(),
-            Phi_state=model.Phi_state_fitted.detach().cpu().numpy(),
-        )
-
-        if args.expansion_type == "rbf":
-            save_kwargs["rbf_centers"] = model.expander.centers.detach().cpu().numpy()
-            save_kwargs["rbf_sigmas"] = model.expander.sigmas.detach().cpu().numpy()
-
-        if args.expansion_type == "hankel_svd":
-            save_kwargs["hankel_mean"] = model.expander.mean.detach().cpu().numpy()
-            save_kwargs["hankel_components"] = model.expander.components.detach().cpu().numpy()
-            save_kwargs["hankel_singular_values"] = model.expander.singular_values.detach().cpu().numpy()
-
-        if model.Lambda_fitted is not None:
-            save_kwargs["Lambda"] = model.Lambda_fitted.detach().cpu().numpy()
-            save_kwargs["Phi"] = model.Phi_fitted.detach().cpu().numpy()
-
-        save_path = os.path.join(save_dir, "model.npz")
-        np.savez(save_path, **save_kwargs)
-        print(f"Saved regression_dmd checkpoint to: {save_path}")
-
         for metric_name, data in best_metrics.items():
             wandb.summary[f"best_{metric_name}"] = data["value"]
             wandb.summary[f"best_{metric_name}_epoch"] = data["epoch"]
+
+        # ---------------------------------------------------------
+        # 2. UNIFIED PYTORCH CHECKPOINT SAVING
+        # ---------------------------------------------------------
+        def _to_np(tensor):
+            return tensor.detach().cpu().numpy() if tensor is not None else None
+
+        dmd_matrices = {
+            "K_full": _to_np(getattr(model, "K_fitted", None)),
+            "C": _to_np(getattr(model, "C_fitted", None)),
+            "K_tilde": _to_np(getattr(model, "K_tilde_fitted", None)),
+            "U_r": _to_np(getattr(model, "U_r_fitted", None)),
+            "W_reduced": _to_np(getattr(model, "W_reduced_fitted", None)),
+            "Lambda": _to_np(getattr(model, "Lambda_fitted", None)),
+            "Phi_lift": _to_np(getattr(model, "Phi_lift_fitted", None)),
+            "Phi_state": _to_np(getattr(model, "Phi_state_fitted", None)),
+            "Phi": _to_np(getattr(model, "Phi_fitted", None)),
+            "x_mean": _to_np(getattr(model, "x_mean", None)),
+            "x_scale": _to_np(getattr(model, "x_scale", None)),
+            "psi_scale": _to_np(getattr(model, "psi_scale", None)),
+        }
+
+        checkpoint = {
+            "model_state_dict": model.state_dict(),
+            "checkpoint_type": "best",
+            "train_args": vars(args),
+            "dmd_matrices": dmd_matrices,
+            "model_name": "regression_dmd",
+            "system": system_name,
+            "state_dim": state_dim,
+        }
+
+        save_path = os.path.join(save_dir, "model.pt")
+        torch.save(checkpoint, save_path)
+        print(f"Saved unified Regression_DMD checkpoint to: {save_path}")
 
         wandb.finish()
         return
 
     # Fit RBF/Hankel/other data-dependent expanders if needed
-    if args.model in {"ml_linear_dynamics", "ml_lineardynamics", "ml_dmd"}:
+    if args.model in {"ml_linear_dynamics", "ml_lineardynamics", "ml_dmd", "regression_dmd"}:
         prepare_ml_expander_and_lift_stats(
             model=model,
             train_ds=train_ds,

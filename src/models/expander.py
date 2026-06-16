@@ -343,7 +343,10 @@ class ManualExpansion(nn.Module):
         """Recover original state variables and restore physical scaling."""
         extracted = x_expanded[:, self.state_indices]
         # ALWAYS restore scaling so de_expand returns physical units
-        return extracted * self.state_scale
+        out = extracted * self.state_scale
+        if torch.is_complex(out):
+            out = out.real
+        return out
 
 
 class DelayExpansion(nn.Module):
@@ -669,8 +672,11 @@ class HankelSVDDelayExpansion(nn.Module):
         
         # --- NEW: Restore physical units ---
         H_hat = H_hat_scaled * scale
-        
-        return H_hat[:, : self.state_dim]
+
+        out = H_hat[:, : self.state_dim]
+        if torch.is_complex(out):
+            out = out.real
+        return out
 
     def extra_repr(self):
         return (
@@ -964,7 +970,10 @@ class RBFExpansion(nn.Module):
         
         # --- NEW: Restore physical units ---
         extracted = x_expanded[:, self.state_indices]
-        return extracted * self.state_scale
+        out = extracted * self.state_scale
+        if torch.is_complex(out):
+            out = out.real
+        return out
 
     def extra_repr(self) -> str:
         return (

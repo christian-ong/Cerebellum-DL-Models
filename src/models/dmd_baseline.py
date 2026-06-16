@@ -153,30 +153,57 @@ def rollout_dmd_eig(
     trajectory : (steps+1, d)
         Rollout trajectory
     """
-    d = x0.shape[0]
-    out = np.empty((steps + 1, d), dtype=np.complex128)
-    out[0] = np.asarray(x0, dtype=np.complex128)
+    x0_arr = np.asarray(x0)
 
-    # Compute initial coefficients: b_0 = Φ^(-1) x_0
     Phi_pinv = np.linalg.pinv(Phi)
-    b0 = Phi_pinv @ x0  # (r,)
-    
-    # For each timestep k, compute: x(k) = Φ Λ^k b_0
-    for k in range(1, steps + 1):
-        Lambda_k = np.diag(Lambda ** k)  # Λ^k as diagonal matrix
-        x_k = Phi @ Lambda_k @ b0
-        out[k] = x_k
 
-    out_real = np.real_if_close(out, tol=1e9)
-    if np.iscomplexobj(out_real):
-        max_imag = float(np.max(np.abs(out_real.imag)))
-        if max_imag > 1e-6:
-            print(
-                f"Warning: DMD rollout produced complex values (max imag {max_imag:.3e}); taking real part."
-            )
-        out_real = out_real.real
+    # Single initial condition: (d,) -> return (steps+1, d)
+    if x0_arr.ndim == 1:
+        d = x0_arr.shape[0]
+        out = np.empty((steps + 1, d), dtype=np.complex128)
+        out[0] = x0_arr.astype(np.complex128)
+        b0 = Phi_pinv @ x0_arr  # (r,)
+        for k in range(1, steps + 1):
+            Lambda_k = np.diag(Lambda ** k)
+            x_k = Phi @ (Lambda_k @ b0)
+            out[k] = x_k
+        out_real = np.real_if_close(out, tol=1e9)
+        if np.iscomplexobj(out_real):
+            max_imag = float(np.max(np.abs(out_real.imag)))
+            if max_imag > 1e-6:
+                print(
+                    f"Warning: DMD rollout produced complex values (max imag {max_imag:.3e}); taking real part."
+                )
+            out_real = out_real.real
+        return np.asarray(out_real, dtype=float)
 
-    return np.asarray(out_real, dtype=float)
+    # Batched initial conditions: (n, d) -> return (steps+1, n, d)
+    if x0_arr.ndim == 2:
+        n, d = x0_arr.shape
+        out = np.empty((steps + 1, n, d), dtype=np.complex128)
+        out[0] = x0_arr.astype(np.complex128)
+
+        # Compute initial coefficients for each batch: b0 has shape (r, n)
+        b0 = Phi_pinv @ x0_arr.T  # (r, n)
+
+        for k in range(1, steps + 1):
+            Lambda_k = np.diag(Lambda ** k)  # (r, r)
+            # Lambda_k @ b0 -> (r, n); Phi @ (...) -> (d, n)
+            x_k = Phi @ (Lambda_k @ b0)
+            out[k] = x_k.T  # store as (n, d)
+
+        out_real = np.real_if_close(out, tol=1e9)
+        if np.iscomplexobj(out_real):
+            max_imag = float(np.max(np.abs(out_real.imag)))
+            if max_imag > 1e-6:
+                print(
+                    f"Warning: DMD rollout produced complex values (max imag {max_imag:.3e}); taking real part."
+                )
+            out_real = out_real.real
+
+        return np.asarray(out_real, dtype=float)
+
+    raise ValueError(f"Unexpected x0 shape for rollout_dmd_eig: {x0_arr.shape}")
 
 
 import numpy as np

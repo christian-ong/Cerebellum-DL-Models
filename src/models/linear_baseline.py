@@ -42,11 +42,26 @@ def rollout_linear_map(M: np.ndarray, x0: np.ndarray, steps: int):
     Returns:
         X_hat: (steps+1, state_dim)
     """
-    x = x0.copy()
-    X_hat = [x]
+    x0_arr = np.asarray(x0)
 
-    for _ in range(steps):
-        x = M @ x
-        X_hat.append(x)
+    # Single initial condition: (d,) -> return (steps+1, d)
+    if x0_arr.ndim == 1:
+        x = x0_arr.copy()
+        X_hat = [x]
+        for _ in range(steps):
+            x = M @ x
+            X_hat.append(x)
+        return np.stack(X_hat, axis=0)
 
-    return np.stack(X_hat, axis=0)
+    # Batched initial conditions: (n, d) -> return (steps+1, n, d)
+    if x0_arr.ndim == 2:
+        x = x0_arr.copy()  # (n, d)
+        n, d = x.shape
+        X_hat = [x.copy()]
+        for _ in range(steps):
+            # x_{t+1} = x_t @ M.T  (batch-friendly)
+            x = x @ M.T
+            X_hat.append(x.copy())
+        return np.stack(X_hat, axis=0)
+
+    raise ValueError(f"Unexpected x0 shape for rollout_linear_map: {x0_arr.shape}")
